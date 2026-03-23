@@ -48,6 +48,15 @@ def create_app():
         bed = GardenBed.query.get_or_404(bed_id)
         return render_template('bed_detail.html', bed=bed)
 
+    @app.route('/beds/<int:bed_id>/edit', methods=['POST'])
+    def edit_bed(bed_id):
+        bed = GardenBed.query.get_or_404(bed_id)
+        bed.name = request.form['name']
+        bed.location = request.form.get('location')
+        bed.description = request.form.get('description')
+        db.session.commit()
+        return redirect(url_for('bed_detail', bed_id=bed.id))
+
     # --- Plants ---
 
     @app.route('/plants', methods=['GET', 'POST'])
@@ -115,6 +124,23 @@ def create_app():
         all_tasks = Task.query.order_by(Task.completed.asc(), Task.due_date.asc().nullslast()).all()
         all_plants = Plant.query.order_by(Plant.name).all()
         return render_template('tasks.html', tasks=all_tasks, plants=all_plants)
+
+    @app.route('/tasks/<int:task_id>')
+    def task_detail(task_id):
+        task = Task.query.get_or_404(task_id)
+        all_plants = Plant.query.order_by(Plant.name).all()
+        return render_template('task_detail.html', task=task, plants=all_plants)
+
+    @app.route('/tasks/<int:task_id>/edit', methods=['POST'])
+    def edit_task(task_id):
+        task = Task.query.get_or_404(task_id)
+        due = request.form.get('due_date')
+        task.title = request.form['title']
+        task.description = request.form.get('description')
+        task.due_date = date.fromisoformat(due) if due else None
+        task.plant_id = request.form.get('plant_id') or None
+        db.session.commit()
+        return redirect(url_for('task_detail', task_id=task.id))
 
     @app.route('/tasks/<int:task_id>/complete', methods=['POST'])
     def complete_task(task_id):

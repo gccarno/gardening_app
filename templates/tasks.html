@@ -35,6 +35,7 @@
           {% if task.description %}<span class="muted">{{ task.description }}</span>{% endif %}
         </span>
         <span class="task-actions">
+          <a href="{{ url_for('task_detail', task_id=task.id) }}" class="btn-small btn-link">Edit</a>
           <form method="post" action="{{ url_for('complete_task', task_id=task.id) }}" style="display:inline">
             <button type="submit" class="btn-small">
               {% if task.completed %}Undo{% else %}Done{% endif %}

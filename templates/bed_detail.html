@@ -2,8 +2,14 @@
 {% block title %}{{ bed.name }} — Garden Planner{% endblock %}
 {% block content %}
 <h1>{{ bed.name }}</h1>
-{% if bed.location %}<p class="muted">Location: {{ bed.location }}</p>{% endif %}
-{% if bed.description %}<p>{{ bed.description }}</p>{% endif %}
+
+<h2>Edit Bed</h2>
+<form method="post" action="{{ url_for('edit_bed', bed_id=bed.id) }}" class="form">
+  <label>Name <input type="text" name="name" value="{{ bed.name }}" required></label>
+  <label>Location <input type="text" name="location" value="{{ bed.location or '' }}"></label>
+  <label>Description <textarea name="description" rows="2">{{ bed.description or '' }}</textarea></label>
+  <button type="submit">Save Changes</button>
+</form>
 
 <h2>Plants in this Bed</h2>
 {% if bed.plants %}

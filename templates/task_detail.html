@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ task.title }} — Garden Planner{% endblock %}
+{% block content %}
+<h1>{{ task.title }}</h1>
+
+<h2>Edit Task</h2>
+<form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" class="form">
+  <label>Title <input type="text" name="title" value="{{ task.title }}" required></label>
+  <label>Due Date <input type="date" name="due_date" value="{{ task.due_date or '' }}"></label>
+  <label>Plant
+    <select name="plant_id">
+      <option value="">— None —</option>
+      {% for plant in plants %}
+      <option value="{{ plant.id }}" {% if task.plant_id == plant.id %}selected{% endif %}>{{ plant.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Description <textarea name="description" rows="3">{{ task.description or '' }}</textarea></label>
+  <button type="submit">Save Changes</button>
+</form>
+
+<p><a href="{{ url_for('tasks') }}">← Back to Tasks</a></p>
+{% endblock %}

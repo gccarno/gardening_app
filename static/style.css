@@ -131,6 +131,15 @@ button:hover { background: #2e5429; }
 .btn-danger { background: #b84040; }
 .btn-danger:hover { background: #8e2f2f; }
 
+.btn-link {
+  background: #e8f0e8;
+  color: #3a5c37;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.btn-link:hover { background: #d0e4ce; color: #2a4a27; }
+
 .badge {
   display: inline-block;
   background: #5a9e54;
