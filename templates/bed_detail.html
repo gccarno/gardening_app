@@ -27,5 +27,11 @@
 <p class="muted">No plants in this bed.</p>
 {% endif %}
 
+<div class="actions">
+  <form method="post" action="{{ url_for('delete_bed', bed_id=bed.id) }}" onsubmit="return confirm('Delete {{ bed.name }}?')">
+    <button type="submit" class="btn-danger">Delete Bed</button>
+  </form>
+</div>
+
 <p><a href="{{ url_for('beds') }}">← Back to Beds</a></p>
 {% endblock %}

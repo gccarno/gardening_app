@@ -48,6 +48,13 @@ def create_app():
         bed = GardenBed.query.get_or_404(bed_id)
         return render_template('bed_detail.html', bed=bed)
 
+    @app.route('/beds/<int:bed_id>/delete', methods=['POST'])
+    def delete_bed(bed_id):
+        bed = GardenBed.query.get_or_404(bed_id)
+        db.session.delete(bed)
+        db.session.commit()
+        return redirect(url_for('beds'))
+
     @app.route('/beds/<int:bed_id>/edit', methods=['POST'])
     def edit_bed(bed_id):
         bed = GardenBed.query.get_or_404(bed_id)
