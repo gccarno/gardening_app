@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Garden Beds{% endblock %}
+{% block content %}
+<h1>Garden Beds</h1>
+
+<section>
+  <h2>Add Bed</h2>
+  <form method="post" class="form">
+    <label>Name <input type="text" name="name" required></label>
+    <label>Location <input type="text" name="location"></label>
+    <label>Description <textarea name="description" rows="2"></textarea></label>
+    <button type="submit">Add Bed</button>
+  </form>
+</section>
+
+<section>
+  <h2>All Beds</h2>
+  {% if beds %}
+  <ul class="card-list">
+    {% for bed in beds %}
+    <li class="card">
+      <a href="{{ url_for('bed_detail', bed_id=bed.id) }}"><strong>{{ bed.name }}</strong></a>
+      {% if bed.location %}<span class="muted">— {{ bed.location }}</span>{% endif %}
+      <span class="muted">({{ bed.plants | length }} plant{{ 's' if bed.plants | length != 1 }})</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No beds yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

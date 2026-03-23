@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ plant.name }} — Garden Planner{% endblock %}
+{% block content %}
+<h1>{{ plant.name }}</h1>
+
+<dl class="details">
+  {% if plant.type %}<dt>Type</dt><dd>{{ plant.type }}</dd>{% endif %}
+  {% if plant.bed %}<dt>Bed</dt><dd><a href="{{ url_for('bed_detail', bed_id=plant.bed.id) }}">{{ plant.bed.name }}</a></dd>{% endif %}
+  {% if plant.planted_date %}<dt>Planted</dt><dd>{{ plant.planted_date }}</dd>{% endif %}
+  {% if plant.expected_harvest %}<dt>Expected Harvest</dt><dd>{{ plant.expected_harvest }}</dd>{% endif %}
+  {% if plant.notes %}<dt>Notes</dt><dd>{{ plant.notes }}</dd>{% endif %}
+</dl>
+
+<h2>Tasks</h2>
+{% if plant.tasks %}
+<ul class="card-list">
+  {% for task in plant.tasks %}
+  <li class="card {% if task.completed %}completed{% endif %}">
+    {{ task.title }}
+    {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
+    {% if task.completed %}<span class="badge">Done</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No tasks for this plant.</p>
+{% endif %}
+
+<div class="actions">
+  <form method="post" action="{{ url_for('delete_plant', plant_id=plant.id) }}" onsubmit="return confirm('Delete {{ plant.name }}?')">
+    <button type="submit" class="btn-danger">Delete Plant</button>
+  </form>
+</div>
+
+<p><a href="{{ url_for('plants') }}">← Back to Plants</a></p>
+{% endblock %}

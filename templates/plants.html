@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Plants — Garden Planner{% endblock %}
+{% block content %}
+<h1>Plants</h1>
+
+<section>
+  <h2>Add Plant</h2>
+  <form method="post" class="form">
+    <label>Name <input type="text" name="name" required></label>
+    <label>Type <input type="text" name="type" placeholder="e.g. Vegetable, Herb, Flower"></label>
+    <label>Bed
+      <select name="bed_id">
+        <option value="">— None —</option>
+        {% for bed in beds %}
+        <option value="{{ bed.id }}">{{ bed.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Planted Date <input type="date" name="planted_date"></label>
+    <label>Expected Harvest <input type="date" name="expected_harvest"></label>
+    <label>Notes <textarea name="notes" rows="2"></textarea></label>
+    <button type="submit">Add Plant</button>
+  </form>
+</section>
+
+<section>
+  <h2>All Plants</h2>
+  {% if plants %}
+  <ul class="card-list">
+    {% for plant in plants %}
+    <li class="card">
+      <a href="{{ url_for('plant_detail', plant_id=plant.id) }}"><strong>{{ plant.name }}</strong></a>
+      {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
+      {% if plant.bed %}<span class="muted">in {{ plant.bed.name }}</span>{% endif %}
+      {% if plant.planted_date %}<span class="muted">planted {{ plant.planted_date }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No plants yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

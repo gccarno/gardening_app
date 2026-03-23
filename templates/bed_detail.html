@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ bed.name }} — Garden Planner{% endblock %}
+{% block content %}
+<h1>{{ bed.name }}</h1>
+{% if bed.location %}<p class="muted">Location: {{ bed.location }}</p>{% endif %}
+{% if bed.description %}<p>{{ bed.description }}</p>{% endif %}
+
+<h2>Plants in this Bed</h2>
+{% if bed.plants %}
+<ul class="card-list">
+  {% for plant in bed.plants %}
+  <li class="card">
+    <a href="{{ url_for('plant_detail', plant_id=plant.id) }}">{{ plant.name }}</a>
+    {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
+    {% if plant.planted_date %}<span class="muted">planted {{ plant.planted_date }}</span>{% endif %}
+    {% if plant.expected_harvest %}<span class="muted">harvest {{ plant.expected_harvest }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No plants in this bed.</p>
+{% endif %}
+
+<p><a href="{{ url_for('beds') }}">← Back to Beds</a></p>
+{% endblock %}

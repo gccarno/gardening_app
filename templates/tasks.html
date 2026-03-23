@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Tasks — Garden Planner{% endblock %}
+{% block content %}
+<h1>Tasks</h1>
+
+<section>
+  <h2>Add Task</h2>
+  <form method="post" class="form">
+    <label>Title <input type="text" name="title" required></label>
+    <label>Due Date <input type="date" name="due_date"></label>
+    <label>Plant
+      <select name="plant_id">
+        <option value="">— None —</option>
+        {% for plant in plants %}
+        <option value="{{ plant.id }}">{{ plant.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Description <textarea name="description" rows="2"></textarea></label>
+    <button type="submit">Add Task</button>
+  </form>
+</section>
+
+<section>
+  <h2>All Tasks</h2>
+  {% if tasks %}
+  <ul class="card-list">
+    {% for task in tasks %}
+    <li class="card {% if task.completed %}completed{% endif %}">
+      <div class="task-row">
+        <span>
+          <strong>{{ task.title }}</strong>
+          {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
+          {% if task.plant %}<span class="muted">— {{ task.plant.name }}</span>{% endif %}
+          {% if task.description %}<span class="muted">{{ task.description }}</span>{% endif %}
+        </span>
+        <span class="task-actions">
+          <form method="post" action="{{ url_for('complete_task', task_id=task.id) }}" style="display:inline">
+            <button type="submit" class="btn-small">
+              {% if task.completed %}Undo{% else %}Done{% endif %}
+            </button>
+          </form>
+          <form method="post" action="{{ url_for('delete_task', task_id=task.id) }}" style="display:inline" onsubmit="return confirm('Delete task?')">
+            <button type="submit" class="btn-small btn-danger">Delete</button>
+          </form>
+        </span>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No tasks yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

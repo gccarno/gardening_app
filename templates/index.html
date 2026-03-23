@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Garden Planner{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<section>
+  <h2>Upcoming Tasks</h2>
+  {% if upcoming_tasks %}
+  <ul class="card-list">
+    {% for task in upcoming_tasks %}
+    <li class="card">
+      <span class="task-title">{{ task.title }}</span>
+      {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
+      {% if task.plant %}<span class="muted">— {{ task.plant.name }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No upcoming tasks.</p>
+  {% endif %}
+  <a href="{{ url_for('tasks') }}">View all tasks →</a>
+</section>
+
+<section>
+  <h2>Recently Added Plants</h2>
+  {% if recent_plants %}
+  <ul class="card-list">
+    {% for plant in recent_plants %}
+    <li class="card">
+      <a href="{{ url_for('plant_detail', plant_id=plant.id) }}">{{ plant.name }}</a>
+      {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
+      {% if plant.bed %}<span class="muted">in {{ plant.bed.name }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No plants added yet.</p>
+  {% endif %}
+  <a href="{{ url_for('plants') }}">View all plants →</a>
+</section>
+{% endblock %}
