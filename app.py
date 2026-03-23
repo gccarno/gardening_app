@@ -1,6 +1,6 @@
 from datetime import date
-from flask import Flask, render_template, request, redirect, url_for
-from models import db, GardenBed, Plant, Task
+from flask import Flask, render_template, request, redirect, url_for, jsonify
+from models import db, Garden, GardenBed, Plant, Task, BedPlant
 
 
 def create_app():
@@ -27,15 +27,63 @@ def create_app():
         recent_plants = Plant.query.order_by(Plant.id.desc()).limit(5).all()
         return render_template('index.html', upcoming_tasks=upcoming_tasks, recent_plants=recent_plants)
 
+    # --- Gardens ---
+
+    @app.route('/gardens', methods=['GET', 'POST'])
+    def gardens():
+        if request.method == 'POST':
+            garden = Garden(
+                name=request.form['name'],
+                description=request.form.get('description'),
+                unit=request.form.get('unit', 'ft'),
+            )
+            db.session.add(garden)
+            db.session.commit()
+            return redirect(url_for('gardens'))
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        return render_template('gardens.html', gardens=all_gardens)
+
+    @app.route('/gardens/<int:garden_id>')
+    def garden_detail(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        return render_template('garden_detail.html', garden=garden)
+
+    @app.route('/gardens/<int:garden_id>/edit', methods=['POST'])
+    def edit_garden(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        garden.name = request.form['name']
+        garden.description = request.form.get('description')
+        garden.unit = request.form.get('unit', 'ft')
+        db.session.commit()
+        return redirect(url_for('garden_detail', garden_id=garden.id))
+
+    @app.route('/gardens/<int:garden_id>/delete', methods=['POST'])
+    def delete_garden(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        db.session.delete(garden)
+        db.session.commit()
+        return redirect(url_for('gardens'))
+
+    @app.route('/gardens/<int:garden_id>/planner')
+    def planner(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        all_plants = Plant.query.order_by(Plant.name).all()
+        px_per_unit = 60
+        return render_template('planner.html', garden=garden, all_plants=all_plants, px_per_unit=px_per_unit)
+
     # --- Garden Beds ---
 
     @app.route('/beds', methods=['GET', 'POST'])
     def beds():
         if request.method == 'POST':
+            width = request.form.get('width_ft')
+            height = request.form.get('height_ft')
             bed = GardenBed(
                 name=request.form['name'],
                 description=request.form.get('description'),
                 location=request.form.get('location'),
+                width_ft=float(width) if width else 4.0,
+                height_ft=float(height) if height else 8.0,
             )
             db.session.add(bed)
             db.session.commit()
@@ -77,20 +125,17 @@ def create_app():
                 notes=request.form.get('notes'),
                 planted_date=date.fromisoformat(planted) if planted else None,
                 expected_harvest=date.fromisoformat(harvest) if harvest else None,
-                bed_id=request.form.get('bed_id') or None,
             )
             db.session.add(plant)
             db.session.commit()
             return redirect(url_for('plants'))
         all_plants = Plant.query.order_by(Plant.name).all()
-        all_beds = GardenBed.query.order_by(GardenBed.name).all()
-        return render_template('plants.html', plants=all_plants, beds=all_beds)
+        return render_template('plants.html', plants=all_plants)
 
     @app.route('/plants/<int:plant_id>')
     def plant_detail(plant_id):
         plant = Plant.query.get_or_404(plant_id)
-        all_beds = GardenBed.query.order_by(GardenBed.name).all()
-        return render_template('plant_detail.html', plant=plant, beds=all_beds)
+        return render_template('plant_detail.html', plant=plant)
 
     @app.route('/plants/<int:plant_id>/edit', methods=['POST'])
     def edit_plant(plant_id):
@@ -102,7 +147,6 @@ def create_app():
         plant.notes = request.form.get('notes')
         plant.planted_date = date.fromisoformat(planted) if planted else None
         plant.expected_harvest = date.fromisoformat(harvest) if harvest else None
-        plant.bed_id = request.form.get('bed_id') or None
         db.session.commit()
         return redirect(url_for('plant_detail', plant_id=plant.id))
 
@@ -162,6 +206,69 @@ def create_app():
         db.session.delete(task)
         db.session.commit()
         return redirect(url_for('tasks'))
+
+    # --- JSON API ---
+
+    @app.route('/api/beds', methods=['POST'])
+    def api_create_bed():
+        data = request.get_json(force=True)
+        if not data or not data.get('name'):
+            return jsonify({'error': 'name required'}), 400
+        garden_id = data.get('garden_id')
+        if not garden_id:
+            return jsonify({'error': 'garden_id required'}), 400
+        bed = GardenBed(
+            name=data['name'],
+            width_ft=float(data.get('width_ft', 4.0)),
+            height_ft=float(data.get('height_ft', 8.0)),
+            garden_id=int(garden_id),
+        )
+        db.session.add(bed)
+        db.session.commit()
+        return jsonify({'ok': True, 'bed': {
+            'id': bed.id,
+            'name': bed.name,
+            'width_ft': bed.width_ft,
+            'height_ft': bed.height_ft,
+        }})
+
+    @app.route('/api/beds/<int:bed_id>/position', methods=['POST'])
+    def api_bed_position(bed_id):
+        bed = GardenBed.query.get_or_404(bed_id)
+        data = request.get_json(force=True)
+        if data is None or 'x' not in data or 'y' not in data:
+            return jsonify({'error': 'x and y required'}), 400
+        bed.pos_x = float(data['x'])
+        bed.pos_y = float(data['y'])
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/beds/<int:bed_id>/assign-garden', methods=['POST'])
+    def api_bed_assign_garden(bed_id):
+        bed = GardenBed.query.get_or_404(bed_id)
+        data = request.get_json(force=True)
+        if not data or 'garden_id' not in data:
+            return jsonify({'error': 'garden_id required'}), 400
+        bed.garden_id = int(data['garden_id'])
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/bedplants', methods=['POST'])
+    def api_create_bedplant():
+        data = request.get_json(force=True)
+        if not data or 'bed_id' not in data or 'plant_id' not in data:
+            return jsonify({'error': 'bed_id and plant_id required'}), 400
+        bp = BedPlant(bed_id=int(data['bed_id']), plant_id=int(data['plant_id']))
+        db.session.add(bp)
+        db.session.commit()
+        return jsonify({'ok': True, 'id': bp.id})
+
+    @app.route('/api/bedplants/<int:bp_id>/delete', methods=['POST'])
+    def api_delete_bedplant(bp_id):
+        bp = BedPlant.query.get_or_404(bp_id)
+        db.session.delete(bp)
+        db.session.commit()
+        return jsonify({'ok': True})
 
     return app
 

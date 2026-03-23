@@ -12,14 +12,14 @@
 </form>
 
 <h2>Plants in this Bed</h2>
-{% if bed.plants %}
+{% if bed.bed_plants %}
 <ul class="card-list">
-  {% for plant in bed.plants %}
+  {% for bp in bed.bed_plants %}
   <li class="card">
-    <a href="{{ url_for('plant_detail', plant_id=plant.id) }}">{{ plant.name }}</a>
-    {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
-    {% if plant.planted_date %}<span class="muted">planted {{ plant.planted_date }}</span>{% endif %}
-    {% if plant.expected_harvest %}<span class="muted">harvest {{ plant.expected_harvest }}</span>{% endif %}
+    <a href="{{ url_for('plant_detail', plant_id=bp.plant.id) }}">{{ bp.plant.name }}</a>
+    {% if bp.plant.type %}<span class="muted">({{ bp.plant.type }})</span>{% endif %}
+    {% if bp.plant.planted_date %}<span class="muted">planted {{ bp.plant.planted_date }}</span>{% endif %}
+    {% if bp.plant.expected_harvest %}<span class="muted">harvest {{ bp.plant.expected_harvest }}</span>{% endif %}
   </li>
   {% endfor %}
 </ul>

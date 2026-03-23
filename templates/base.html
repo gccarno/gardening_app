@@ -10,12 +10,13 @@
   <nav>
     <a href="{{ url_for('index') }}" class="nav-brand">Garden Planner</a>
     <ul>
+      <li><a href="{{ url_for('gardens') }}">Gardens</a></li>
       <li><a href="{{ url_for('beds') }}">Beds</a></li>
       <li><a href="{{ url_for('plants') }}">Plants</a></li>
       <li><a href="{{ url_for('tasks') }}">Tasks</a></li>
     </ul>
   </nav>
-  <main>
+  <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 </body>

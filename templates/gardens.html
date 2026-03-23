@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Gardens — Garden Planner{% endblock %}
+{% block content %}
+<h1>Gardens</h1>
+
+<section>
+  <h2>Create Garden</h2>
+  <form method="post" class="form">
+    <label>Name <input type="text" name="name" required></label>
+    <label>Description <textarea name="description" rows="2"></textarea></label>
+    <label>Unit
+      <select name="unit">
+        <option value="ft">Feet (ft)</option>
+        <option value="m">Meters (m)</option>
+      </select>
+    </label>
+    <button type="submit">Create Garden</button>
+  </form>
+</section>
+
+<section>
+  <h2>All Gardens</h2>
+  {% if gardens %}
+  <ul class="card-list">
+    {% for garden in gardens %}
+    <li class="card">
+      <a href="{{ url_for('garden_detail', garden_id=garden.id) }}"><strong>{{ garden.name }}</strong></a>
+      <span class="muted">({{ garden.unit }})</span>
+      {% if garden.description %}<span class="muted">— {{ garden.description }}</span>{% endif %}
+      <a href="{{ url_for('planner', garden_id=garden.id) }}" class="btn-small btn-link" style="margin-left:auto">Open Planner →</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No gardens yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

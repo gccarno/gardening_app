@@ -7,19 +7,25 @@
 <form method="post" action="{{ url_for('edit_plant', plant_id=plant.id) }}" class="form">
   <label>Name <input type="text" name="name" value="{{ plant.name }}" required></label>
   <label>Type <input type="text" name="type" value="{{ plant.type or '' }}"></label>
-  <label>Bed
-    <select name="bed_id">
-      <option value="">— None —</option>
-      {% for bed in beds %}
-      <option value="{{ bed.id }}" {% if plant.bed_id == bed.id %}selected{% endif %}>{{ bed.name }}</option>
-      {% endfor %}
-    </select>
-  </label>
   <label>Planted Date <input type="date" name="planted_date" value="{{ plant.planted_date or '' }}"></label>
   <label>Expected Harvest <input type="date" name="expected_harvest" value="{{ plant.expected_harvest or '' }}"></label>
   <label>Notes <textarea name="notes" rows="3">{{ plant.notes or '' }}</textarea></label>
   <button type="submit">Save Changes</button>
 </form>
+
+<h2>Beds</h2>
+{% if plant.bed_plants %}
+<ul class="card-list">
+  {% for bp in plant.bed_plants %}
+  <li class="card">
+    <a href="{{ url_for('bed_detail', bed_id=bp.bed.id) }}">{{ bp.bed.name }}</a>
+    {% if bp.bed.garden %}<span class="muted">in {{ bp.bed.garden.name }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Not assigned to any bed. Use the Planner to assign.</p>
+{% endif %}
 
 <h2>Tasks</h2>
 {% if plant.tasks %}

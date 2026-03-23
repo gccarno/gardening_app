@@ -158,3 +158,5 @@ dl.details dt { font-weight: 600; color: #3a5c37; }
 
 a { color: #3a6b35; }
 a:hover { color: #2e5429; }
+
+main.fullwidth { max-width: none; margin: 0; padding: 0; }

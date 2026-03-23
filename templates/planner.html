@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ garden.name }} — Planner{% endblock %}
+{% block main_class %}fullwidth{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='planner.css') }}">
+
+<div class="planner-layout">
+  <!-- Sidebar -->
+  <aside class="planner-sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-heading">
+        <strong>{{ garden.name }}</strong>
+        <a href="{{ url_for('garden_detail', garden_id=garden.id) }}" class="sidebar-back">✎ Edit</a>
+      </div>
+
+      <div class="sidebar-label">Beds</div>
+      <ul class="palette-list" id="palette-beds">
+        {% for bed in garden.beds %}
+        <li class="palette-item palette-bed"
+            draggable="true"
+            data-bed-id="{{ bed.id }}"
+            data-width="{{ bed.width_ft }}"
+            data-height="{{ bed.height_ft }}"
+            data-name="{{ bed.name }}">
+          {{ bed.name }}
+          <span class="palette-size">{{ bed.width_ft }}×{{ bed.height_ft }} {{ garden.unit }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+
+      <details class="add-bed-details">
+        <summary>+ Add New Bed</summary>
+        <form id="add-bed-form" class="sidebar-form">
+          <input type="hidden" name="garden_id" value="{{ garden.id }}">
+          <label>Name <input type="text" name="name" required></label>
+          <label>Width ({{ garden.unit }}) <input type="number" name="width_ft" value="4" step="0.5" min="0.5"></label>
+          <label>Height ({{ garden.unit }}) <input type="number" name="height_ft" value="8" step="0.5" min="0.5"></label>
+          <button type="submit">Add Bed</button>
+        </form>
+      </details>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Plants</div>
+      <ul class="palette-list" id="palette-plants">
+        {% for plant in all_plants %}
+        <li class="palette-item palette-plant"
+            draggable="true"
+            data-plant-id="{{ plant.id }}"
+            data-name="{{ plant.name }}">
+          {{ plant.name }}
+          {% if plant.type %}<span class="palette-type">{{ plant.type }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </aside>
+
+  <!-- Canvas -->
+  <div class="planner-canvas-wrap">
+    <div class="planner-canvas"
+         id="planner-canvas"
+         data-garden-id="{{ garden.id }}"
+         data-px="{{ px_per_unit }}">
+
+      {% for bed in garden.beds %}
+      <div class="canvas-bed"
+           id="canvas-bed-{{ bed.id }}"
+           draggable="true"
+           data-bed-id="{{ bed.id }}"
+           style="left:{{ (bed.pos_x * px_per_unit)|int }}px;
+                  top:{{ (bed.pos_y * px_per_unit)|int }}px;
+                  width:{{ (bed.width_ft * px_per_unit)|int }}px;
+                  height:{{ (bed.height_ft * px_per_unit)|int }}px;">
+        <div class="canvas-bed-header">{{ bed.name }}</div>
+        <div class="canvas-bed-plants" data-bed-id="{{ bed.id }}">
+          {% for bp in bed.bed_plants %}
+          <span class="plant-chip" data-bp-id="{{ bp.id }}">
+            {{ bp.plant.name }}
+            <button class="chip-remove" data-bp-id="{{ bp.id }}" title="Remove">×</button>
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='planner.js') }}"></script>
+{% endblock %}

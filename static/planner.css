@@ -1,0 +1,229 @@
+/* Planner layout */
+.planner-layout {
+  display: flex;
+  height: calc(100vh - 48px);
+  overflow: hidden;
+}
+
+/* Sidebar */
+.planner-sidebar {
+  width: 240px;
+  min-width: 240px;
+  overflow-y: auto;
+  border-right: 1px solid #d8e8d6;
+  background: #f9fcf8;
+  padding: 0.75rem 0;
+}
+
+.sidebar-section {
+  padding: 0 0.75rem 1rem;
+  border-bottom: 1px solid #e4f0e2;
+  margin-bottom: 0.5rem;
+}
+
+.sidebar-section:last-child {
+  border-bottom: none;
+}
+
+.sidebar-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #e4f0e2;
+}
+
+.sidebar-back {
+  font-size: 0.78rem;
+  color: #5a9e54;
+  text-decoration: none;
+}
+
+.sidebar-back:hover { color: #3a6b35; }
+
+.sidebar-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7a907a;
+  margin: 0.6rem 0 0.4rem;
+}
+
+.palette-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+}
+
+.palette-item {
+  border: 1px dashed #9ec49a;
+  border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+  cursor: grab;
+  font-size: 0.85rem;
+  background: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.3rem;
+  user-select: none;
+}
+
+.palette-item:active { cursor: grabbing; }
+.palette-item:hover { background: #f0f8ee; border-color: #5a9e54; }
+
+.palette-size, .palette-type {
+  font-size: 0.72rem;
+  color: #7a907a;
+}
+
+/* Add bed form inside <details> */
+.add-bed-details {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.add-bed-details summary {
+  cursor: pointer;
+  color: #3a6b35;
+  font-size: 0.82rem;
+  padding: 0.2rem 0;
+}
+
+.sidebar-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.sidebar-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #3a5c37;
+}
+
+.sidebar-form input {
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #c0d4be;
+  border-radius: 4px;
+  background: #fbfefb;
+  font-size: 0.82rem;
+}
+
+.sidebar-form button {
+  font: inherit;
+  padding: 0.35rem 0.75rem;
+  border: none;
+  border-radius: 4px;
+  background: #3a6b35;
+  color: white;
+  cursor: pointer;
+  font-size: 0.82rem;
+  margin-top: 0.2rem;
+}
+
+.sidebar-form button:hover { background: #2e5429; }
+
+/* Canvas */
+.planner-canvas-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #edf5eb;
+}
+
+.planner-canvas {
+  position: relative;
+  min-width: 2400px;
+  min-height: 1800px;
+  background-image:
+    linear-gradient(to right, #c8dfc5 1px, transparent 1px),
+    linear-gradient(to bottom, #c8dfc5 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* Bed on canvas */
+.canvas-bed {
+  position: absolute;
+  border: 2px solid #3a6b35;
+  background: rgba(255,255,255,0.92);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  cursor: grab;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  overflow: hidden;
+}
+
+.canvas-bed:active { cursor: grabbing; }
+
+.canvas-bed.dragging {
+  opacity: 0.6;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}
+
+.canvas-bed-header {
+  background: #3a6b35;
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.canvas-bed-plants {
+  flex: 1;
+  padding: 0.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-content: flex-start;
+  overflow: hidden;
+  transition: background 0.15s;
+}
+
+.canvas-bed-plants.drop-active {
+  background: #d4edce;
+  outline: 2px dashed #5a9e54;
+  outline-offset: -2px;
+}
+
+/* Plant chip */
+.plant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: #5a9e54;
+  color: white;
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.chip-remove {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.8);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.chip-remove:hover { color: white; background: none; }
