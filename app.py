@@ -1,6 +1,126 @@
+import os
 from datetime import date
+import requests as http
+from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from models import db, Garden, GardenBed, Plant, Task, BedPlant
+from models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary
+
+load_dotenv()
+
+
+_LIBRARY_SEED = [
+    # --- Vegetables ---
+    dict(name='Tomato', type='vegetable', spacing_in=24, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=70,
+         notes='Start indoors 6–8 weeks before last frost. Days to harvest measured from transplant. Stake or cage plants. Consistent watering prevents blossom end rot.'),
+    dict(name='Cherry Tomato', type='vegetable', spacing_in=18, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=60,
+         notes='More prolific and forgiving than beefsteak types. Start indoors 6–8 weeks before last frost. Days to harvest from transplant.'),
+    dict(name='Cucumber', type='vegetable', spacing_in=12, sunlight='Full sun', water='High',
+         days_to_germination=7, days_to_harvest=55,
+         notes='Direct sow after last frost or start indoors 3–4 weeks early. Trellis to save space. Harvest frequently to encourage production.'),
+    dict(name='Zucchini', type='vegetable', spacing_in=36, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=50,
+         notes='Direct sow after last frost. One or two plants supply a family. Harvest small (6–8 in) for best flavor.'),
+    dict(name='Bell Pepper', type='vegetable', spacing_in=18, sunlight='Full sun', water='Moderate',
+         days_to_germination=10, days_to_harvest=75,
+         notes='Start indoors 8–10 weeks before last frost. Needs warm soil. Days to harvest from transplant.'),
+    dict(name='Jalapeño', type='vegetable', spacing_in=18, sunlight='Full sun', water='Moderate',
+         days_to_germination=10, days_to_harvest=75,
+         notes='Start indoors 8–10 weeks before last frost. Allow to turn red for extra heat and sweetness.'),
+    dict(name='Lettuce', type='vegetable', spacing_in=6, sunlight='Partial shade', water='Moderate',
+         days_to_germination=7, days_to_harvest=45,
+         notes='Succession sow every 2–3 weeks for continuous harvest. Bolts in heat; best in spring and fall. Cut-and-come-again varieties give multiple harvests.'),
+    dict(name='Spinach', type='vegetable', spacing_in=4, sunlight='Partial shade', water='Moderate',
+         days_to_germination=7, days_to_harvest=40,
+         notes='Cool-season crop; sow in early spring or fall. Bolts quickly in heat. Harvest outer leaves to extend season.'),
+    dict(name='Kale', type='vegetable', spacing_in=12, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=55,
+         notes='Very cold-hardy; flavor improves after frost. Harvest outer leaves continuously. Can overwinter in mild climates.'),
+    dict(name='Arugula', type='vegetable', spacing_in=4, sunlight='Partial shade', water='Moderate',
+         days_to_germination=5, days_to_harvest=30,
+         notes='Fast-growing cool-season green. Succession sow every 2–3 weeks. Becomes peppery and bolts in heat.'),
+    dict(name='Swiss Chard', type='vegetable', spacing_in=6, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=50,
+         notes='Heat and cold tolerant. Harvest outer leaves. Colorful stems make it ornamental as well.'),
+    dict(name='Carrot', type='vegetable', spacing_in=3, sunlight='Full sun', water='Moderate',
+         days_to_germination=14, days_to_harvest=70,
+         notes='Direct sow only; does not transplant well. Needs loose, deep, rock-free soil. Thin to 3 in apart for best root development.'),
+    dict(name='Radish', type='vegetable', spacing_in=2, sunlight='Full sun', water='Moderate',
+         days_to_germination=5, days_to_harvest=25,
+         notes='One of the fastest vegetables. Great for marking slow-germinating rows. Sow every 2 weeks for continuous harvest.'),
+    dict(name='Beet', type='vegetable', spacing_in=4, sunlight='Full sun', water='Moderate',
+         days_to_germination=10, days_to_harvest=55,
+         notes='Direct sow. Both roots and greens are edible. Thin and eat thinnings as salad greens.'),
+    dict(name='Green Bean', type='vegetable', spacing_in=6, sunlight='Full sun', water='Moderate',
+         days_to_germination=8, days_to_harvest=55,
+         notes='Direct sow after last frost. Bush types need no support. Pole types need a trellis but produce longer.'),
+    dict(name='Pea', type='vegetable', spacing_in=4, sunlight='Full sun', water='Moderate',
+         days_to_germination=9, days_to_harvest=60,
+         notes='Direct sow as early as soil can be worked — tolerates light frost. Needs trellis or support. Harvest often to encourage production.'),
+    dict(name='Broccoli', type='vegetable', spacing_in=18, sunlight='Full sun', water='High',
+         days_to_germination=7, days_to_harvest=80,
+         notes='Start indoors 6–8 weeks before transplanting. Cool-season crop; bolts in heat. Harvest central head before flowers open; side shoots follow.'),
+    dict(name='Cauliflower', type='vegetable', spacing_in=18, sunlight='Full sun', water='High',
+         days_to_germination=7, days_to_harvest=85,
+         notes='Needs consistent moisture and cool temps. Blanch heads by tying outer leaves over them when head reaches golf-ball size.'),
+    dict(name='Cabbage', type='vegetable', spacing_in=18, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=80,
+         notes='Start indoors 6–8 weeks early. Cool-season crop. Heads may split if overwatered after a dry period.'),
+    dict(name='Eggplant', type='vegetable', spacing_in=18, sunlight='Full sun', water='Moderate',
+         days_to_germination=10, days_to_harvest=80,
+         notes='Start indoors 8–10 weeks before last frost. Needs warm conditions. Days to harvest from transplant.'),
+    dict(name='Onion', type='vegetable', spacing_in=4, sunlight='Full sun', water='Moderate',
+         days_to_germination=10, days_to_harvest=100,
+         notes='Start from sets or transplants for easier growing. Stop watering when tops begin to fall over. Cure before storing.'),
+    dict(name='Garlic', type='vegetable', spacing_in=6, sunlight='Full sun', water='Low',
+         days_to_germination=14, days_to_harvest=240,
+         notes='Plant cloves in fall for summer harvest. Each clove becomes a full bulb. Harvest when half the leaves have yellowed. Days to harvest counted from fall planting.'),
+    dict(name='Corn', type='vegetable', spacing_in=12, sunlight='Full sun', water='High',
+         days_to_germination=7, days_to_harvest=75,
+         notes='Direct sow after last frost. Plant in blocks (not single rows) of at least 4×4 for good wind pollination. Harvest when silks are brown and kernels squirt milky juice.'),
+    dict(name='Pumpkin', type='vegetable', spacing_in=60, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=100,
+         notes='Needs a lot of space. Direct sow after last frost or start indoors 3 weeks early. Cure for 10 days after harvest for longer storage.'),
+    # --- Herbs ---
+    dict(name='Basil', type='herb', spacing_in=12, sunlight='Full sun', water='Moderate',
+         days_to_germination=7, days_to_harvest=30,
+         notes='Start indoors 4–6 weeks before last frost or direct sow after. Pinch flowers to keep leaves coming. Frost-sensitive; harvest before first frost.'),
+    dict(name='Parsley', type='herb', spacing_in=8, sunlight='Full sun', water='Moderate',
+         days_to_germination=21, days_to_harvest=70,
+         notes='Slow to germinate; soak seeds overnight to speed up. Biennial — best grown as annual. Harvest outer stems first.'),
+    dict(name='Cilantro', type='herb', spacing_in=6, sunlight='Partial shade', water='Moderate',
+         days_to_germination=7, days_to_harvest=25,
+         notes='Cool-season herb that bolts quickly in heat. Succession sow every 3 weeks. Let some bolt to collect coriander seeds.'),
+    dict(name='Dill', type='herb', spacing_in=12, sunlight='Full sun', water='Low',
+         days_to_germination=7, days_to_harvest=40,
+         notes='Direct sow; does not transplant well. Let some go to seed for self-sowing. Attracts beneficial insects.'),
+    dict(name='Oregano', type='herb', spacing_in=12, sunlight='Full sun', water='Low',
+         days_to_germination=10, days_to_harvest=45,
+         notes='Perennial in most zones. Harvest before flowering for peak flavor. Very drought-tolerant once established.'),
+    dict(name='Thyme', type='herb', spacing_in=12, sunlight='Full sun', water='Low',
+         days_to_germination=14, days_to_harvest=60,
+         notes='Perennial. Drought-tolerant once established. Trim after flowering to keep compact.'),
+    dict(name='Rosemary', type='herb', spacing_in=24, sunlight='Full sun', water='Low',
+         days_to_germination=21, days_to_harvest=90,
+         notes='Perennial in zones 7+; grow as annual or bring indoors in colder climates. Very drought-tolerant. Slow from seed; easier from cuttings.'),
+    dict(name='Mint', type='herb', spacing_in=18, sunlight='Partial shade', water='Moderate',
+         days_to_germination=14, days_to_harvest=30,
+         notes='Spreads aggressively via runners; best grown in containers or a contained bed. Perennial. Many varieties available.'),
+    dict(name='Chives', type='herb', spacing_in=6, sunlight='Full sun', water='Moderate',
+         days_to_germination=14, days_to_harvest=30,
+         notes='Perennial. Harvest by cutting leaves to 1 inch above ground. Edible purple flowers. Divide clumps every 2–3 years.'),
+    dict(name='Sage', type='herb', spacing_in=18, sunlight='Full sun', water='Low',
+         days_to_germination=14, days_to_harvest=75,
+         notes='Perennial in zones 5+. Drought-tolerant once established. Harvest lightly the first year. Trim after flowering.'),
+]
+
+
+def _seed_library():
+    if PlantLibrary.query.count() == 0:
+        for entry in _LIBRARY_SEED:
+            db.session.add(PlantLibrary(**entry))
+        db.session.commit()
 
 
 def create_app():
@@ -12,6 +132,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _seed_library()
 
     # --- Dashboard ---
 
@@ -64,6 +185,111 @@ def create_app():
         db.session.commit()
         return redirect(url_for('gardens'))
 
+    # frost dates keyed by zone number (strip letter suffix)
+    _FROST_DATES = {
+        '1': ('Jun 15', 'Aug 15'), '2': ('Jun 1',  'Sep 1'),
+        '3': ('May 15', 'Sep 15'), '4': ('May 1',  'Oct 1'),
+        '5': ('Apr 15', 'Oct 15'), '6': ('Apr 1',  'Oct 31'),
+        '7': ('Mar 15', 'Nov 15'), '8': ('Feb 15', 'Dec 1'),
+        '9': ('Jan 31', 'Dec 15'), '10': ('rare',  'rare'),
+        '11': ('none',  'none'),   '12': ('none',  'none'),
+        '13': ('none',  'none'),
+    }
+
+    _WMO = {
+        0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+        45: 'Fog', 48: 'Icy fog',
+        51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+        61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+        71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+        80: 'Light showers', 81: 'Showers', 82: 'Heavy showers',
+        85: 'Snow showers', 86: 'Heavy snow showers',
+        95: 'Thunderstorm', 96: 'Thunderstorm w/ hail', 99: 'Thunderstorm w/ heavy hail',
+    }
+
+    @app.route('/gardens/<int:garden_id>/location', methods=['POST'])
+    def set_garden_location(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        zip_code = request.form.get('zip_code', '').strip()
+        if not zip_code:
+            return redirect(url_for('garden_detail', garden_id=garden_id))
+        errors = []
+        try:
+            z = http.get(f'https://phzmapi.org/{zip_code}.json', timeout=6)
+            z.raise_for_status()
+            zdata = z.json()
+            garden.usda_zone = zdata.get('zone')
+            garden.zone_temp_range = zdata.get('temperature_range')
+            coords = zdata.get('coordinates', {})
+            garden.latitude = float(coords.get('lat', 0)) or None
+            garden.longitude = float(coords.get('lon', 0)) or None
+        except Exception:
+            errors.append('Could not fetch USDA zone — check the zip code.')
+        try:
+            p = http.get(f'http://api.zippopotam.us/us/{zip_code}', timeout=6)
+            p.raise_for_status()
+            pdata = p.json()
+            place = (pdata.get('places') or [{}])[0]
+            garden.city = place.get('place name')
+            garden.state = place.get('state abbreviation')
+            if not garden.latitude:
+                garden.latitude = float(place.get('latitude', 0)) or None
+                garden.longitude = float(place.get('longitude', 0)) or None
+        except Exception:
+            errors.append('Could not fetch city/state for that zip code.')
+        if not errors:
+            garden.zip_code = zip_code
+        db.session.commit()
+        return redirect(url_for('garden_detail', garden_id=garden_id))
+
+    @app.route('/api/gardens/<int:garden_id>/weather')
+    def api_garden_weather(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        if not garden.latitude or not garden.longitude:
+            return jsonify({'error': 'no_location'}), 404
+        try:
+            resp = http.get('https://api.open-meteo.com/v1/forecast', params={
+                'latitude': garden.latitude,
+                'longitude': garden.longitude,
+                'current': 'temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m',
+                'daily': 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,uv_index_max',
+                'temperature_unit': 'fahrenheit',
+                'wind_speed_unit': 'mph',
+                'precipitation_unit': 'inch',
+                'forecast_days': 7,
+                'timezone': 'auto',
+            }, timeout=8)
+            resp.raise_for_status()
+        except http.exceptions.RequestException as e:
+            return jsonify({'error': str(e)}), 502
+        data = resp.json()
+        cur = data.get('current', {})
+        daily = data.get('daily', {})
+        zone_num = ''.join(filter(str.isdigit, garden.usda_zone or ''))
+        frost = _FROST_DATES.get(zone_num, ('unknown', 'unknown'))
+        days = []
+        dates = daily.get('time', [])
+        for i, d in enumerate(dates):
+            days.append({
+                'date': d,
+                'high': daily['temperature_2m_max'][i],
+                'low':  daily['temperature_2m_min'][i],
+                'precip_prob': daily['precipitation_probability_max'][i],
+                'uv': daily.get('uv_index_max', [None]*7)[i],
+                'condition': _WMO.get(daily['weather_code'][i], 'Unknown'),
+            })
+        return jsonify({
+            'current': {
+                'temp': cur.get('temperature_2m'),
+                'humidity': cur.get('relative_humidity_2m'),
+                'precipitation': cur.get('precipitation'),
+                'wind_speed': cur.get('wind_speed_10m'),
+                'condition': _WMO.get(cur.get('weather_code'), 'Unknown'),
+            },
+            'daily': days,
+            'frost': {'last_spring': frost[0], 'first_fall': frost[1]},
+        })
+
     @app.route('/gardens/<int:garden_id>/planner')
     def planner(garden_id):
         garden = Garden.query.get_or_404(garden_id)
@@ -78,12 +304,15 @@ def create_app():
         if request.method == 'POST':
             width = request.form.get('width_ft')
             height = request.form.get('height_ft')
+            depth = request.form.get('depth_ft')
             bed = GardenBed(
                 name=request.form['name'],
                 description=request.form.get('description'),
                 location=request.form.get('location'),
                 width_ft=float(width) if width else 4.0,
                 height_ft=float(height) if height else 8.0,
+                depth_ft=float(depth) if depth else None,
+                soil_notes=request.form.get('soil_notes'),
             )
             db.session.add(bed)
             db.session.commit()
@@ -94,7 +323,8 @@ def create_app():
     @app.route('/beds/<int:bed_id>')
     def bed_detail(bed_id):
         bed = GardenBed.query.get_or_404(bed_id)
-        return render_template('bed_detail.html', bed=bed)
+        all_plants = Plant.query.order_by(Plant.name).all()
+        return render_template('bed_detail.html', bed=bed, all_plants=all_plants)
 
     @app.route('/beds/<int:bed_id>/delete', methods=['POST'])
     def delete_bed(bed_id):
@@ -106,9 +336,12 @@ def create_app():
     @app.route('/beds/<int:bed_id>/edit', methods=['POST'])
     def edit_bed(bed_id):
         bed = GardenBed.query.get_or_404(bed_id)
+        depth = request.form.get('depth_ft')
         bed.name = request.form['name']
         bed.location = request.form.get('location')
         bed.description = request.form.get('description')
+        bed.depth_ft = float(depth) if depth else None
+        bed.soil_notes = request.form.get('soil_notes')
         db.session.commit()
         return redirect(url_for('bed_detail', bed_id=bed.id))
 
@@ -207,6 +440,166 @@ def create_app():
         db.session.commit()
         return redirect(url_for('tasks'))
 
+    # --- Plant Library ---
+
+    PERENUAL_KEY = os.getenv('PERENUAL_API_KEY', '')
+
+
+
+    @app.route('/library')
+    def library():
+        entries = PlantLibrary.query.order_by(PlantLibrary.type, PlantLibrary.name).all()
+        return render_template('library.html', entries=entries)
+
+    @app.route('/library/<int:entry_id>')
+    def library_detail(entry_id):
+        entry = PlantLibrary.query.get_or_404(entry_id)
+        return render_template('library_detail.html', entry=entry)
+
+    @app.route('/library/<int:entry_id>/add', methods=['POST'])
+    def library_add_plant(entry_id):
+        entry = PlantLibrary.query.get_or_404(entry_id)
+        plant = Plant(name=entry.name, type=entry.type)
+        db.session.add(plant)
+        db.session.commit()
+        return redirect(url_for('plant_detail', plant_id=plant.id))
+
+    def _download_plant_image(perenual_id, image_url):
+        """Download image from URL, save to static/plant_images/<perenual_id>.jpg.
+        Returns filename on success, None on failure."""
+        import re
+        filename = f'{perenual_id}.jpg'
+        dest = os.path.join(app.static_folder, 'plant_images', filename)
+        if os.path.exists(dest):
+            return filename
+        try:
+            r = http.get(image_url, timeout=10, stream=True)
+            r.raise_for_status()
+            content_type = r.headers.get('content-type', '')
+            ext = '.jpg'
+            if 'png' in content_type:
+                ext = '.png'
+            elif 'webp' in content_type:
+                ext = '.webp'
+            filename = f'{perenual_id}{ext}'
+            dest = os.path.join(app.static_folder, 'plant_images', filename)
+            with open(dest, 'wb') as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+            return filename
+        except Exception:
+            return None
+
+    def _perenual_get(path, params):
+        """Make a Perenual API call; return (data, err_type, err_msg)."""
+        if not PERENUAL_KEY:
+            return None, 'config', 'PERENUAL_API_KEY is not configured.'
+        params['key'] = PERENUAL_KEY
+        try:
+            resp = http.get(f'https://perenual.com/api/{path}', params=params, timeout=8)
+        except http.exceptions.Timeout:
+            return None, 'network', 'Request to Perenual timed out. Check your connection.'
+        except http.exceptions.RequestException as e:
+            return None, 'network', f'Network error: {e}'
+        if resp.status_code == 429:
+            return None, 'rate_limit', (
+                'Perenual daily request limit reached (100 requests/day on the free plan). '
+                'Try again tomorrow or upgrade your plan at perenual.com.'
+            )
+        if resp.status_code == 401:
+            return None, 'auth', 'Invalid Perenual API key. Check your .env file.'
+        if not resp.ok:
+            return None, 'api', f'Perenual returned an error (HTTP {resp.status_code}).'
+        data = resp.json()
+        # Free tier wraps paywalled data in upgrade messages
+        if isinstance(data, dict) and 'Upgrade Plans' in str(data.get('message', '')):
+            return None, 'rate_limit', (
+                'This data requires a Perenual premium plan. '
+                'Visit perenual.com/subscription-api-pricing to upgrade.'
+            )
+        return data, None, None
+
+    @app.route('/api/perenual/search')
+    def api_perenual_search():
+        q = request.args.get('q', '').strip()
+        if not q:
+            return jsonify({'results': []})
+        data, err_type, err_msg = _perenual_get('species-list', {'q': q, 'page': 1})
+        if err_type:
+            return jsonify({'error': err_type, 'message': err_msg}), (429 if err_type == 'rate_limit' else 502)
+        results = []
+        for p in data.get('data', []):
+            name = p.get('common_name') or (p.get('scientific_name') or [None])[0]
+            if not name or 'Upgrade Plans' in str(name):
+                continue
+            sunlight = ', '.join(p.get('sunlight') or [])
+            if 'Upgrade Plans' in sunlight:
+                sunlight = ''
+            results.append({
+                'perenual_id': p.get('id'),
+                'name': name,
+                'scientific_name': (p.get('scientific_name') or [None])[0],
+                'sunlight': sunlight,
+                'watering': p.get('watering'),
+                'cycle': p.get('cycle'),
+                'image': (p.get('default_image') or {}).get('thumbnail'),
+            })
+        return jsonify({'results': results})
+
+    @app.route('/api/perenual/fetch-image/<int:entry_id>', methods=['POST'])
+    def api_perenual_fetch_image(entry_id):
+        """Fetch image from Perenual and save locally. Called when no local image exists."""
+        entry = PlantLibrary.query.get_or_404(entry_id)
+        if not entry.perenual_id:
+            return jsonify({'error': 'no_id', 'message': 'No Perenual ID for this plant.'}), 404
+        if entry.image_filename:
+            return jsonify({'ok': True, 'filename': entry.image_filename})
+        data, err_type, err_msg = _perenual_get(f'species/details/{entry.perenual_id}', {})
+        if err_type:
+            return jsonify({'error': err_type, 'message': err_msg}), (429 if err_type == 'rate_limit' else 502)
+        img = data.get('default_image') or {}
+        url = img.get('small_url') or img.get('thumbnail')
+        if not url or 'Upgrade Plans' in str(url):
+            return jsonify({'error': 'no_image', 'message': 'No image available.'}), 404
+        filename = _download_plant_image(entry.perenual_id, url)
+        if not filename:
+            return jsonify({'error': 'download', 'message': 'Failed to download image.'}), 502
+        entry.image_filename = filename
+        db.session.commit()
+        return jsonify({'ok': True, 'filename': filename})
+
+    @app.route('/api/perenual/save', methods=['POST'])
+    def api_perenual_save():
+        data = request.get_json(force=True)
+        if not data or not data.get('name'):
+            return jsonify({'error': 'name required'}), 400
+        existing = PlantLibrary.query.filter(
+            db.func.lower(PlantLibrary.name) == data['name'].lower()
+        ).first()
+        if existing:
+            return jsonify({'ok': True, 'id': existing.id, 'existing': True})
+        water_map = {'minimum': 'Low', 'average': 'Moderate', 'frequent': 'High'}
+        water = water_map.get((data.get('watering') or '').lower())
+        sunlight = data.get('sunlight') or None
+        if sunlight and 'Upgrade Plans' in sunlight:
+            sunlight = None
+        perenual_id = data.get('perenual_id') or None
+        image_filename = None
+        if perenual_id and data.get('image'):
+            image_filename = _download_plant_image(perenual_id, data['image'])
+        entry = PlantLibrary(
+            name=data['name'],
+            scientific_name=data.get('scientific_name') or None,
+            perenual_id=perenual_id,
+            image_filename=image_filename,
+            type=data.get('cycle') or None,
+            sunlight=sunlight,
+            water=water,
+        )
+        db.session.add(entry)
+        db.session.commit()
+        return jsonify({'ok': True, 'id': entry.id, 'existing': False})
+
     # --- JSON API ---
 
     @app.route('/api/beds', methods=['POST'])
@@ -269,6 +662,34 @@ def create_app():
         db.session.delete(bp)
         db.session.commit()
         return jsonify({'ok': True})
+
+    @app.route('/api/beds/<int:bed_id>/grid')
+    def api_bed_grid(bed_id):
+        bed = GardenBed.query.get_or_404(bed_id)
+        placed = [
+            {'id': bp.id, 'plant_id': bp.plant_id, 'plant_name': bp.plant.name,
+             'grid_x': bp.grid_x, 'grid_y': bp.grid_y}
+            for bp in bed.bed_plants
+            if bp.grid_x is not None and bp.grid_y is not None
+        ]
+        return jsonify({
+            'bed': {'id': bed.id, 'name': bed.name, 'width_ft': bed.width_ft, 'height_ft': bed.height_ft},
+            'placed': placed,
+        })
+
+    @app.route('/api/beds/<int:bed_id>/grid-plant', methods=['POST'])
+    def api_bed_grid_plant(bed_id):
+        GardenBed.query.get_or_404(bed_id)
+        data = request.get_json(force=True)
+        if not data or 'plant_id' not in data or 'grid_x' not in data or 'grid_y' not in data:
+            return jsonify({'error': 'plant_id, grid_x, grid_y required'}), 400
+        grid_x, grid_y = int(data['grid_x']), int(data['grid_y'])
+        if BedPlant.query.filter_by(bed_id=bed_id, grid_x=grid_x, grid_y=grid_y).first():
+            return jsonify({'error': 'cell already occupied'}), 409
+        bp = BedPlant(bed_id=bed_id, plant_id=int(data['plant_id']), grid_x=grid_x, grid_y=grid_y)
+        db.session.add(bp)
+        db.session.commit()
+        return jsonify({'ok': True, 'id': bp.id})
 
     return app
 

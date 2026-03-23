@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Plant Library{% endblock %}
+{% block content %}
+<h1>Plant Library</h1>
+
+<section style="margin-bottom:2rem;">
+  <h2>Search Perenual</h2>
+  <div style="display:flex;gap:0.5rem;max-width:480px;">
+    <input type="text" id="perenual-q" class="perenual-input" placeholder="e.g. basil, sunflower…">
+    <button id="perenual-search-btn">Search</button>
+  </div>
+  <div id="perenual-results" class="perenual-results" style="display:none;"></div>
+</section>
+
+<div class="lib-filters" id="lib-filters">
+  <button class="lib-filter active" data-type="all">All ({{ entries | length }})</button>
+  <button class="lib-filter" data-type="vegetable">Vegetables</button>
+  <button class="lib-filter" data-type="herb">Herbs</button>
+</div>
+
+<table class="lib-table" id="lib-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Spacing</th>
+      <th>Sunlight</th>
+      <th>Water</th>
+      <th>Germination</th>
+      <th>Days to Harvest</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for e in entries %}
+    <tr data-type="{{ e.type }}">
+      <td><a href="{{ url_for('library_detail', entry_id=e.id) }}">{{ e.name }}</a></td>
+      <td><span class="lib-badge lib-badge--{{ e.type }}">{{ e.type }}</span></td>
+      <td>{{ e.spacing_in }}&Prime;</td>
+      <td>{{ e.sunlight or '—' }}</td>
+      <td>{{ e.water or '—' }}</td>
+      <td>{{ e.days_to_germination ~ ' days' if e.days_to_germination else '—' }}</td>
+      <td>{{ e.days_to_harvest ~ ' days' if e.days_to_harvest else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+// --- Local table filter ---
+const filters = document.querySelectorAll('.lib-filter');
+const rows = document.querySelectorAll('#lib-table tbody tr');
+
+filters.forEach(btn => {
+  btn.addEventListener('click', () => {
+    filters.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const type = btn.dataset.type;
+    rows.forEach(row => {
+      row.style.display = (type === 'all' || row.dataset.type === type) ? '' : 'none';
+    });
+  });
+});
+
+// --- Perenual search ---
+const searchBtn = document.getElementById('perenual-search-btn');
+const searchInput = document.getElementById('perenual-q');
+const resultsEl = document.getElementById('perenual-results');
+
+searchBtn.addEventListener('click', runSearch);
+searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+
+async function runSearch() {
+  const q = searchInput.value.trim();
+  if (!q) return;
+  searchBtn.disabled = true;
+  searchBtn.textContent = 'Searching…';
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = '<p class="muted">Loading…</p>';
+
+  const res = await fetch(`/api/perenual/search?q=${encodeURIComponent(q)}`);
+  const data = await res.json();
+  searchBtn.disabled = false;
+  searchBtn.textContent = 'Search';
+
+  if (data.error) {
+    const isRateLimit = data.error === 'rate_limit';
+    resultsEl.innerHTML = `
+      <div class="perenual-error ${isRateLimit ? 'perenual-error--rate-limit' : ''}">
+        <strong>${isRateLimit ? 'Rate limit reached' : 'Search error'}</strong>
+        <p>${data.message || data.error}</p>
+      </div>`;
+    return;
+  }
+  if (!data.results.length) {
+    resultsEl.innerHTML = '<p class="muted">No results found.</p>';
+    return;
+  }
+
+  resultsEl.innerHTML = data.results.map(r => `
+    <div class="perenual-card" data-result='${JSON.stringify(r).replace(/'/g, "&#39;")}'>
+      ${r.image ? `<img src="${r.image}" alt="${r.name}" class="perenual-thumb">` : '<div class="perenual-thumb perenual-thumb--empty"></div>'}
+      <div class="perenual-card-body">
+        <strong>${r.name}</strong>
+        ${r.scientific_name ? `<span class="muted">${r.scientific_name}</span>` : ''}
+        <div class="perenual-meta">
+          ${r.sunlight ? `<span>☀ ${r.sunlight}</span>` : ''}
+          ${r.watering ? `<span>💧 ${r.watering}</span>` : ''}
+          ${r.cycle ? `<span>↻ ${r.cycle}</span>` : ''}
+        </div>
+      </div>
+      <button class="btn-small perenual-save-btn">Save to Library</button>
+    </div>
+  `).join('');
+
+  resultsEl.querySelectorAll('.perenual-save-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('.perenual-card');
+      const result = JSON.parse(card.dataset.result);
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      const res = await fetch('/api/perenual/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(result),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        btn.textContent = data.existing ? 'Already saved' : 'Saved!';
+        if (!data.existing) {
+          setTimeout(() => window.location.reload(), 800);
+        }
+      } else {
+        btn.textContent = 'Error';
+        btn.disabled = false;
+      }
+    });
+  });
+}
+</script>
+{% endblock %}

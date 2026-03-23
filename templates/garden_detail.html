@@ -3,19 +3,71 @@
 {% block content %}
 <h1>{{ garden.name }}</h1>
 
-<h2>Edit Garden</h2>
-<form method="post" action="{{ url_for('edit_garden', garden_id=garden.id) }}" class="form">
-  <label>Name <input type="text" name="name" value="{{ garden.name }}" required></label>
-  <label>Description <textarea name="description" rows="2">{{ garden.description or '' }}</textarea></label>
-  <label>Unit
-    <select name="unit">
-      <option value="ft" {% if garden.unit == 'ft' %}selected{% endif %}>Feet (ft)</option>
-      <option value="m" {% if garden.unit == 'm' %}selected{% endif %}>Meters (m)</option>
-    </select>
-  </label>
-  <button type="submit">Save Changes</button>
-</form>
+{# ── Location & Weather ─────────────────────────────────────────────── #}
+<section class="weather-section">
+  <h2>Location &amp; Weather</h2>
 
+  {% if garden.city %}
+  <div class="location-header">
+    <span class="location-label">{{ garden.city }}, {{ garden.state }} {{ garden.zip_code }}</span>
+    {% if garden.usda_zone %}
+    <span class="zone-badge">Zone {{ garden.usda_zone }}</span>
+    {% endif %}
+  </div>
+  {% if garden.zone_temp_range or garden.usda_zone %}
+  <p class="muted" style="margin-bottom:0.5rem;">
+    {% if garden.zone_temp_range %}Average winter low: {{ garden.zone_temp_range }}.{% endif %}
+  </p>
+  {% endif %}
+  {% endif %}
+
+  {# Zip form #}
+  <form method="post" action="{{ url_for('set_garden_location', garden_id=garden.id) }}"
+        style="display:flex;gap:0.5rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap;">
+    <input type="text" name="zip_code" value="{{ garden.zip_code or '' }}"
+           placeholder="Enter ZIP code" maxlength="10"
+           style="width:140px;font:inherit;padding:0.4rem 0.6rem;border:1px solid #c0d4be;border-radius:4px;background:#fbfefb;">
+    <button type="submit">{{ 'Update Location' if garden.zip_code else 'Set Location' }}</button>
+  </form>
+
+  {% if garden.latitude %}
+  {# ── Weather widget ── #}
+  <div id="weather-widget">
+    <div id="weather-loading" class="muted">Loading weather…</div>
+
+    <div id="weather-content" style="display:none;">
+      {# Current conditions #}
+      <div class="weather-current" id="weather-current"></div>
+
+      {# Frost dates #}
+      <div class="frost-row" id="frost-row"></div>
+
+      {# 7-day forecast #}
+      <div class="forecast-strip" id="forecast-strip"></div>
+    </div>
+
+    <div id="weather-error" class="weather-err" style="display:none;"></div>
+  </div>
+  {% endif %}
+</section>
+
+{# ── Edit Garden ─────────────────────────────────────────────────────── #}
+<details style="margin-bottom:1.5rem;">
+  <summary style="cursor:pointer;font-weight:600;color:#3a5c37;">Edit Garden</summary>
+  <form method="post" action="{{ url_for('edit_garden', garden_id=garden.id) }}" class="form" style="margin-top:0.75rem;">
+    <label>Name <input type="text" name="name" value="{{ garden.name }}" required></label>
+    <label>Description <textarea name="description" rows="2">{{ garden.description or '' }}</textarea></label>
+    <label>Unit
+      <select name="unit">
+        <option value="ft" {% if garden.unit == 'ft' %}selected{% endif %}>Feet (ft)</option>
+        <option value="m" {% if garden.unit == 'm' %}selected{% endif %}>Meters (m)</option>
+      </select>
+    </label>
+    <button type="submit">Save Changes</button>
+  </form>
+</details>
+
+{# ── Beds ────────────────────────────────────────────────────────────── #}
 <h2>Beds in this Garden</h2>
 {% if garden.beds %}
 <ul class="card-list">
@@ -35,10 +87,84 @@
 </div>
 
 <div class="actions">
-  <form method="post" action="{{ url_for('delete_garden', garden_id=garden.id) }}" onsubmit="return confirm('Delete {{ garden.name }}?')">
+  <form method="post" action="{{ url_for('delete_garden', garden_id=garden.id) }}"
+        onsubmit="return confirm('Delete {{ garden.name }}?')">
     <button type="submit" class="btn-danger">Delete Garden</button>
   </form>
 </div>
 
 <p><a href="{{ url_for('gardens') }}">← Back to Gardens</a></p>
+
+{% if garden.latitude %}
+<script>
+const GARDEN_ID = {{ garden.id }};
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function wmoIcon(condition) {
+  const c = condition.toLowerCase();
+  if (c.includes('thunder')) return '⛈';
+  if (c.includes('snow') || c.includes('blizzard')) return '❄';
+  if (c.includes('rain') || c.includes('drizzle') || c.includes('shower')) return '🌧';
+  if (c.includes('fog')) return '🌫';
+  if (c.includes('overcast')) return '☁';
+  if (c.includes('partly') || c.includes('mainly clear')) return '⛅';
+  if (c.includes('clear') || c.includes('sunny')) return '☀';
+  return '🌡';
+}
+
+(async () => {
+  const loading = document.getElementById('weather-loading');
+  const content = document.getElementById('weather-content');
+  const errEl   = document.getElementById('weather-error');
+
+  try {
+    const res = await fetch(`/api/gardens/${GARDEN_ID}/weather`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+
+    // Current conditions
+    const cur = d.current;
+    document.getElementById('weather-current').innerHTML = `
+      <div class="wc-icon">${wmoIcon(cur.condition)}</div>
+      <div class="wc-temp">${Math.round(cur.temp)}°F</div>
+      <div class="wc-details">
+        <span>${cur.condition}</span>
+        <span>💧 ${cur.humidity}% humidity</span>
+        <span>💨 ${Math.round(cur.wind_speed)} mph</span>
+        ${cur.precipitation > 0 ? `<span>🌧 ${cur.precipitation}" precip</span>` : ''}
+      </div>`;
+
+    // Frost dates
+    const f = d.frost;
+    const showFrost = f.last_spring !== 'none';
+    document.getElementById('frost-row').innerHTML = showFrost ? `
+      <span class="frost-item">🌱 Last spring frost: <strong>${f.last_spring}</strong></span>
+      <span class="frost-item">🍂 First fall frost: <strong>${f.first_fall}</strong></span>
+    ` : `<span class="frost-item">🌴 Frost-free zone</span>`;
+
+    // 7-day forecast
+    document.getElementById('forecast-strip').innerHTML = d.daily.map(day => {
+      const date = new Date(day.date + 'T12:00:00');
+      const label = DAY_NAMES[date.getDay()];
+      return `
+        <div class="forecast-day">
+          <div class="fd-label">${label}</div>
+          <div class="fd-icon">${wmoIcon(day.condition)}</div>
+          <div class="fd-high">${Math.round(day.high)}°</div>
+          <div class="fd-low">${Math.round(day.low)}°</div>
+          ${day.precip_prob != null ? `<div class="fd-precip">💧${day.precip_prob}%</div>` : ''}
+          ${day.uv != null ? `<div class="fd-uv">UV ${Math.round(day.uv)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    loading.style.display = 'none';
+    content.style.display = 'block';
+  } catch (e) {
+    loading.style.display = 'none';
+    errEl.textContent = 'Could not load weather data. Check your connection.';
+    errEl.style.display = 'block';
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}

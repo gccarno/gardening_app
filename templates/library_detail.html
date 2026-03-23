@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ entry.name }} — Plant Library{% endblock %}
+{% block content %}
+<div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;margin-bottom:1rem;">
+  <div>
+    <h1 style="margin-bottom:0.25rem;">{{ entry.name }}</h1>
+    <span class="lib-badge lib-badge--{{ entry.type }}" style="font-size:0.95rem;">{{ entry.type }}</span>
+  </div>
+  {% if entry.image_filename %}
+  <div style="flex-shrink:0;">
+    <img src="{{ url_for('static', filename='plant_images/' ~ entry.image_filename) }}"
+         alt="{{ entry.name }}" class="lib-plant-img">
+  </div>
+  {% elif entry.perenual_id %}
+  <div id="plant-image-wrap" style="flex-shrink:0;">
+    <img id="plant-image" src="" alt="{{ entry.name }}" class="lib-plant-img" style="display:none;">
+    <div id="plant-image-placeholder" class="lib-plant-img lib-plant-img--loading">Loading image…</div>
+  </div>
+  {% endif %}
+</div>
+
+<dl class="details" style="margin-top:1.25rem;">
+  {% if entry.scientific_name %}
+  <dt>Scientific Name</dt><dd><em>{{ entry.scientific_name }}</em></dd>
+  {% endif %}
+  {% if entry.spacing_in %}
+  <dt>Spacing</dt><dd>{{ entry.spacing_in }} inches apart</dd>
+  {% endif %}
+  {% if entry.sunlight %}
+  <dt>Sunlight</dt><dd>{{ entry.sunlight }}</dd>
+  {% endif %}
+  {% if entry.water %}
+  <dt>Water</dt><dd>{{ entry.water }}</dd>
+  {% endif %}
+  {% if entry.days_to_germination %}
+  <dt>Germination</dt><dd>{{ entry.days_to_germination }} days</dd>
+  {% endif %}
+  {% if entry.days_to_harvest %}
+  <dt>Days to Harvest</dt><dd>{{ entry.days_to_harvest }} days</dd>
+  {% endif %}
+  {% if entry.notes %}
+  <dt>Growing Notes</dt><dd>{{ entry.notes }}</dd>
+  {% endif %}
+</dl>
+
+<form method="post" action="{{ url_for('library_add_plant', entry_id=entry.id) }}" style="margin:1.5rem 0;">
+  <button type="submit">+ Add to My Plants</button>
+</form>
+
+<p><a href="{{ url_for('library') }}">← Back to Library</a></p>
+
+{% if entry.perenual_id and not entry.image_filename %}
+<script>
+(async () => {
+  const img = document.getElementById('plant-image');
+  const placeholder = document.getElementById('plant-image-placeholder');
+  try {
+    const res = await fetch('/api/perenual/fetch-image/{{ entry.id }}', {method: 'POST'});
+    const data = await res.json();
+    if (data.ok) {
+      img.src = '/static/plant_images/' + data.filename;
+      img.style.display = 'block';
+      placeholder.style.display = 'none';
+    } else if (data.error === 'rate_limit') {
+      placeholder.textContent = 'Image unavailable — Perenual daily limit reached.';
+      placeholder.classList.add('lib-plant-img--error');
+    } else {
+      placeholder.style.display = 'none';
+    }
+  } catch {
+    placeholder.style.display = 'none';
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}

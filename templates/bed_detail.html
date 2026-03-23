@@ -3,29 +3,49 @@
 {% block content %}
 <h1>{{ bed.name }}</h1>
 
-<h2>Edit Bed</h2>
-<form method="post" action="{{ url_for('edit_bed', bed_id=bed.id) }}" class="form">
-  <label>Name <input type="text" name="name" value="{{ bed.name }}" required></label>
-  <label>Location <input type="text" name="location" value="{{ bed.location or '' }}"></label>
-  <label>Description <textarea name="description" rows="2">{{ bed.description or '' }}</textarea></label>
-  <button type="submit">Save Changes</button>
-</form>
+<details style="margin-bottom:1.5rem;">
+  <summary style="cursor:pointer;font-weight:600;color:#3a5c37;">Edit Bed</summary>
+  <form method="post" action="{{ url_for('edit_bed', bed_id=bed.id) }}" class="form" style="margin-top:0.75rem;">
+    <label>Name <input type="text" name="name" value="{{ bed.name }}" required></label>
+    <label>Location <input type="text" name="location" value="{{ bed.location or '' }}"></label>
+    <label>Description <textarea name="description" rows="2">{{ bed.description or '' }}</textarea></label>
+    <label>Depth (ft) <input type="number" name="depth_ft" step="0.5" min="0" value="{{ bed.depth_ft or '' }}" placeholder="e.g. 1"></label>
+    <label>Soil Notes <textarea name="soil_notes" rows="2">{{ bed.soil_notes or '' }}</textarea></label>
+    <button type="submit">Save Changes</button>
+  </form>
+</details>
 
-<h2>Plants in this Bed</h2>
-{% if bed.bed_plants %}
-<ul class="card-list">
-  {% for bp in bed.bed_plants %}
-  <li class="card">
-    <a href="{{ url_for('plant_detail', plant_id=bp.plant.id) }}">{{ bp.plant.name }}</a>
-    {% if bp.plant.type %}<span class="muted">({{ bp.plant.type }})</span>{% endif %}
-    {% if bp.plant.planted_date %}<span class="muted">planted {{ bp.plant.planted_date }}</span>{% endif %}
-    {% if bp.plant.expected_harvest %}<span class="muted">harvest {{ bp.plant.expected_harvest }}</span>{% endif %}
-  </li>
-  {% endfor %}
-</ul>
-{% else %}
-<p class="muted">No plants in this bed.</p>
+{% if bed.description or bed.location or bed.depth_ft or bed.soil_notes %}
+<dl class="details" style="margin-bottom:1.5rem;">
+  {% if bed.location %}<dt>Location</dt><dd>{{ bed.location }}</dd>{% endif %}
+  {% if bed.description %}<dt>Description</dt><dd>{{ bed.description }}</dd>{% endif %}
+  {% if bed.depth_ft %}<dt>Depth</dt><dd>{{ bed.depth_ft }} ft</dd>{% endif %}
+  {% if bed.soil_notes %}<dt>Soil Notes</dt><dd>{{ bed.soil_notes }}</dd>{% endif %}
+</dl>
 {% endif %}
+
+<h2>Bed Grid &mdash; {{ bed.width_ft|int }}ft wide &times; {{ bed.height_ft|int }}ft tall</h2>
+
+<div class="bed-grid-layout">
+  <div>
+    <div class="bed-grid" id="bed-grid"
+         style="--cols:{{ bed.width_ft|int }};--rows:{{ bed.height_ft|int }};"></div>
+    <p class="muted" style="margin-top:0.5rem;">Each cell = 1 ft &times; 1 ft</p>
+  </div>
+
+  <div class="bed-grid-sidebar">
+    <h3>Place a Plant</h3>
+    <select id="plant-select" class="bed-plant-select">
+      <option value="">— select plant —</option>
+      {% for plant in all_plants %}
+      <option value="{{ plant.id }}">{{ plant.name }}</option>
+      {% endfor %}
+    </select>
+    <p class="muted" style="margin-top:0.75rem;">1. Select a plant above.</p>
+    <p class="muted">2. Click an empty cell to place it.</p>
+    <p class="muted">3. Click a placed plant to remove it.</p>
+  </div>
+</div>
 
 <div class="actions">
   <form method="post" action="{{ url_for('delete_bed', bed_id=bed.id) }}" onsubmit="return confirm('Delete {{ bed.name }}?')">
@@ -34,4 +54,80 @@
 </div>
 
 <p><a href="{{ url_for('beds') }}">← Back to Beds</a></p>
+
+<script>
+const BED_ID = {{ bed.id }};
+const COLS = {{ bed.width_ft|int }};
+const ROWS = {{ bed.height_ft|int }};
+
+const gridEl = document.getElementById('bed-grid');
+const plantSelect = document.getElementById('plant-select');
+let placed = {}; // "x,y" -> {id, plant_id, plant_name}
+
+async function loadGrid() {
+  const res = await fetch(`/api/beds/${BED_ID}/grid`);
+  const data = await res.json();
+  placed = {};
+  for (const p of data.placed) {
+    placed[`${p.grid_x},${p.grid_y}`] = p;
+  }
+  renderGrid();
+}
+
+function renderGrid() {
+  gridEl.innerHTML = '';
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const cell = document.createElement('div');
+      const key = `${x},${y}`;
+      if (placed[key]) {
+        cell.className = 'bed-cell occupied';
+        cell.textContent = placed[key].plant_name;
+        cell.title = `Click to remove ${placed[key].plant_name}`;
+      } else {
+        cell.className = 'bed-cell empty';
+        cell.title = 'Click to place selected plant';
+      }
+      cell.dataset.x = x;
+      cell.dataset.y = y;
+      cell.addEventListener('click', handleCellClick);
+      gridEl.appendChild(cell);
+    }
+  }
+}
+
+async function handleCellClick(e) {
+  const x = parseInt(e.currentTarget.dataset.x);
+  const y = parseInt(e.currentTarget.dataset.y);
+  const key = `${x},${y}`;
+
+  if (placed[key]) {
+    if (!confirm(`Remove ${placed[key].plant_name} from this cell?`)) return;
+    await fetch(`/api/bedplants/${placed[key].id}/delete`, { method: 'POST' });
+    delete placed[key];
+    renderGrid();
+  } else {
+    const plantId = plantSelect.value;
+    if (!plantId) {
+      plantSelect.focus();
+      return;
+    }
+    const res = await fetch(`/api/beds/${BED_ID}/grid-plant`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plant_id: parseInt(plantId), grid_x: x, grid_y: y }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const plantName = plantSelect.options[plantSelect.selectedIndex].text;
+      placed[key] = { id: data.id, plant_id: parseInt(plantId), plant_name: plantName };
+      renderGrid();
+    } else {
+      alert(data.error || 'Error placing plant');
+    }
+  }
+}
+
+loadGrid();
+</script>
 {% endblock %}
