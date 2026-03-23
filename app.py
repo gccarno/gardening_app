@@ -76,6 +76,20 @@ def create_app():
         all_beds = GardenBed.query.order_by(GardenBed.name).all()
         return render_template('plant_detail.html', plant=plant, beds=all_beds)
 
+    @app.route('/plants/<int:plant_id>/edit', methods=['POST'])
+    def edit_plant(plant_id):
+        plant = Plant.query.get_or_404(plant_id)
+        planted = request.form.get('planted_date')
+        harvest = request.form.get('expected_harvest')
+        plant.name = request.form['name']
+        plant.type = request.form.get('type')
+        plant.notes = request.form.get('notes')
+        plant.planted_date = date.fromisoformat(planted) if planted else None
+        plant.expected_harvest = date.fromisoformat(harvest) if harvest else None
+        plant.bed_id = request.form.get('bed_id') or None
+        db.session.commit()
+        return redirect(url_for('plant_detail', plant_id=plant.id))
+
     @app.route('/plants/<int:plant_id>/delete', methods=['POST'])
     def delete_plant(plant_id):
         plant = Plant.query.get_or_404(plant_id)

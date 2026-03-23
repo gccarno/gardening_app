@@ -3,13 +3,23 @@
 {% block content %}
 <h1>{{ plant.name }}</h1>
 
-<dl class="details">
-  {% if plant.type %}<dt>Type</dt><dd>{{ plant.type }}</dd>{% endif %}
-  {% if plant.bed %}<dt>Bed</dt><dd><a href="{{ url_for('bed_detail', bed_id=plant.bed.id) }}">{{ plant.bed.name }}</a></dd>{% endif %}
-  {% if plant.planted_date %}<dt>Planted</dt><dd>{{ plant.planted_date }}</dd>{% endif %}
-  {% if plant.expected_harvest %}<dt>Expected Harvest</dt><dd>{{ plant.expected_harvest }}</dd>{% endif %}
-  {% if plant.notes %}<dt>Notes</dt><dd>{{ plant.notes }}</dd>{% endif %}
-</dl>
+<h2>Edit Plant</h2>
+<form method="post" action="{{ url_for('edit_plant', plant_id=plant.id) }}" class="form">
+  <label>Name <input type="text" name="name" value="{{ plant.name }}" required></label>
+  <label>Type <input type="text" name="type" value="{{ plant.type or '' }}"></label>
+  <label>Bed
+    <select name="bed_id">
+      <option value="">— None —</option>
+      {% for bed in beds %}
+      <option value="{{ bed.id }}" {% if plant.bed_id == bed.id %}selected{% endif %}>{{ bed.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Planted Date <input type="date" name="planted_date" value="{{ plant.planted_date or '' }}"></label>
+  <label>Expected Harvest <input type="date" name="expected_harvest" value="{{ plant.expected_harvest or '' }}"></label>
+  <label>Notes <textarea name="notes" rows="3">{{ plant.notes or '' }}</textarea></label>
+  <button type="submit">Save Changes</button>
+</form>
 
 <h2>Tasks</h2>
 {% if plant.tasks %}
