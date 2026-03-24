@@ -9,7 +9,14 @@
   <aside class="planner-sidebar">
     <div class="sidebar-section">
       <div class="sidebar-heading">
-        <strong>{{ garden.name }}</strong>
+        <form method="get" style="flex:1;min-width:0;">
+          <select name="garden_id" onchange="window.location='/gardens/'+this.value+'/planner'"
+                  style="font:inherit;font-weight:600;padding:0.25rem 0.4rem;border:1px solid #c0d4be;border-radius:4px;background:#f4f9f4;color:#2d3a2d;width:100%;">
+            {% for g in all_gardens %}
+            <option value="{{ g.id }}"{% if g.id == garden.id %} selected{% endif %}>{{ g.name }}</option>
+            {% endfor %}
+          </select>
+        </form>
         <a href="{{ url_for('garden_detail', garden_id=garden.id) }}" class="sidebar-back">✎ Edit</a>
       </div>
 
@@ -24,6 +31,7 @@
             data-name="{{ bed.name }}">
           {{ bed.name }}
           <span class="palette-size">{{ bed.width_ft }}×{{ bed.height_ft }} {{ garden.unit }}</span>
+          <button class="palette-delete-btn" data-bed-id="{{ bed.id }}" data-bed-name="{{ bed.name }}" title="Delete bed" draggable="false">×</button>
         </li>
         {% endfor %}
       </ul>
@@ -41,46 +49,157 @@
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-label">Plants</div>
-      <ul class="palette-list" id="palette-plants">
-        {% for plant in all_plants %}
-        <li class="palette-item palette-plant"
-            draggable="true"
-            data-plant-id="{{ plant.id }}"
-            data-name="{{ plant.name }}">
-          {{ plant.name }}
-          {% if plant.type %}<span class="palette-type">{{ plant.type }}</span>{% endif %}
-        </li>
-        {% endfor %}
-      </ul>
+      <details open>
+        <summary class="sidebar-label sidebar-label--collapsible">
+          Plants in this Garden
+          {% if garden_plant_groups %}<span class="tab-count" style="margin-left:0.4rem;">{{ garden_plant_groups|length }}</span>{% endif %}
+        </summary>
+        {% if garden_plant_groups %}
+        <ul class="palette-list" id="palette-garden-plants" style="margin-top:0.4rem;">
+          {% for group in garden_plant_groups %}
+          {% set first = group.instances[0].plant %}
+          {% set img = first.library_entry.image_filename if first.library_entry and first.library_entry.image_filename else '' %}
+          {% if group.instances|length == 1 %}
+            {# Single instance — flat draggable row #}
+            {% set inst = group.instances[0] %}
+            <li class="palette-item palette-plant"
+                draggable="true"
+                data-plant-id="{{ first.id }}"
+                data-library-id="{{ first.library_id or '' }}"
+                data-name="{{ first.name }}"
+                data-image="{{ img }}"
+                data-spacing="{{ first.library_entry.spacing_in if first.library_entry and first.library_entry.spacing_in else 12 }}">
+              {% if img %}
+              <img src="{{ url_for('static', filename='plant_images/' ~ img) }}" class="palette-plant-img" alt="{{ first.name }}">
+              {% else %}
+              <span class="palette-plant-img palette-plant-img--empty">🌱</span>
+              {% endif %}
+              <span class="palette-plant-name">{{ first.name }}</span>
+              {% if inst.beds %}<span class="palette-type">{{ inst.beds[0].name }}</span>{% else %}<span class="palette-type">{{ first.status }}</span>{% endif %}
+              <button class="palette-delete-btn" data-plant-id="{{ first.id }}" title="Delete plant" draggable="false">×</button>
+            </li>
+          {% else %}
+            {# Multiple instances — expandable group #}
+            <li class="palette-group">
+              <details>
+                <summary class="palette-group-header palette-plant"
+                         draggable="true"
+                         data-plant-id="{{ first.id }}"
+                         data-library-id="{{ first.library_id or '' }}"
+                         data-name="{{ first.name }}"
+                         data-image="{{ img }}"
+                         data-spacing="{{ first.library_entry.spacing_in if first.library_entry and first.library_entry.spacing_in else 12 }}">
+                  {% if img %}
+                  <img src="{{ url_for('static', filename='plant_images/' ~ img) }}" class="palette-plant-img" alt="{{ first.name }}">
+                  {% else %}
+                  <span class="palette-plant-img palette-plant-img--empty">🌱</span>
+                  {% endif %}
+                  <span class="palette-plant-name">{{ first.name }}</span>
+                  <span class="palette-type">{{ group.instances|length }}×</span>
+                </summary>
+                <ul class="palette-group-instances">
+                  {% for inst in group.instances %}
+                  <li class="palette-item palette-plant palette-instance"
+                      draggable="true"
+                      data-plant-id="{{ inst.plant.id }}"
+                      data-library-id="{{ inst.plant.library_id or '' }}"
+                      data-name="{{ inst.plant.name }}"
+                      data-image="{{ inst.plant.library_entry.image_filename if inst.plant.library_entry and inst.plant.library_entry.image_filename else '' }}"
+                      data-spacing="{{ inst.plant.library_entry.spacing_in if inst.plant.library_entry and inst.plant.library_entry.spacing_in else 12 }}">
+                    <span class="palette-plant-name" style="font-size:0.8rem;">
+                      {% if inst.beds %}{{ inst.beds|map(attribute='name')|join(', ') }}{% else %}{{ inst.plant.status }}{% endif %}
+                    </span>
+                    <button class="palette-delete-btn" data-plant-id="{{ inst.plant.id }}" title="Delete plant" draggable="false">×</button>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </details>
+            </li>
+          {% endif %}
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted" style="font-size:0.82rem;padding:0.4rem 0;">
+          No plants yet. <a href="{{ url_for('plants', garden_id=garden.id) }}">Add plants →</a>
+        </p>
+        {% endif %}
+      </details>
+    </div>
+
+    <div class="sidebar-section">
+      <details open>
+        <summary class="sidebar-label sidebar-label--collapsible">Plant Library</summary>
+        <input type="text" id="plant-search" class="plant-search-input" placeholder="Search plants…" style="margin-top:0.4rem;">
+        <ul class="palette-list" id="palette-plants">
+          {% for plant in library_plants %}
+          <li class="palette-item palette-plant"
+              draggable="true"
+              data-library-id="{{ plant.id }}"
+              data-name="{{ plant.name }}"
+              data-image="{{ plant.image_filename or '' }}"
+              data-spacing="{{ plant.spacing_in or 12 }}">
+            {% if plant.image_filename %}
+            <img src="{{ url_for('static', filename='plant_images/' ~ plant.image_filename) }}"
+                 class="palette-plant-img" alt="{{ plant.name }}">
+            {% else %}
+            <span class="palette-plant-img palette-plant-img--empty">🌱</span>
+            {% endif %}
+            <span class="palette-plant-name">{{ plant.name }}</span>
+            {% if plant.type %}<span class="palette-type">{{ plant.type }}</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
     </div>
   </aside>
 
   <!-- Canvas -->
   <div class="planner-canvas-wrap">
+    <div class="planner-toolbar">
+      <label class="toolbar-label">
+        Tile size:
+        <select id="tile-size-select" class="toolbar-select">
+          <option value="3">3 in / 8 cm</option>
+          <option value="6">6 in / 15 cm</option>
+          <option value="12" selected>1 ft / 30 cm</option>
+          <option value="24">2 ft / 60 cm</option>
+        </select>
+      </label>
+    </div>
     <div class="planner-canvas"
          id="planner-canvas"
          data-garden-id="{{ garden.id }}"
          data-px="{{ px_per_unit }}">
 
       {% for bed in garden.beds %}
+      {% set bp_list = [] %}
+      {% for bp in bed.bed_plants %}
+        {% set entry = bp.plant.library_entry if bp.plant and bp.plant.library_entry else none %}
+        {% set _ = bp_list.append({
+          'id': bp.id,
+          'grid_x': bp.grid_x if bp.grid_x is not none else -1,
+          'grid_y': bp.grid_y if bp.grid_y is not none else -1,
+          'name': bp.plant.name if bp.plant else '?',
+          'image': entry.image_filename if (entry and entry.image_filename) else '',
+          'spacing_in': entry.spacing_in if (entry and entry.spacing_in) else 12
+        }) %}
+      {% endfor %}
       <div class="canvas-bed"
            id="canvas-bed-{{ bed.id }}"
            draggable="true"
            data-bed-id="{{ bed.id }}"
+           data-width="{{ bed.width_ft }}"
+           data-height="{{ bed.height_ft }}"
+           data-bed-plants='{{ bp_list | tojson }}'
            style="left:{{ (bed.pos_x * px_per_unit)|int }}px;
                   top:{{ (bed.pos_y * px_per_unit)|int }}px;
                   width:{{ (bed.width_ft * px_per_unit)|int }}px;
                   height:{{ (bed.height_ft * px_per_unit)|int }}px;">
-        <div class="canvas-bed-header">{{ bed.name }}</div>
-        <div class="canvas-bed-plants" data-bed-id="{{ bed.id }}">
-          {% for bp in bed.bed_plants %}
-          <span class="plant-chip" data-bp-id="{{ bp.id }}">
-            {{ bp.plant.name }}
-            <button class="chip-remove" data-bp-id="{{ bp.id }}" title="Remove">×</button>
-          </span>
-          {% endfor %}
+        <div class="canvas-bed-header">
+          <span class="bed-header-name">{{ bed.name }}</span>
+          <button class="bed-header-delete" data-bed-id="{{ bed.id }}" data-bed-name="{{ bed.name }}" title="Delete bed" draggable="false">×</button>
         </div>
+        <div class="canvas-bed-grid" data-bed-id="{{ bed.id }}"></div>
       </div>
       {% endfor %}
 

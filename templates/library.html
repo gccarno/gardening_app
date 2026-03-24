@@ -16,6 +16,13 @@
   <button class="lib-filter active" data-type="all">All ({{ entries | length }})</button>
   <button class="lib-filter" data-type="vegetable">Vegetables</button>
   <button class="lib-filter" data-type="herb">Herbs</button>
+  <button class="lib-filter" data-type="fruit">Fruits</button>
+  <button class="lib-filter" data-type="flower">Flowers</button>
+</div>
+
+<div style="max-width:340px;margin-bottom:1rem;">
+  <input type="text" id="lib-search" placeholder="Search by name…"
+         style="width:100%;font:inherit;padding:0.4rem 0.6rem;border:1px solid #c0d4be;border-radius:4px;background:#fbfefb;">
 </div>
 
 <table class="lib-table" id="lib-table">
@@ -32,7 +39,7 @@
   </thead>
   <tbody>
     {% for e in entries %}
-    <tr data-type="{{ e.type }}">
+    <tr data-type="{{ e.type }}" data-name="{{ e.name|lower }}">
       <td><a href="{{ url_for('library_detail', entry_id=e.id) }}">{{ e.name }}</a></td>
       <td><span class="lib-badge lib-badge--{{ e.type }}">{{ e.type }}</span></td>
       <td>{{ e.spacing_in }}&Prime;</td>
@@ -46,20 +53,31 @@
 </table>
 
 <script>
-// --- Local table filter ---
+// --- Local table filter + search ---
 const filters = document.querySelectorAll('.lib-filter');
 const rows = document.querySelectorAll('#lib-table tbody tr');
+const libSearch = document.getElementById('lib-search');
+let activeType = 'all';
+
+function applyFilters() {
+  const q = libSearch.value.toLowerCase();
+  rows.forEach(row => {
+    const typeMatch = activeType === 'all' || row.dataset.type === activeType;
+    const nameMatch = !q || row.dataset.name.includes(q);
+    row.style.display = (typeMatch && nameMatch) ? '' : 'none';
+  });
+}
 
 filters.forEach(btn => {
   btn.addEventListener('click', () => {
     filters.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    const type = btn.dataset.type;
-    rows.forEach(row => {
-      row.style.display = (type === 'all' || row.dataset.type === type) ? '' : 'none';
-    });
+    activeType = btn.dataset.type;
+    applyFilters();
   });
 });
+
+libSearch.addEventListener('input', applyFilters);
 
 // --- Perenual search ---
 const searchBtn = document.getElementById('perenual-search-btn');

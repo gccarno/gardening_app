@@ -1,34 +1,242 @@
 {% extends "base.html" %}
 {% block title %}Plants — Garden Planner{% endblock %}
 {% block content %}
-<h1>Plants</h1>
+<div style="display:flex;align-items:baseline;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+  <h1 style="margin:0;">Plants</h1>
 
-<section>
-  <h2>Add Plant</h2>
-  <form method="post" class="form">
-    <label>Name <input type="text" name="name" required></label>
-    <label>Type <input type="text" name="type" placeholder="e.g. Vegetable, Herb, Flower"></label>
-    <label>Planted Date <input type="date" name="planted_date"></label>
-    <label>Expected Harvest <input type="date" name="expected_harvest"></label>
-    <label>Notes <textarea name="notes" rows="2"></textarea></label>
-    <button type="submit">Add Plant</button>
+  {# ── Garden selector ── #}
+  <form method="get" action="{{ url_for('plants') }}" style="display:flex;align-items:center;gap:0.5rem;">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <label for="garden-select" style="font-size:0.9rem;font-weight:600;color:#3a5c37;white-space:nowrap;">Garden:</label>
+    <select id="garden-select" name="garden_id" onchange="this.form.submit()"
+            style="font:inherit;padding:0.35rem 0.6rem;border:1px solid #c0d4be;border-radius:4px;background:#fbfefb;color:#2d3a2d;">
+      <option value="">All gardens</option>
+      {% for g in all_gardens %}
+      <option value="{{ g.id }}"{% if g.id == garden_id %} selected{% endif %}>{{ g.name }}</option>
+      {% endfor %}
+    </select>
   </form>
-</section>
+</div>
 
+{% if selected_garden %}
+<p class="muted" style="margin:-0.75rem 0 1rem;">
+  Showing plants for <strong>{{ selected_garden.name }}</strong>.
+  <a href="{{ url_for('plants', tab=tab) }}">Show all gardens</a>
+</p>
+{% endif %}
+
+{# ── Tabs ── #}
+<div class="plant-tabs">
+  <a href="{{ url_for('plants', tab='planning', garden_id=garden_id or '') }}"
+     class="plant-tab{% if tab == 'planning' %} active{% endif %}">
+    Planning
+    {% if planning_plants %}<span class="tab-count">{{ planning_plants|length }}</span>{% endif %}
+  </a>
+  <a href="{{ url_for('plants', tab='growing', garden_id=garden_id or '') }}"
+     class="plant-tab{% if tab == 'growing' %} active{% endif %}">
+    Growing
+    {% if growing_plants %}<span class="tab-count">{{ growing_plants|length }}</span>{% endif %}
+  </a>
+  <a href="{{ url_for('plants', tab='reminder', garden_id=garden_id or '') }}"
+     class="plant-tab{% if tab == 'reminder' %} active{% endif %}">
+    Reminders
+    {% set urgent = reminders|selectattr('urgent')|list %}
+    {% if reminders or tasks %}<span class="tab-count{% if urgent %} tab-count--urgent{% endif %}">{{ reminders|length + tasks|length }}</span>{% endif %}
+  </a>
+</div>
+
+{# ══ Planning Tab ══════════════════════════════════════════════════════════ #}
+{% if tab == 'planning' %}
 <section>
-  <h2>All Plants</h2>
-  {% if plants %}
-  <ul class="card-list">
-    {% for plant in plants %}
+  <p class="muted" style="margin-bottom:1rem;">
+    Plants you are considering growing. Move them to <em>Growing</em> when you plant them.
+    Browse the <a href="{{ url_for('library') }}">Plant Library</a> to add plants with full growing info.
+  </p>
+
+  {% if planning_plants %}
+  <ul class="card-list" style="margin-bottom:1.5rem;">
+    {% for plant in planning_plants %}
     <li class="card">
-      <a href="{{ url_for('plant_detail', plant_id=plant.id) }}"><strong>{{ plant.name }}</strong></a>
-      {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
-      {% if plant.planted_date %}<span class="muted">planted {{ plant.planted_date }}</span>{% endif %}
+      {% if plant.library_entry and plant.library_entry.image_filename %}
+      <img src="{{ url_for('static', filename='plant_images/' ~ plant.library_entry.image_filename) }}"
+           class="plant-card-img" alt="{{ plant.name }}">
+      {% endif %}
+      <div class="plant-card-body">
+        <a href="{{ url_for('plant_detail', plant_id=plant.id) }}"><strong>{{ plant.name }}</strong></a>
+        {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
+        {% if plant.garden %}<span class="muted" style="font-size:0.8rem;">📍 {{ plant.garden.name }}</span>{% endif %}
+        {% if plant.library_entry %}
+        <span class="muted" style="font-size:0.8rem;">
+          {% if plant.library_entry.sunlight %}☀️ {{ plant.library_entry.sunlight }}{% endif %}
+          {% if plant.library_entry.days_to_harvest %} · {{ plant.library_entry.days_to_harvest }} days to harvest{% endif %}
+        </span>
+        {% endif %}
+        {% if plant.notes %}<span class="muted" style="font-size:0.8rem;">{{ plant.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}" style="margin-left:auto;">
+        <input type="hidden" name="status" value="growing">
+        <input type="hidden" name="garden_id" value="{{ garden_id or '' }}">
+        <button type="submit" class="btn-small" title="Mark as planted today">Plant now →</button>
+      </form>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No plants yet.</p>
+  <p class="muted" style="margin-bottom:1.5rem;">No plants in planning yet.</p>
   {% endif %}
+
+  <details style="max-width:480px;">
+    <summary style="cursor:pointer;color:#3a5c37;font-weight:600;margin-bottom:0.5rem;">+ Add a Plant to Planning</summary>
+    <form method="post" class="form" style="margin-top:0.75rem;">
+      <input type="hidden" name="status" value="planning">
+      <label>Garden
+        <select name="garden_id">
+          <option value="">— unassigned —</option>
+          {% for g in all_gardens %}
+          <option value="{{ g.id }}"{% if g.id == garden_id %} selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Name
+        <input type="text" name="name" list="library-names" required placeholder="e.g. Tomato">
+        <datalist id="library-names">
+          {% for p in library_plants %}<option value="{{ p.name }}">{% endfor %}
+        </datalist>
+      </label>
+      <label>Type <input type="text" name="type" placeholder="e.g. Vegetable, Herb, Flower"></label>
+      <label>Notes <textarea name="notes" rows="2"></textarea></label>
+      <button type="submit">Add to Planning</button>
+    </form>
+  </details>
 </section>
+
+{# ══ Growing Tab ═══════════════════════════════════════════════════════════ #}
+{% elif tab == 'growing' %}
+<section>
+  <p class="muted" style="margin-bottom:1rem;">Plants currently in the ground or a bed.</p>
+
+  {% if growing_plants %}
+  <ul class="card-list" style="margin-bottom:1.5rem;">
+    {% for plant in growing_plants %}
+    <li class="card">
+      {% if plant.library_entry and plant.library_entry.image_filename %}
+      <img src="{{ url_for('static', filename='plant_images/' ~ plant.library_entry.image_filename) }}"
+           class="plant-card-img" alt="{{ plant.name }}">
+      {% endif %}
+      <div class="plant-card-body">
+        <a href="{{ url_for('plant_detail', plant_id=plant.id) }}"><strong>{{ plant.name }}</strong></a>
+        {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
+        {% if plant.garden %}<span class="muted" style="font-size:0.8rem;">📍 {{ plant.garden.name }}</span>{% endif %}
+        {% if plant.planted_date %}<span class="muted">planted {{ plant.planted_date.strftime('%b %d, %Y') }}</span>{% endif %}
+        {% if plant.expected_harvest %}
+        {% set days_left = (plant.expected_harvest - today).days %}
+        <span class="muted{% if days_left < 0 %}" style="color:#b84040{% endif %}">
+          harvest {% if days_left < 0 %}overdue by {{ -days_left }} day{{ 's' if days_left != -1 else '' }}{% elif days_left == 0 %}today{% else %}in {{ days_left }} day{{ 's' if days_left != 1 else '' }}{% endif %}
+        </span>
+        {% endif %}
+        {% if plant.bed_plants %}
+        <span class="muted" style="font-size:0.8rem;">
+          Bed: {% for bp in plant.bed_plants %}{{ bp.bed.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </span>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}" style="margin-left:auto;">
+        <input type="hidden" name="status" value="planning">
+        <input type="hidden" name="garden_id" value="{{ garden_id or '' }}">
+        <button type="submit" class="btn-small btn-link" title="Move back to planning">← Planning</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted" style="margin-bottom:1.5rem;">No plants growing yet. Move one from <a href="{{ url_for('plants', tab='planning', garden_id=garden_id or '') }}">Planning</a> or add one below.</p>
+  {% endif %}
+
+  <details style="max-width:480px;">
+    <summary style="cursor:pointer;color:#3a5c37;font-weight:600;margin-bottom:0.5rem;">+ Add a Growing Plant</summary>
+    <form method="post" class="form" style="margin-top:0.75rem;">
+      <input type="hidden" name="status" value="growing">
+      <label>Garden
+        <select name="garden_id">
+          <option value="">— unassigned —</option>
+          {% for g in all_gardens %}
+          <option value="{{ g.id }}"{% if g.id == garden_id %} selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Name
+        <input type="text" name="name" list="library-names-g" required placeholder="e.g. Tomato">
+        <datalist id="library-names-g">
+          {% for p in library_plants %}<option value="{{ p.name }}">{% endfor %}
+        </datalist>
+      </label>
+      <label>Type <input type="text" name="type" placeholder="e.g. Vegetable, Herb, Flower"></label>
+      <label>Planted Date <input type="date" name="planted_date"></label>
+      <label>Expected Harvest <input type="date" name="expected_harvest"></label>
+      <label>Notes <textarea name="notes" rows="2"></textarea></label>
+      <button type="submit">Add to Growing</button>
+    </form>
+  </details>
+</section>
+
+{# ══ Reminder Tab ══════════════════════════════════════════════════════════ #}
+{% elif tab == 'reminder' %}
+<section>
+  {% if reminders %}
+  <h2>Care Alerts</h2>
+  <ul class="card-list" style="margin-bottom:1.5rem;">
+    {% for r in reminders %}
+    <li class="card reminder-card{% if r.urgent %} reminder-card--urgent{% endif %}">
+      <span class="reminder-icon">{{ r.icon }}</span>
+      <div class="plant-card-body">
+        <strong>{{ r.label }}</strong>
+        <span class="muted">{{ r.detail }}</span>
+      </div>
+      <a href="{{ url_for('plant_detail', plant_id=r.plant_id) }}" class="btn-small btn-link">View</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <h2>Tasks</h2>
+  {% if tasks %}
+  <ul class="card-list" style="margin-bottom:1.5rem;">
+    {% for task in tasks %}
+    <li class="card">
+      <div class="task-row">
+        <div>
+          <a href="{{ url_for('task_detail', task_id=task.id) }}"><strong>{{ task.title }}</strong></a>
+          {% if task.plant %}<span class="muted">({{ task.plant.name }})</span>{% endif %}
+          {% if task.due_date %}
+          {% set overdue = task.due_date < today %}
+          <span class="muted" style="{% if overdue %}color:#b84040;{% endif %}">
+            due {{ task.due_date.strftime('%b %d') }}{% if overdue %} — overdue{% endif %}
+          </span>
+          {% endif %}
+        </div>
+        <div class="task-actions">
+          <form method="post" action="{{ url_for('complete_task', task_id=task.id) }}">
+            <button type="submit" class="btn-small">Done</button>
+          </form>
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {% if not reminders %}<p class="muted" style="margin-bottom:1rem;">No pending reminders or tasks.</p>{% endif %}
+  {% endif %}
+
+  <details style="max-width:480px;">
+    <summary style="cursor:pointer;color:#3a5c37;font-weight:600;margin-bottom:0.5rem;">+ Add a Task / Reminder</summary>
+    <form method="post" action="{{ url_for('tasks') }}" class="form" style="margin-top:0.75rem;">
+      <label>Title <input type="text" name="title" required></label>
+      <label>Due Date <input type="date" name="due_date"></label>
+      <label>Description <textarea name="description" rows="2"></textarea></label>
+      <button type="submit">Add Task</button>
+    </form>
+  </details>
+</section>
+{% endif %}
+
 {% endblock %}

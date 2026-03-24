@@ -1,5 +1,6 @@
 import os
-from datetime import date
+from collections import defaultdict
+from datetime import date, timedelta
 import requests as http
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, jsonify
@@ -150,6 +151,36 @@ def create_app():
 
     # --- Gardens ---
 
+    def _apply_zip(garden, zip_code):
+        """Fetch USDA zone + city/state for zip_code and apply to garden object."""
+        zip_code = zip_code.strip()
+        if not zip_code:
+            return
+        try:
+            z = http.get(f'https://phzmapi.org/{zip_code}.json', timeout=6)
+            z.raise_for_status()
+            zdata = z.json()
+            garden.usda_zone = zdata.get('zone')
+            garden.zone_temp_range = zdata.get('temperature_range')
+            coords = zdata.get('coordinates', {})
+            garden.latitude = float(coords.get('lat', 0)) or None
+            garden.longitude = float(coords.get('lon', 0)) or None
+        except Exception:
+            pass
+        try:
+            p = http.get(f'http://api.zippopotam.us/us/{zip_code}', timeout=6)
+            p.raise_for_status()
+            pdata = p.json()
+            place = (pdata.get('places') or [{}])[0]
+            garden.city = place.get('place name')
+            garden.state = place.get('state abbreviation')
+            if not garden.latitude:
+                garden.latitude = float(place.get('latitude', 0)) or None
+                garden.longitude = float(place.get('longitude', 0)) or None
+        except Exception:
+            pass
+        garden.zip_code = zip_code
+
     @app.route('/gardens', methods=['GET', 'POST'])
     def gardens():
         if request.method == 'POST':
@@ -159,8 +190,12 @@ def create_app():
                 unit=request.form.get('unit', 'ft'),
             )
             db.session.add(garden)
+            db.session.flush()  # get garden.id before commit
+            zip_code = request.form.get('zip_code', '').strip()
+            if zip_code:
+                _apply_zip(garden, zip_code)
             db.session.commit()
-            return redirect(url_for('gardens'))
+            return redirect(url_for('garden_detail', garden_id=garden.id))
         all_gardens = Garden.query.order_by(Garden.name).all()
         return render_template('gardens.html', gardens=all_gardens)
 
@@ -211,34 +246,8 @@ def create_app():
     def set_garden_location(garden_id):
         garden = Garden.query.get_or_404(garden_id)
         zip_code = request.form.get('zip_code', '').strip()
-        if not zip_code:
-            return redirect(url_for('garden_detail', garden_id=garden_id))
-        errors = []
-        try:
-            z = http.get(f'https://phzmapi.org/{zip_code}.json', timeout=6)
-            z.raise_for_status()
-            zdata = z.json()
-            garden.usda_zone = zdata.get('zone')
-            garden.zone_temp_range = zdata.get('temperature_range')
-            coords = zdata.get('coordinates', {})
-            garden.latitude = float(coords.get('lat', 0)) or None
-            garden.longitude = float(coords.get('lon', 0)) or None
-        except Exception:
-            errors.append('Could not fetch USDA zone — check the zip code.')
-        try:
-            p = http.get(f'http://api.zippopotam.us/us/{zip_code}', timeout=6)
-            p.raise_for_status()
-            pdata = p.json()
-            place = (pdata.get('places') or [{}])[0]
-            garden.city = place.get('place name')
-            garden.state = place.get('state abbreviation')
-            if not garden.latitude:
-                garden.latitude = float(place.get('latitude', 0)) or None
-                garden.longitude = float(place.get('longitude', 0)) or None
-        except Exception:
-            errors.append('Could not fetch city/state for that zip code.')
-        if not errors:
-            garden.zip_code = zip_code
+        if zip_code:
+            _apply_zip(garden, zip_code)
         db.session.commit()
         return redirect(url_for('garden_detail', garden_id=garden_id))
 
@@ -290,21 +299,62 @@ def create_app():
             'frost': {'last_spring': frost[0], 'first_fall': frost[1]},
         })
 
+    @app.route('/planner')
+    def planner_index():
+        first = Garden.query.order_by(Garden.name).first()
+        if first:
+            return redirect(url_for('planner', garden_id=first.id))
+        return redirect(url_for('gardens'))
+
     @app.route('/gardens/<int:garden_id>/planner')
     def planner(garden_id):
         garden = Garden.query.get_or_404(garden_id)
-        all_plants = Plant.query.order_by(Plant.name).all()
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        library_plants = PlantLibrary.query.order_by(PlantLibrary.name).all()
+
+        # Collect all plants in this garden: directly assigned + in a bed of this garden
+        direct = Plant.query.filter_by(garden_id=garden_id).all()
+        in_bed_ids = (db.session.query(BedPlant.plant_id)
+                      .join(GardenBed, BedPlant.bed_id == GardenBed.id)
+                      .filter(GardenBed.garden_id == garden_id)
+                      .distinct())
+        in_bed = Plant.query.filter(Plant.id.in_(in_bed_ids)).all()
+
+        seen = set()
+        combined = []
+        for p in sorted(direct + in_bed, key=lambda x: x.name.lower()):
+            if p.id not in seen:
+                seen.add(p.id)
+                combined.append(p)
+
+        # Group by name; attach bed info per plant
+        groups = defaultdict(list)
+        for p in combined:
+            beds_for_plant = [bp.bed for bp in p.bed_plants if bp.bed.garden_id == garden_id]
+            groups[p.name].append({'plant': p, 'beds': beds_for_plant})
+        garden_plant_groups = [
+            {'name': name, 'instances': instances}
+            for name, instances in groups.items()
+        ]
+
         px_per_unit = 60
-        return render_template('planner.html', garden=garden, all_plants=all_plants, px_per_unit=px_per_unit)
+        return render_template('planner.html', garden=garden, all_gardens=all_gardens,
+                               library_plants=library_plants,
+                               garden_plant_groups=garden_plant_groups,
+                               px_per_unit=px_per_unit)
 
     # --- Garden Beds ---
 
     @app.route('/beds', methods=['GET', 'POST'])
     def beds():
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        garden_id = request.args.get('garden_id', type=int)
+
         if request.method == 'POST':
             width = request.form.get('width_ft')
             height = request.form.get('height_ft')
             depth = request.form.get('depth_ft')
+            gid = request.form.get('garden_id', type=int)
             bed = GardenBed(
                 name=request.form['name'],
                 description=request.form.get('description'),
@@ -313,18 +363,25 @@ def create_app():
                 height_ft=float(height) if height else 8.0,
                 depth_ft=float(depth) if depth else None,
                 soil_notes=request.form.get('soil_notes'),
+                garden_id=gid,
             )
             db.session.add(bed)
             db.session.commit()
-            return redirect(url_for('beds'))
-        all_beds = GardenBed.query.order_by(GardenBed.name).all()
-        return render_template('beds.html', beds=all_beds)
+            return redirect(url_for('beds', garden_id=gid))
+
+        q = GardenBed.query
+        if garden_id:
+            q = q.filter_by(garden_id=garden_id)
+        all_beds = q.order_by(GardenBed.name).all()
+        selected_garden = Garden.query.get(garden_id) if garden_id else None
+        return render_template('beds.html', beds=all_beds, all_gardens=all_gardens,
+                               garden_id=garden_id, selected_garden=selected_garden)
 
     @app.route('/beds/<int:bed_id>')
     def bed_detail(bed_id):
         bed = GardenBed.query.get_or_404(bed_id)
-        all_plants = Plant.query.order_by(Plant.name).all()
-        return render_template('bed_detail.html', bed=bed, all_plants=all_plants)
+        library_plants = PlantLibrary.query.order_by(PlantLibrary.name).all()
+        return render_template('bed_detail.html', bed=bed, library_plants=library_plants)
 
     @app.route('/beds/<int:bed_id>/delete', methods=['POST'])
     def delete_bed(bed_id):
@@ -332,6 +389,13 @@ def create_app():
         db.session.delete(bed)
         db.session.commit()
         return redirect(url_for('beds'))
+
+    @app.route('/api/beds/<int:bed_id>/delete', methods=['POST'])
+    def api_delete_bed(bed_id):
+        bed = GardenBed.query.get_or_404(bed_id)
+        db.session.delete(bed)
+        db.session.commit()
+        return jsonify({'ok': True})
 
     @app.route('/beds/<int:bed_id>/edit', methods=['POST'])
     def edit_bed(bed_id):
@@ -349,21 +413,106 @@ def create_app():
 
     @app.route('/plants', methods=['GET', 'POST'])
     def plants():
+        tab = request.args.get('tab', 'planning')
+        garden_id = request.args.get('garden_id', type=int)
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        selected_garden = Garden.query.get(garden_id) if garden_id else None
+
         if request.method == 'POST':
             planted = request.form.get('planted_date')
             harvest = request.form.get('expected_harvest')
+            status = request.form.get('status', 'planning')
+            gid = request.form.get('garden_id', type=int) or garden_id
             plant = Plant(
                 name=request.form['name'],
                 type=request.form.get('type'),
                 notes=request.form.get('notes'),
                 planted_date=date.fromisoformat(planted) if planted else None,
                 expected_harvest=date.fromisoformat(harvest) if harvest else None,
+                status=status,
+                garden_id=gid,
             )
             db.session.add(plant)
             db.session.commit()
-            return redirect(url_for('plants'))
-        all_plants = Plant.query.order_by(Plant.name).all()
-        return render_template('plants.html', plants=all_plants)
+            return redirect(url_for('plants', tab=status, garden_id=gid))
+
+        base_q = Plant.query
+        if garden_id:
+            base_q = base_q.filter_by(garden_id=garden_id)
+
+        planning_plants = base_q.filter_by(status='planning').order_by(Plant.name).all()
+        growing_plants  = base_q.filter_by(status='growing').order_by(Plant.name).all()
+        library_plants  = PlantLibrary.query.order_by(PlantLibrary.name).all()
+
+        # Build smart reminders
+        today = date.today()
+        reminders = []
+
+        for p in growing_plants:
+            if p.expected_harvest:
+                days_left = (p.expected_harvest - today).days
+                if days_left <= 7:
+                    reminders.append({
+                        'icon': '🌽',
+                        'label': 'Harvest overdue' if days_left < 0 else f'Harvest in {days_left} day{"s" if days_left != 1 else ""}',
+                        'plant_name': p.name,
+                        'detail': p.expected_harvest.strftime('%b %d'),
+                        'urgent': days_left < 0,
+                        'plant_id': p.id,
+                    })
+
+        bp_q = BedPlant.query
+        if garden_id:
+            bp_q = bp_q.join(GardenBed).filter(GardenBed.garden_id == garden_id)
+
+        for bp in bp_q.all():
+            if bp.last_watered and (today - bp.last_watered).days >= 3:
+                days_since = (today - bp.last_watered).days
+                reminders.append({
+                    'icon': '💧',
+                    'label': f'Water {bp.plant.name}',
+                    'plant_name': bp.plant.name,
+                    'detail': f'Last watered {days_since} day{"s" if days_since != 1 else ""} ago in {bp.bed.name}',
+                    'urgent': days_since >= 7,
+                    'plant_id': bp.plant.id,
+                })
+            if bp.last_fertilized and (today - bp.last_fertilized).days >= 14:
+                days_since = (today - bp.last_fertilized).days
+                reminders.append({
+                    'icon': '🌿',
+                    'label': f'Fertilize {bp.plant.name}',
+                    'plant_name': bp.plant.name,
+                    'detail': f'Last fertilized {days_since} days ago in {bp.bed.name}',
+                    'urgent': days_since >= 21,
+                    'plant_id': bp.plant.id,
+                })
+
+        tasks = Task.query.filter_by(completed=False).order_by(Task.due_date.asc().nullslast()).all()
+
+        return render_template('plants.html',
+            tab=tab,
+            garden_id=garden_id,
+            all_gardens=all_gardens,
+            selected_garden=selected_garden,
+            planning_plants=planning_plants,
+            growing_plants=growing_plants,
+            library_plants=library_plants,
+            reminders=reminders,
+            tasks=tasks,
+            today=today,
+        )
+
+    @app.route('/plants/<int:plant_id>/set-status', methods=['POST'])
+    def set_plant_status(plant_id):
+        plant = Plant.query.get_or_404(plant_id)
+        new_status = request.form.get('status')
+        garden_id = request.form.get('garden_id', type=int) or plant.garden_id
+        if new_status in ('planning', 'growing'):
+            plant.status = new_status
+            if new_status == 'growing' and not plant.planted_date:
+                plant.planted_date = date.today()
+            db.session.commit()
+        return redirect(url_for('plants', tab=new_status or plant.status, garden_id=garden_id))
 
     @app.route('/plants/<int:plant_id>')
     def plant_detail(plant_id):
@@ -389,6 +538,13 @@ def create_app():
         db.session.delete(plant)
         db.session.commit()
         return redirect(url_for('plants'))
+
+    @app.route('/api/plants/<int:plant_id>/delete', methods=['POST'])
+    def api_delete_plant(plant_id):
+        plant = Plant.query.get_or_404(plant_id)
+        db.session.delete(plant)
+        db.session.commit()
+        return jsonify({'ok': True})
 
     # --- Tasks ---
 
@@ -453,16 +609,88 @@ def create_app():
 
     @app.route('/library/<int:entry_id>')
     def library_detail(entry_id):
+        import json as _json
         entry = PlantLibrary.query.get_or_404(entry_id)
-        return render_template('library_detail.html', entry=entry)
+
+        def _parse(col):
+            try:
+                return _json.loads(col) if col else None
+            except Exception:
+                return None
+
+        good_neighbors = _parse(entry.good_neighbors)
+        bad_neighbors  = _parse(entry.bad_neighbors)
+        how_to_grow    = _parse(entry.how_to_grow)
+        faqs           = _parse(entry.faqs)
+        nutrition      = _parse(entry.nutrition)
+
+        # Planting calendar: compute month labels for every zone using frost dates
+        calendar_rows = []
+        if entry.sow_indoor_weeks is not None or entry.direct_sow_offset is not None or entry.transplant_offset is not None:
+            from datetime import datetime, timedelta
+            def _frost_date(month_day_str):
+                if month_day_str in ('none', 'rare', 'unknown'):
+                    return None
+                try:
+                    return datetime.strptime(f'{month_day_str} 2024', '%b %d %Y')
+                except Exception:
+                    return None
+
+            for zone_num in range(1, 14):
+                last_spring, first_fall = _FROST_DATES.get(str(zone_num), ('unknown', 'unknown'))
+                frost = _frost_date(last_spring)
+                if not frost:
+                    continue
+                row = {'zone': zone_num}
+                if entry.sow_indoor_weeks is not None:
+                    d = frost - timedelta(weeks=entry.sow_indoor_weeks)
+                    row['start_indoors'] = d.strftime('%b %d')
+                if entry.direct_sow_offset is not None:
+                    d = frost + timedelta(weeks=entry.direct_sow_offset)
+                    row['direct_sow'] = d.strftime('%b %d')
+                if entry.transplant_offset is not None:
+                    d = frost + timedelta(weeks=entry.transplant_offset)
+                    row['transplant'] = d.strftime('%b %d')
+                row['last_frost'] = last_spring
+                row['first_fall_frost'] = first_fall
+                calendar_rows.append(row)
+
+        # Default selected zone — use first garden with a zone set
+        selected_zone = None
+        g = Garden.query.filter(Garden.usda_zone.isnot(None)).first()
+        if g and g.usda_zone:
+            z = ''.join(filter(str.isdigit, g.usda_zone))
+            selected_zone = int(z) if z else None
+
+        tab = request.args.get('tab', 'overview')
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        return render_template('library_detail.html',
+            entry=entry,
+            tab=tab,
+            good_neighbors=good_neighbors,
+            bad_neighbors=bad_neighbors,
+            how_to_grow=how_to_grow,
+            faqs=faqs,
+            nutrition=nutrition,
+            calendar_rows=calendar_rows,
+            selected_zone=selected_zone,
+            all_gardens=all_gardens,
+        )
 
     @app.route('/library/<int:entry_id>/add', methods=['POST'])
     def library_add_plant(entry_id):
         entry = PlantLibrary.query.get_or_404(entry_id)
-        plant = Plant(name=entry.name, type=entry.type)
+        garden_id = request.form.get('garden_id', type=int) or None
+        plant = Plant(
+            name=entry.name,
+            type=entry.type,
+            library_id=entry.id,
+            garden_id=garden_id,
+            status='planning',
+        )
         db.session.add(plant)
         db.session.commit()
-        return redirect(url_for('plant_detail', plant_id=plant.id))
+        return redirect(url_for('plants', tab='planning', garden_id=garden_id))
 
     def _download_plant_image(perenual_id, image_url):
         """Download image from URL, save to static/plant_images/<perenual_id>.jpg.
@@ -646,15 +874,40 @@ def create_app():
         db.session.commit()
         return jsonify({'ok': True})
 
+    def _plant_from_library(library_id):
+        """Find or create a Plant instance for a given PlantLibrary entry."""
+        entry = PlantLibrary.query.get(library_id)
+        if not entry:
+            return None
+        plant = Plant(name=entry.name, type=entry.type, library_id=entry.id)
+        db.session.add(plant)
+        db.session.flush()
+        return plant
+
     @app.route('/api/bedplants', methods=['POST'])
     def api_create_bedplant():
         data = request.get_json(force=True)
-        if not data or 'bed_id' not in data or 'plant_id' not in data:
-            return jsonify({'error': 'bed_id and plant_id required'}), 400
-        bp = BedPlant(bed_id=int(data['bed_id']), plant_id=int(data['plant_id']))
+        if not data or 'bed_id' not in data:
+            return jsonify({'error': 'bed_id required'}), 400
+        if 'library_id' in data:
+            plant = _plant_from_library(int(data['library_id']))
+            if not plant:
+                return jsonify({'error': 'library entry not found'}), 404
+        elif 'plant_id' in data:
+            plant = Plant.query.get_or_404(int(data['plant_id']))
+        else:
+            return jsonify({'error': 'library_id or plant_id required'}), 400
+        bp = BedPlant(bed_id=int(data['bed_id']), plant_id=plant.id)
         db.session.add(bp)
         db.session.commit()
-        return jsonify({'ok': True, 'id': bp.id})
+        entry = plant.library_entry
+        return jsonify({
+            'ok': True, 'id': bp.id,
+            'plant': {
+                'id': plant.id, 'name': plant.name,
+                'image_filename': entry.image_filename if entry else None,
+            }
+        })
 
     @app.route('/api/bedplants/<int:bp_id>/delete', methods=['POST'])
     def api_delete_bedplant(bp_id):
@@ -666,12 +919,17 @@ def create_app():
     @app.route('/api/beds/<int:bed_id>/grid')
     def api_bed_grid(bed_id):
         bed = GardenBed.query.get_or_404(bed_id)
-        placed = [
-            {'id': bp.id, 'plant_id': bp.plant_id, 'plant_name': bp.plant.name,
-             'grid_x': bp.grid_x, 'grid_y': bp.grid_y}
-            for bp in bed.bed_plants
-            if bp.grid_x is not None and bp.grid_y is not None
-        ]
+        placed = []
+        for bp in bed.bed_plants:
+            if bp.grid_x is None or bp.grid_y is None:
+                continue
+            entry = bp.plant.library_entry if bp.plant else None
+            placed.append({
+                'id': bp.id, 'plant_id': bp.plant_id,
+                'plant_name': bp.plant.name if bp.plant else '?',
+                'image_filename': entry.image_filename if entry else None,
+                'grid_x': bp.grid_x, 'grid_y': bp.grid_y,
+            })
         return jsonify({
             'bed': {'id': bed.id, 'name': bed.name, 'width_ft': bed.width_ft, 'height_ft': bed.height_ft},
             'placed': placed,
@@ -681,15 +939,60 @@ def create_app():
     def api_bed_grid_plant(bed_id):
         GardenBed.query.get_or_404(bed_id)
         data = request.get_json(force=True)
-        if not data or 'plant_id' not in data or 'grid_x' not in data or 'grid_y' not in data:
-            return jsonify({'error': 'plant_id, grid_x, grid_y required'}), 400
+        if not data or 'grid_x' not in data or 'grid_y' not in data:
+            return jsonify({'error': 'grid_x and grid_y required'}), 400
         grid_x, grid_y = int(data['grid_x']), int(data['grid_y'])
         if BedPlant.query.filter_by(bed_id=bed_id, grid_x=grid_x, grid_y=grid_y).first():
             return jsonify({'error': 'cell already occupied'}), 409
-        bp = BedPlant(bed_id=bed_id, plant_id=int(data['plant_id']), grid_x=grid_x, grid_y=grid_y)
+        if 'library_id' in data:
+            plant = _plant_from_library(int(data['library_id']))
+            if not plant:
+                return jsonify({'error': 'library entry not found'}), 404
+        elif 'plant_id' in data:
+            plant = Plant.query.get_or_404(int(data['plant_id']))
+        else:
+            return jsonify({'error': 'library_id or plant_id required'}), 400
+        bp = BedPlant(bed_id=bed_id, plant_id=plant.id, grid_x=grid_x, grid_y=grid_y)
         db.session.add(bp)
         db.session.commit()
-        return jsonify({'ok': True, 'id': bp.id})
+        entry = plant.library_entry
+        return jsonify({
+            'ok': True, 'id': bp.id,
+            'plant_name': plant.name,
+            'image_filename': entry.image_filename if entry else None,
+            'spacing_in': entry.spacing_in if entry and entry.spacing_in else 12,
+        })
+
+    @app.route('/api/bedplants/<int:bp_id>/care', methods=['POST'])
+    def api_bedplant_care(bp_id):
+        bp = BedPlant.query.get_or_404(bp_id)
+        data = request.get_json(force=True)
+        if 'last_watered' in data:
+            bp.last_watered = date.fromisoformat(data['last_watered']) if data['last_watered'] else None
+        if 'last_fertilized' in data:
+            bp.last_fertilized = date.fromisoformat(data['last_fertilized']) if data['last_fertilized'] else None
+        if 'health_notes' in data:
+            bp.health_notes = data['health_notes'] or None
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/bedplants/<int:bp_id>')
+    def api_bedplant_detail(bp_id):
+        bp = BedPlant.query.get_or_404(bp_id)
+        entry = bp.plant.library_entry if bp.plant else None
+        return jsonify({
+            'id': bp.id,
+            'plant_name': bp.plant.name if bp.plant else '?',
+            'image_filename': entry.image_filename if entry else None,
+            'scientific_name': entry.scientific_name if entry else None,
+            'spacing_in': entry.spacing_in if entry else None,
+            'sunlight': entry.sunlight if entry else None,
+            'water': entry.water if entry else None,
+            'days_to_harvest': entry.days_to_harvest if entry else None,
+            'last_watered': bp.last_watered.isoformat() if bp.last_watered else None,
+            'last_fertilized': bp.last_fertilized.isoformat() if bp.last_fertilized else None,
+            'health_notes': bp.health_notes or '',
+        })
 
     return app
 

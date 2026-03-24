@@ -16,6 +16,7 @@ class Garden(db.Model):
     usda_zone = db.Column(db.String(10), nullable=True)
     zone_temp_range = db.Column(db.String(50), nullable=True)
     beds = db.relationship('GardenBed', backref='garden', lazy=True)
+    plants = db.relationship('Plant', backref='garden', lazy=True)
 
     def __repr__(self):
         return f'<Garden {self.name}>'
@@ -46,6 +47,10 @@ class Plant(db.Model):
     notes = db.Column(db.Text)
     planted_date = db.Column(db.Date)
     expected_harvest = db.Column(db.Date)
+    status = db.Column(db.String(20), nullable=False, default='planning')
+    library_id = db.Column(db.Integer, db.ForeignKey('plant_library.id'), nullable=True)
+    garden_id = db.Column(db.Integer, db.ForeignKey('garden.id'), nullable=True)
+    library_entry = db.relationship('PlantLibrary', backref='plants', lazy=True)
     tasks = db.relationship('Task', backref='plant', lazy=True)
     bed_plants = db.relationship('BedPlant', backref='plant', lazy=True)
 
@@ -59,6 +64,9 @@ class BedPlant(db.Model):
     plant_id = db.Column(db.Integer, db.ForeignKey('plant.id'), nullable=False)
     grid_x = db.Column(db.Integer, nullable=True)
     grid_y = db.Column(db.Integer, nullable=True)
+    last_watered = db.Column(db.Date, nullable=True)
+    last_fertilized = db.Column(db.Date, nullable=True)
+    health_notes = db.Column(db.Text, nullable=True)
 
     def __repr__(self):
         return f'<BedPlant bed={self.bed_id} plant={self.plant_id}>'
@@ -71,12 +79,29 @@ class PlantLibrary(db.Model):
     perenual_id = db.Column(db.Integer, nullable=True)
     image_filename = db.Column(db.String(100), nullable=True)
     type = db.Column(db.String(50))          # vegetable, herb, fruit, flower
-    spacing_in = db.Column(db.Integer)       # recommended spacing in inches
-    sunlight = db.Column(db.String(50))      # Full sun, Partial shade, Full shade
-    water = db.Column(db.String(50))         # Low, Moderate, High
+    spacing_in = db.Column(db.Integer)
+    sunlight = db.Column(db.String(50))
+    water = db.Column(db.String(50))
     days_to_germination = db.Column(db.Integer)
     days_to_harvest = db.Column(db.Integer)
     notes = db.Column(db.Text)
+    # Extended info
+    difficulty = db.Column(db.String(20))
+    min_zone = db.Column(db.Integer)
+    max_zone = db.Column(db.Integer)
+    temp_min_f = db.Column(db.Integer)
+    temp_max_f = db.Column(db.Integer)
+    soil_ph_min = db.Column(db.Float)
+    soil_ph_max = db.Column(db.Float)
+    soil_type = db.Column(db.String(200))
+    good_neighbors = db.Column(db.Text)       # JSON array
+    bad_neighbors = db.Column(db.Text)        # JSON array
+    sow_indoor_weeks = db.Column(db.Integer)  # weeks before last spring frost
+    direct_sow_offset = db.Column(db.Integer) # weeks rel. to last frost (neg=before)
+    transplant_offset = db.Column(db.Integer) # weeks after last frost to transplant
+    how_to_grow = db.Column(db.Text)          # JSON {starting,seedling,vegetative,flowering,harvest}
+    faqs = db.Column(db.Text)                 # JSON [{q,a}]
+    nutrition = db.Column(db.Text)            # JSON nutrition data
 
     def __repr__(self):
         return f'<PlantLibrary {self.name}>'

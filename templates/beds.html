@@ -1,14 +1,45 @@
 {% extends "base.html" %}
 {% block title %}Garden Beds{% endblock %}
 {% block content %}
-<h1>Garden Beds</h1>
+<div style="display:flex;align-items:baseline;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+  <h1 style="margin:0;">Garden Beds</h1>
+
+  {# ── Garden selector ── #}
+  <form method="get" action="{{ url_for('beds') }}" style="display:flex;align-items:center;gap:0.5rem;">
+    <label for="garden-select" style="font-size:0.9rem;font-weight:600;color:#3a5c37;white-space:nowrap;">Garden:</label>
+    <select id="garden-select" name="garden_id" onchange="this.form.submit()"
+            style="font:inherit;padding:0.35rem 0.6rem;border:1px solid #c0d4be;border-radius:4px;background:#fbfefb;color:#2d3a2d;">
+      <option value="">All gardens</option>
+      {% for g in all_gardens %}
+      <option value="{{ g.id }}"{% if g.id == garden_id %} selected{% endif %}>{{ g.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if selected_garden %}
+<p class="muted" style="margin:-0.75rem 0 1rem;">
+  Showing beds for <strong>{{ selected_garden.name }}</strong>.
+  <a href="{{ url_for('beds') }}">Show all gardens</a>
+</p>
+{% endif %}
 
 <section>
   <h2>Add Bed</h2>
   <form method="post" class="form">
+    <label>Garden
+      <select name="garden_id" required>
+        <option value="">— select a garden —</option>
+        {% for g in all_gardens %}
+        <option value="{{ g.id }}"{% if g.id == garden_id %} selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>Name <input type="text" name="name" required></label>
     <label>Location <input type="text" name="location"></label>
     <label>Description <textarea name="description" rows="2"></textarea></label>
+    <label>Width (ft) <input type="number" name="width_ft" step="0.5" min="1" placeholder="4"></label>
+    <label>Height (ft) <input type="number" name="height_ft" step="0.5" min="1" placeholder="8"></label>
     <label>Depth (ft) <input type="number" name="depth_ft" step="0.5" min="0" placeholder="e.g. 1"></label>
     <label>Soil Notes <textarea name="soil_notes" rows="2" placeholder="e.g. raised bed with compost mix"></textarea></label>
     <button type="submit">Add Bed</button>
@@ -21,14 +52,37 @@
   <ul class="card-list">
     {% for bed in beds %}
     <li class="card">
-      <a href="{{ url_for('bed_detail', bed_id=bed.id) }}"><strong>{{ bed.name }}</strong></a>
-      {% if bed.location %}<span class="muted">— {{ bed.location }}</span>{% endif %}
-      <span class="muted">({{ bed.plants | length }} plant{{ 's' if bed.plants | length != 1 }})</span>
+      <div class="plant-card-body">
+        <a href="{{ url_for('bed_detail', bed_id=bed.id) }}"><strong>{{ bed.name }}</strong></a>
+        {% if bed.garden %}<span class="muted" style="font-size:0.8rem;">📍 {{ bed.garden.name }}</span>{% endif %}
+        {% if bed.location %}<span class="muted">— {{ bed.location }}</span>{% endif %}
+        <span class="muted">({{ bed.bed_plants | length }} plant{{ 's' if bed.bed_plants | length != 1 }})</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0.35rem;margin-left:auto;">
+        <a href="{{ url_for('bed_detail', bed_id=bed.id) }}" class="btn-small btn-link">View →</a>
+        <details class="inline-rename">
+          <summary class="btn-small btn-link" style="list-style:none;cursor:pointer;">Rename</summary>
+          <form method="post" action="{{ url_for('edit_bed', bed_id=bed.id) }}"
+                style="display:flex;gap:0.4rem;margin-top:0.35rem;">
+            <input type="hidden" name="location" value="{{ bed.location or '' }}">
+            <input type="hidden" name="description" value="{{ bed.description or '' }}">
+            <input type="hidden" name="depth_ft" value="{{ bed.depth_ft or '' }}">
+            <input type="hidden" name="soil_notes" value="{{ bed.soil_notes or '' }}">
+            <input type="text" name="name" value="{{ bed.name }}" required
+                   style="font:inherit;padding:0.25rem 0.4rem;border:1px solid #c0d4be;border-radius:4px;width:10rem;">
+            <button type="submit" class="btn-small">Save</button>
+          </form>
+        </details>
+        <form method="post" action="{{ url_for('delete_bed', bed_id=bed.id) }}"
+              onsubmit="return confirm('Delete bed &quot;{{ bed.name }}&quot;?')">
+          <button type="submit" class="btn-small btn-danger">Delete</button>
+        </form>
+      </div>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No beds yet.</p>
+  <p class="muted">No beds yet.{% if not selected_garden %} Create one above or <a href="{{ url_for('gardens') }}">create a garden</a> first.{% endif %}</p>
   {% endif %}
 </section>
 {% endblock %}

@@ -35,20 +35,58 @@
 
   <div class="bed-grid-sidebar">
     <h3>Place a Plant</h3>
-    <select id="plant-select" class="bed-plant-select">
-      <option value="">— select plant —</option>
-      {% for plant in all_plants %}
-      <option value="{{ plant.id }}">{{ plant.name }}</option>
+    <input type="text" id="plant-search" class="bed-plant-select"
+           placeholder="Search library…" style="margin-bottom:0.4rem;">
+    <select id="plant-select" class="bed-plant-select" size="8" style="height:auto;">
+      {% for plant in library_plants %}
+      <option value="{{ plant.id }}"
+              data-image="{{ plant.image_filename or '' }}"
+              data-name="{{ plant.name }}">
+        {{ plant.name }}{% if plant.type %} ({{ plant.type }}){% endif %}
+      </option>
       {% endfor %}
     </select>
     <p class="muted" style="margin-top:0.75rem;">1. Select a plant above.</p>
     <p class="muted">2. Click an empty cell to place it.</p>
-    <p class="muted">3. Click a placed plant to remove it.</p>
+    <p class="muted">3. Click a placed plant to view/edit its care info.</p>
   </div>
 </div>
 
+{# Care panel — shown when a placed plant is clicked #}
+<div id="care-panel" class="care-panel" style="display:none;">
+  <div class="care-panel-header">
+    <img id="care-img" src="" alt="" class="care-img" style="display:none;">
+    <div>
+      <h3 id="care-name" style="margin:0 0 0.2rem;"></h3>
+      <span id="care-sci" class="muted" style="font-size:0.85rem;font-style:italic;"></span>
+    </div>
+    <button id="care-close" class="btn-small" style="margin-left:auto;">Close</button>
+  </div>
+
+  <dl class="details" id="care-details" style="margin:0.75rem 0;"></dl>
+
+  <form id="care-form" class="form" style="max-width:420px;">
+    <label>Last Watered
+      <input type="date" name="last_watered" id="care-watered">
+    </label>
+    <label>Last Fertilized
+      <input type="date" name="last_fertilized" id="care-fertilized">
+    </label>
+    <label>Health Notes (diseases, pests, observations)
+      <textarea name="health_notes" id="care-health" rows="3"
+                placeholder="e.g. aphids spotted on lower leaves, treated with neem oil"></textarea>
+    </label>
+    <div style="display:flex;gap:0.5rem;">
+      <button type="submit">Save</button>
+      <button type="button" id="care-remove-btn" class="btn-danger">Remove Plant</button>
+    </div>
+    <p id="care-saved-msg" class="muted" style="display:none;">Saved.</p>
+  </form>
+</div>
+
 <div class="actions">
-  <form method="post" action="{{ url_for('delete_bed', bed_id=bed.id) }}" onsubmit="return confirm('Delete {{ bed.name }}?')">
+  <form method="post" action="{{ url_for('delete_bed', bed_id=bed.id) }}"
+        onsubmit="return confirm('Delete {{ bed.name }}?')">
     <button type="submit" class="btn-danger">Delete Bed</button>
   </form>
 </div>
@@ -60,10 +98,22 @@ const BED_ID = {{ bed.id }};
 const COLS = {{ bed.width_ft|int }};
 const ROWS = {{ bed.height_ft|int }};
 
-const gridEl = document.getElementById('bed-grid');
+const gridEl      = document.getElementById('bed-grid');
+const plantSearch = document.getElementById('plant-search');
 const plantSelect = document.getElementById('plant-select');
-let placed = {}; // "x,y" -> {id, plant_id, plant_name}
+const carePanel   = document.getElementById('care-panel');
+let placed = {}; // "x,y" -> {id, plant_name, image_filename}
+let activeBpId = null;
 
+// ── Plant search filter ───────────────────────────────────────────────────────
+plantSearch.addEventListener('input', () => {
+  const q = plantSearch.value.toLowerCase();
+  Array.from(plantSelect.options).forEach(opt => {
+    opt.style.display = opt.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+// ── Load grid from server ─────────────────────────────────────────────────────
 async function loadGrid() {
   const res = await fetch(`/api/beds/${BED_ID}/grid`);
   const data = await res.json();
@@ -80,10 +130,16 @@ function renderGrid() {
     for (let x = 0; x < COLS; x++) {
       const cell = document.createElement('div');
       const key = `${x},${y}`;
-      if (placed[key]) {
+      const p = placed[key];
+      if (p) {
         cell.className = 'bed-cell occupied';
-        cell.textContent = placed[key].plant_name;
-        cell.title = `Click to remove ${placed[key].plant_name}`;
+        if (p.image_filename) {
+          cell.style.backgroundImage = `url('/static/plant_images/${p.image_filename}')`;
+          cell.style.backgroundSize = 'cover';
+          cell.style.backgroundPosition = 'center';
+        }
+        cell.innerHTML = `<span class="cell-label">${p.plant_name}</span>`;
+        cell.title = `${p.plant_name} — click for care info`;
       } else {
         cell.className = 'bed-cell empty';
         cell.title = 'Click to place selected plant';
@@ -96,37 +152,103 @@ function renderGrid() {
   }
 }
 
+// ── Cell click ────────────────────────────────────────────────────────────────
 async function handleCellClick(e) {
   const x = parseInt(e.currentTarget.dataset.x);
   const y = parseInt(e.currentTarget.dataset.y);
   const key = `${x},${y}`;
 
   if (placed[key]) {
-    if (!confirm(`Remove ${placed[key].plant_name} from this cell?`)) return;
-    await fetch(`/api/bedplants/${placed[key].id}/delete`, { method: 'POST' });
-    delete placed[key];
-    renderGrid();
+    await openCarePanel(placed[key].id, key);
   } else {
-    const plantId = plantSelect.value;
-    if (!plantId) {
-      plantSelect.focus();
-      return;
-    }
+    const sel = plantSelect.selectedOptions[0];
+    if (!sel) { plantSelect.focus(); return; }
     const res = await fetch(`/api/beds/${BED_ID}/grid-plant`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plant_id: parseInt(plantId), grid_x: x, grid_y: y }),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ library_id: parseInt(sel.value), grid_x: x, grid_y: y }),
     });
     const data = await res.json();
     if (data.ok) {
-      const plantName = plantSelect.options[plantSelect.selectedIndex].text;
-      placed[key] = { id: data.id, plant_id: parseInt(plantId), plant_name: plantName };
+      placed[key] = { id: data.id, plant_name: data.plant_name, image_filename: data.image_filename };
       renderGrid();
     } else {
       alert(data.error || 'Error placing plant');
     }
   }
 }
+
+// ── Care panel ────────────────────────────────────────────────────────────────
+async function openCarePanel(bpId, key) {
+  activeBpId = bpId;
+  const res = await fetch(`/api/bedplants/${bpId}`);
+  const d = await res.json();
+
+  document.getElementById('care-name').textContent = d.plant_name;
+  document.getElementById('care-sci').textContent = d.scientific_name || '';
+
+  const img = document.getElementById('care-img');
+  if (d.image_filename) {
+    img.src = `/static/plant_images/${d.image_filename}`;
+    img.style.display = 'block';
+  } else {
+    img.style.display = 'none';
+  }
+
+  // Growing info
+  const deets = document.getElementById('care-details');
+  deets.innerHTML = [
+    d.sunlight    ? `<dt>Sunlight</dt><dd>${d.sunlight}</dd>` : '',
+    d.water       ? `<dt>Water</dt><dd>${d.water}</dd>` : '',
+    d.spacing_in  ? `<dt>Spacing</dt><dd>${d.spacing_in}"</dd>` : '',
+    d.days_to_harvest ? `<dt>Days to Harvest</dt><dd>${d.days_to_harvest}</dd>` : '',
+  ].join('');
+
+  document.getElementById('care-watered').value    = d.last_watered || '';
+  document.getElementById('care-fertilized').value = d.last_fertilized || '';
+  document.getElementById('care-health').value     = d.health_notes || '';
+  document.getElementById('care-saved-msg').style.display = 'none';
+
+  carePanel.style.display = 'block';
+  carePanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Store key for removal
+  carePanel.dataset.key = key;
+}
+
+document.getElementById('care-close').addEventListener('click', () => {
+  carePanel.style.display = 'none';
+  activeBpId = null;
+});
+
+document.getElementById('care-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!activeBpId) return;
+  await fetch(`/api/bedplants/${activeBpId}/care`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      last_watered:   document.getElementById('care-watered').value || null,
+      last_fertilized: document.getElementById('care-fertilized').value || null,
+      health_notes:   document.getElementById('care-health').value || null,
+    }),
+  });
+  const msg = document.getElementById('care-saved-msg');
+  msg.style.display = 'block';
+  setTimeout(() => msg.style.display = 'none', 2000);
+});
+
+document.getElementById('care-remove-btn').addEventListener('click', async () => {
+  if (!activeBpId) return;
+  const name = document.getElementById('care-name').textContent;
+  if (!confirm(`Remove ${name} from this cell?`)) return;
+  await fetch(`/api/bedplants/${activeBpId}/delete`, { method: 'POST' });
+  const key = carePanel.dataset.key;
+  delete placed[key];
+  carePanel.style.display = 'none';
+  activeBpId = null;
+  renderGrid();
+});
 
 loadGrid();
 </script>
