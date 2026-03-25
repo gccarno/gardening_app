@@ -7,6 +7,7 @@ const GARDEN_ID = canvas.dataset.gardenId;
 
 let dragState = null;
 let tileIn = 12; // current tile size in inches (default 1 ft)
+let zoom = parseFloat(localStorage.getItem('plannerZoom') || '1');
 
 // ── Shared fetch helper ────────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -163,8 +164,8 @@ function bindGridHover(grid) {
 
         const tilePx = tileIn * PX_PER_IN;
         const rect   = grid.getBoundingClientRect();
-        const cx     = Math.floor((e.clientX - rect.left) / tilePx);
-        const cy     = Math.floor((e.clientY - rect.top)  / tilePx);
+        const cx     = Math.floor((e.clientX - rect.left) / zoom / tilePx);
+        const cy     = Math.floor((e.clientY - rect.top)  / zoom / tilePx);
         const span   = plantSpan(dragState.spacingIn || 12);
 
         if (cx !== lastCx || cy !== lastCy || span !== lastSpan) {
@@ -204,6 +205,396 @@ if (tileSizeSelect) {
 
 // Build grids for all beds already on the canvas
 document.querySelectorAll('.canvas-bed').forEach(buildBedGrid);
+
+// ── Canvas Plant Circles ───────────────────────────────────────────────────────
+
+let activeCanvasPlantId = null;
+const canvasPlantEls    = {}; // cp_id → DOM element
+
+function applyCircleAppearance(el, cp) {
+    const bg = el.querySelector('.circle-bg');
+    const img = bg ? bg.querySelector('img') : null;
+    if (cp.display_mode === 'image' && cp.image_filename) {
+        const src = cp.custom_image
+            ? `/static/canvas_plant_images/${cp.image_filename}`
+            : `/static/plant_images/${cp.image_filename}`;
+        if (img) {
+            img.src = src;
+            img.style.display = 'block';
+        }
+        el.style.backgroundColor = 'transparent';
+    } else {
+        if (img) img.style.display = 'none';
+        el.style.backgroundColor = cp.color || '#5a9e54';
+    }
+}
+
+function renderCanvasPlant(cp) {
+    const diamPx  = cp.radius_ft * PX * 2;
+    const leftPx  = cp.pos_x * PX - cp.radius_ft * PX;
+    const topPx   = cp.pos_y * PX - cp.radius_ft * PX;
+
+    const el = document.createElement('div');
+    el.className   = 'canvas-plant-circle';
+    el.id          = `canvas-plant-${cp.id}`;
+    el.dataset.cpId = cp.id;
+    el.style.left   = `${leftPx}px`;
+    el.style.top    = `${topPx}px`;
+    el.style.width  = `${diamPx}px`;
+    el.style.height = `${diamPx}px`;
+
+    // Inner clip div for background image
+    const bg = document.createElement('div');
+    bg.className = 'circle-bg';
+    const img = document.createElement('img');
+    img.alt = cp.name || '';
+    bg.appendChild(img);
+    el.appendChild(bg);
+
+    applyCircleAppearance(el, cp);
+
+    const label = document.createElement('span');
+    label.className   = 'canvas-plant-label';
+    label.textContent = cp.name || '';
+    el.appendChild(label);
+
+    const handle = document.createElement('div');
+    handle.className = 'canvas-plant-resize-handle';
+    handle.title     = 'Drag to resize';
+    el.appendChild(handle);
+
+    const delBtn = document.createElement('button');
+    delBtn.className   = 'canvas-plant-delete-btn';
+    delBtn.textContent = '×';
+    delBtn.title       = 'Remove from canvas';
+    el.appendChild(delBtn);
+
+    bindCanvasPlantEvents(el, cp);
+    canvas.appendChild(el);
+    canvasPlantEls[cp.id] = el;
+}
+
+function bindCanvasPlantEvents(el, cp) {
+    let pointerMode = null; // 'move' | 'resize'
+    let startX, startY, startLeft, startTop, startDiam;
+    let didMove = false;
+
+    el.addEventListener('pointerdown', (e) => {
+        if (e.target.classList.contains('canvas-plant-delete-btn')) return;
+        e.stopPropagation();
+        e.preventDefault();
+        el.setPointerCapture(e.pointerId);
+        didMove = false;
+
+        if (e.target.classList.contains('canvas-plant-resize-handle')) {
+            pointerMode = 'resize';
+            startX      = e.clientX;
+            startDiam   = parseFloat(el.style.width);
+            startLeft   = parseFloat(el.style.left);
+            startTop    = parseFloat(el.style.top);
+        } else {
+            pointerMode = 'move';
+            startX      = e.clientX;
+            startY      = e.clientY;
+            startLeft   = parseFloat(el.style.left);
+            startTop    = parseFloat(el.style.top);
+            el.classList.add('dragging');
+        }
+    });
+
+    el.addEventListener('pointermove', (e) => {
+        if (!pointerMode) return;
+        didMove = true;
+        if (pointerMode === 'move') {
+            const dx = (e.clientX - startX) / zoom;
+            const dy = (e.clientY - startY) / zoom;
+            el.style.left = `${Math.max(0, startLeft + dx)}px`;
+            el.style.top  = `${Math.max(0, startTop  + dy)}px`;
+        } else {
+            const dx      = (e.clientX - startX) / zoom;
+            const newDiam = Math.max(PX * 0.5, startDiam + dx * 2);
+            const delta   = newDiam - startDiam;
+            el.style.width  = `${newDiam}px`;
+            el.style.height = `${newDiam}px`;
+            el.style.left   = `${startLeft - delta / 2}px`;
+            el.style.top    = `${startTop  - delta / 2}px`;
+        }
+    });
+
+    el.addEventListener('pointerup', async (e) => {
+        if (!pointerMode) return;
+        const mode = pointerMode;
+        pointerMode = null;
+
+        if (mode === 'move') {
+            el.classList.remove('dragging');
+            if (didMove) {
+                const diam = parseFloat(el.style.width);
+                const newX = (parseFloat(el.style.left) + diam / 2) / PX;
+                const newY = (parseFloat(el.style.top)  + diam / 2) / PX;
+                await api('POST', `/api/canvas-plants/${cp.id}/position`, { x: newX, y: newY });
+                cp.pos_x = newX;
+                cp.pos_y = newY;
+            }
+        } else if (mode === 'resize') {
+            if (didMove) {
+                const newDiam   = parseFloat(el.style.width);
+                const newRadius = newDiam / 2 / PX;
+                await api('POST', `/api/canvas-plants/${cp.id}/radius`, { radius_ft: newRadius });
+                cp.radius_ft = newRadius;
+                offerSpacingUpdate(cp, newRadius);
+            }
+        }
+        didMove = false;
+    });
+
+    el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('canvas-plant-delete-btn')) return;
+        if (e.target.classList.contains('canvas-plant-resize-handle')) return;
+        if (didMove) return;
+        document.querySelectorAll('.canvas-plant-circle.circle-active').forEach(c => c.classList.remove('circle-active'));
+        document.querySelectorAll('.grid-plant-chip.chip-active').forEach(c => c.classList.remove('chip-active'));
+        el.classList.add('circle-active');
+        openCanvasPlantPanel(cp.id);
+    });
+
+    el.querySelector('.canvas-plant-delete-btn').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = cp.name || 'this plant';
+        if (!confirm(`Remove "${name}" from canvas?`)) return;
+        const r = await api('POST', `/api/canvas-plants/${cp.id}/delete`, {});
+        if (r.ok) {
+            el.remove();
+            delete canvasPlantEls[cp.id];
+            if (activeCanvasPlantId == cp.id) closeCanvasPlantPanel();
+        }
+    });
+}
+
+async function offerSpacingUpdate(cp, newRadiusFt) {
+    if (!cp.library_id) return;
+    const newSpacingIn = Math.round(newRadiusFt * 2 * 12);
+    if (confirm(`Update default spacing for "${cp.name}" in the plant library to ${newSpacingIn}"?`)) {
+        await api('POST', `/api/library/${cp.library_id}/quick-edit`, { spacing_in: newSpacingIn });
+    }
+}
+
+async function openCanvasPlantPanel(cpId) {
+    activeCanvasPlantId = cpId;
+    try {
+        const d = await fetch(`/api/canvas-plants/${cpId}`).then(r => r.json());
+        // Populate the care section using existing function (no bed fields)
+        populateCarePanel({
+            plant_name:      d.name,
+            scientific_name: d.scientific_name,
+            sunlight:        d.sunlight,
+            water:           d.water,
+            spacing_in:      d.spacing_in,
+            planted_date:    d.planted_date,
+            transplant_date: d.transplant_date,
+            plant_notes:     d.plant_notes,
+            plant_id:        d.plant_id,
+            id:              d.plant_id,
+        }, false);
+        // Populate lib section
+        populateLibSection(d);
+        // Populate appearance section
+        populateAppearanceSection(d);
+        // Show the new sections
+        document.getElementById('rp-lib-section').style.display        = '';
+        document.getElementById('rp-appearance-section').style.display = '';
+    } catch (err) {
+        console.error('openCanvasPlantPanel error:', err);
+    }
+}
+
+function closeCanvasPlantPanel() {
+    activeCanvasPlantId = null;
+    const libSec  = document.getElementById('rp-lib-section');
+    const appSec  = document.getElementById('rp-appearance-section');
+    if (libSec)  libSec.style.display  = 'none';
+    if (appSec)  appSec.style.display  = 'none';
+    document.querySelectorAll('.canvas-plant-circle.circle-active').forEach(c => c.classList.remove('circle-active'));
+}
+
+function populateLibSection(d) {
+    const entryId = d.library_id || '';
+    document.getElementById('rp-lib-entry-id').value = entryId;
+
+    const readonlyEl = document.getElementById('rp-lib-readonly');
+    if (entryId) {
+        let parts = [];
+        if (d.sunlight)   parts.push(`☀ ${escapeHtml(d.sunlight)}`);
+        if (d.water)      parts.push(`💧 ${escapeHtml(d.water)}`);
+        if (d.spacing_in) parts.push(`↔ ${d.spacing_in}" spacing`);
+        if (d.lib_notes)  parts.push(`<span style="font-size:0.7rem;">${escapeHtml(d.lib_notes.substring(0, 80))}${d.lib_notes.length > 80 ? '…' : ''}</span>`);
+        readonlyEl.innerHTML = parts.join(' · ') || '<span class="rp-muted">No details.</span>';
+    } else {
+        readonlyEl.innerHTML = '<span class="rp-muted">No library entry linked.</span>';
+    }
+
+    document.getElementById('rp-lib-sunlight').value = d.sunlight   || '';
+    document.getElementById('rp-lib-water').value    = d.water      || '';
+    document.getElementById('rp-lib-spacing').value  = d.spacing_in || '';
+    document.getElementById('rp-lib-notes').value    = d.lib_notes  || '';
+
+    document.getElementById('rp-lib-form').style.display         = 'none';
+    document.getElementById('rp-lib-edit-toggle').textContent    = 'Edit';
+    document.getElementById('rp-lib-saved').style.display        = 'none';
+    document.getElementById('rp-lib-edit-toggle').style.display  = entryId ? '' : 'none';
+}
+
+function populateAppearanceSection(d) {
+    document.getElementById('rp-appearance-cp-id').value = d.id;
+    document.getElementById('rp-circle-color').value     = d.color || '#5a9e54';
+
+    document.querySelectorAll('.rp-toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === (d.display_mode || 'color'));
+    });
+
+    const previewEl = document.getElementById('rp-image-preview');
+    const imgEl     = document.getElementById('rp-image-preview-img');
+    const saveBtn   = document.getElementById('rp-save-image-to-library-btn');
+    if (d.custom_image) {
+        imgEl.src               = `/static/canvas_plant_images/${d.custom_image}`;
+        previewEl.style.display = '';
+    } else if (d.display_mode === 'image' && d.image_filename) {
+        imgEl.src               = `/static/plant_images/${d.image_filename}`;
+        previewEl.style.display = '';
+    } else {
+        previewEl.style.display = 'none';
+    }
+    if (saveBtn) saveBtn.style.display = d.library_id ? '' : 'none';
+}
+
+// Lib section toggle
+document.getElementById('rp-lib-edit-toggle')?.addEventListener('click', () => {
+    const form    = document.getElementById('rp-lib-form');
+    const isShown = form.style.display !== 'none';
+    form.style.display = isShown ? 'none' : '';
+    document.getElementById('rp-lib-edit-toggle').textContent = isShown ? 'Edit' : 'Cancel';
+});
+
+document.getElementById('rp-lib-cancel')?.addEventListener('click', () => {
+    document.getElementById('rp-lib-form').style.display      = 'none';
+    document.getElementById('rp-lib-edit-toggle').textContent = 'Edit';
+});
+
+document.getElementById('rp-lib-form')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const entryId = document.getElementById('rp-lib-entry-id').value;
+    if (!entryId) return;
+    if (!confirm('Save these changes to the shared plant library? This affects all gardens.')) return;
+    const result = await api('POST', `/api/library/${entryId}/quick-edit`, {
+        sunlight:   document.getElementById('rp-lib-sunlight').value || null,
+        water:      document.getElementById('rp-lib-water').value    || null,
+        spacing_in: parseInt(document.getElementById('rp-lib-spacing').value) || null,
+        notes:      document.getElementById('rp-lib-notes').value    || null,
+    });
+    if (result.ok) {
+        document.getElementById('rp-lib-saved').style.display        = '';
+        setTimeout(() => { document.getElementById('rp-lib-saved').style.display = 'none'; }, 2000);
+        document.getElementById('rp-lib-form').style.display         = 'none';
+        document.getElementById('rp-lib-edit-toggle').textContent    = 'Edit';
+        // Refresh readonly display
+        if (activeCanvasPlantId) openCanvasPlantPanel(activeCanvasPlantId);
+    }
+});
+
+// Appearance: color input
+document.getElementById('rp-circle-color')?.addEventListener('input', async (e) => {
+    const cpId = document.getElementById('rp-appearance-cp-id').value;
+    if (!cpId) return;
+    const color = e.target.value;
+    const el = document.getElementById(`canvas-plant-${cpId}`);
+    if (el) el.style.backgroundColor = color;
+});
+document.getElementById('rp-circle-color')?.addEventListener('change', async (e) => {
+    const cpId = document.getElementById('rp-appearance-cp-id').value;
+    if (!cpId) return;
+    const color = e.target.value;
+    await api('POST', `/api/canvas-plants/${cpId}/appearance`, { color, display_mode: 'color' });
+    const cp = (CANVAS_PLANTS_DATA || []).find(c => String(c.id) === String(cpId));
+    if (cp) { cp.color = color; cp.display_mode = 'color'; }
+    document.querySelectorAll('.rp-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'color'));
+});
+
+// Appearance: display mode toggle
+document.querySelectorAll('.rp-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const cpId = document.getElementById('rp-appearance-cp-id').value;
+        if (!cpId) return;
+        const mode = btn.dataset.mode;
+        document.querySelectorAll('.rp-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
+        await api('POST', `/api/canvas-plants/${cpId}/appearance`, { display_mode: mode });
+        const cp = (CANVAS_PLANTS_DATA || []).find(c => String(c.id) === String(cpId));
+        if (cp) {
+            cp.display_mode = mode;
+            const el = document.getElementById(`canvas-plant-${cpId}`);
+            if (el) applyCircleAppearance(el, cp);
+        }
+    });
+});
+
+// Appearance: image upload
+document.getElementById('rp-image-upload-btn')?.addEventListener('click', () => {
+    document.getElementById('rp-image-file-input').click();
+});
+
+document.getElementById('rp-image-file-input')?.addEventListener('change', async () => {
+    const cpId = document.getElementById('rp-appearance-cp-id').value;
+    const file = document.getElementById('rp-image-file-input').files[0];
+    if (!cpId || !file) return;
+    const formData = new FormData();
+    formData.append('image', file);
+    try {
+        const resp = await fetch(`/api/canvas-plants/${cpId}/upload-image`, { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.ok) {
+            const imgEl = document.getElementById('rp-image-preview-img');
+            imgEl.src = data.url;
+            document.getElementById('rp-image-preview').style.display = '';
+            const cp = (CANVAS_PLANTS_DATA || []).find(c => String(c.id) === String(cpId));
+            if (cp) {
+                cp.custom_image    = data.filename;
+                cp.image_filename  = data.filename;
+                cp.display_mode    = 'image';
+                const el = document.getElementById(`canvas-plant-${cpId}`);
+                if (el) applyCircleAppearance(el, cp);
+            }
+            document.querySelectorAll('.rp-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'image'));
+            const saveBtn = document.getElementById('rp-save-image-to-library-btn');
+            const libId   = document.getElementById('rp-lib-entry-id').value;
+            if (saveBtn && libId) saveBtn.style.display = '';
+        } else {
+            alert(data.error || 'Upload failed');
+        }
+    } catch (err) {
+        console.error('Image upload error:', err);
+    }
+    document.getElementById('rp-image-file-input').value = '';
+});
+
+// Appearance: save image to library
+document.getElementById('rp-save-image-to-library-btn')?.addEventListener('click', async () => {
+    const cpId = document.getElementById('rp-appearance-cp-id').value;
+    if (!cpId) return;
+    if (!confirm('Save this image to the plant library? It will appear for all plants of this type.')) return;
+    const result = await api('POST', `/api/canvas-plants/${cpId}/save-image-to-library`, {});
+    if (result.ok) {
+        const saveBtn = document.getElementById('rp-save-image-to-library-btn');
+        saveBtn.textContent = 'Saved to library ✓';
+        setTimeout(() => { saveBtn.textContent = 'Save to plant library?'; }, 3000);
+    } else {
+        alert(result.error || 'Could not save image to library');
+    }
+});
+
+// Initialize circles from server data
+function initCanvasPlants() {
+    (CANVAS_PLANTS_DATA || []).forEach(cp => renderCanvasPlant(cp));
+}
+initCanvasPlants();
 
 // ── Create a new canvas-bed element ──────────────────────────────────────────
 function createBedElement(bed) {
@@ -274,8 +665,8 @@ canvas.addEventListener('dragover', (e) => {
 
     if (dragState.type === 'bed-canvas') {
         const cr   = canvas.getBoundingClientRect();
-        const rawX = e.clientX - cr.left - dragState.offsetX + canvas.scrollLeft;
-        const rawY = e.clientY - cr.top  - dragState.offsetY + canvas.scrollTop;
+        const rawX = (e.clientX - cr.left - dragState.offsetX) / zoom;
+        const rawY = (e.clientY - cr.top  - dragState.offsetY) / zoom;
         const bedEl = document.getElementById(`canvas-bed-${dragState.bedId}`);
         if (bedEl) {
             bedEl.style.left = `${snap(Math.max(0, rawX))}px`;
@@ -290,15 +681,16 @@ canvas.addEventListener('drop', async (e) => {
     if (!dragState) return;
     const cr = canvas.getBoundingClientRect();
 
-    // ── Plant drop onto a grid cell ──
+    // ── Plant drop onto a grid cell or bare canvas ──
     if (dragState.type === 'plant') {
-        const target = document.elementFromPoint(e.clientX, e.clientY);
-        const grid   = target && target.closest('.canvas-bed-grid');
+        const target  = document.elementFromPoint(e.clientX, e.clientY);
+        const grid    = target && target.closest('.canvas-bed-grid');
+        const bedEl   = target && target.closest('.canvas-bed');
         if (grid) {
             const tilePx   = tileIn * PX_PER_IN;
             const rect     = grid.getBoundingClientRect();
-            const cx       = Math.floor((e.clientX - rect.left) / tilePx);
-            const cy       = Math.floor((e.clientY - rect.top)  / tilePx);
+            const cx       = Math.floor((e.clientX - rect.left) / zoom / tilePx);
+            const cy       = Math.floor((e.clientY - rect.top)  / zoom / tilePx);
             const spacingIn = dragState.spacingIn || 12;
             const span     = plantSpan(spacingIn);
 
@@ -325,6 +717,28 @@ canvas.addEventListener('drop', async (e) => {
                     }
                 }
             }
+        } else if (!bedEl) {
+            // Dropped on bare canvas — create a free-placed circle
+            const posX = (e.clientX - cr.left) / zoom / PX;
+            const posY = (e.clientY - cr.top)  / zoom / PX;
+            const result = await api('POST', `/api/gardens/${GARDEN_ID}/canvas-plants`, {
+                library_id: dragState.libraryId || null,
+                plant_id:   dragState.plantId   || null,
+                pos_x: posX,
+                pos_y: posY,
+            });
+            if (result.ok) {
+                renderCanvasPlant(result.canvas_plant);
+                if (dragState.libraryId && result.canvas_plant.plant_id) {
+                    addPlantToGardenPalette(
+                        result.canvas_plant.plant_id,
+                        result.canvas_plant.library_id,
+                        result.canvas_plant.name,
+                        result.canvas_plant.image_filename,
+                        result.canvas_plant.spacing_in || 12
+                    );
+                }
+            }
         }
         dragState = null;
         return;
@@ -332,8 +746,8 @@ canvas.addEventListener('drop', async (e) => {
 
     // ── Bed repositioning ──
     if (dragState.type === 'bed-canvas') {
-        const rawX  = e.clientX - cr.left - dragState.offsetX;
-        const rawY  = e.clientY - cr.top  - dragState.offsetY;
+        const rawX  = (e.clientX - cr.left - dragState.offsetX) / zoom;
+        const rawY  = (e.clientY - cr.top  - dragState.offsetY) / zoom;
         const sx    = snap(Math.max(0, rawX));
         const sy    = snap(Math.max(0, rawY));
         const bedEl = document.getElementById(`canvas-bed-${dragState.bedId}`);
@@ -342,8 +756,8 @@ canvas.addEventListener('drop', async (e) => {
 
     // ── Bed from palette onto canvas ──
     } else if (dragState.type === 'bed-palette') {
-        const sx = snap(Math.max(0, e.clientX - cr.left));
-        const sy = snap(Math.max(0, e.clientY - cr.top));
+        const sx = snap(Math.max(0, (e.clientX - cr.left) / zoom));
+        const sy = snap(Math.max(0, (e.clientY - cr.top)  / zoom));
         await api('POST', `/api/beds/${dragState.bedId}/assign-garden`, { garden_id: GARDEN_ID });
         await api('POST', `/api/beds/${dragState.bedId}/position`, { x: sx / PX, y: sy / PX });
 
@@ -560,6 +974,7 @@ const careSaved    = document.getElementById('rp-care-saved');
 function closePlantCarePanel() {
     if (careSec) careSec.style.display = 'none';
     document.querySelectorAll('.grid-plant-chip.chip-active').forEach(c => c.classList.remove('chip-active'));
+    closeCanvasPlantPanel();
 }
 
 function populateCarePanel(d, hasBed) {
@@ -667,6 +1082,7 @@ document.getElementById('palette-garden-plants')?.addEventListener('click', (ev)
 
 // ── Right Info Panel ──────────────────────────────────────────────────────────
 let loadPanelData = () => {}; // set below; allows plant care panel to trigger it
+let refreshTasks  = () => {}; // set below; used by add-task modal
 
 (function () {
     const panel      = document.getElementById('planner-right-panel');
@@ -788,6 +1204,8 @@ let loadPanelData = () => {}; // set below; allows plant care panel to trigger i
         }
     }
 
+    refreshTasks = function() { loadTasks(); };
+
     async function loadTasks() {
         const loading = document.getElementById('rp-tasks-loading');
         const list    = document.getElementById('rp-tasks-list');
@@ -815,4 +1233,149 @@ let loadPanelData = () => {}; // set below; allows plant care panel to trigger i
             if (list) list.innerHTML = '<p class="rp-error">Could not load tasks.</p>';
         }
     }
+})();
+
+// ── Add Task Modal ────────────────────────────────────────────────────────────
+(function () {
+    const modal     = document.getElementById('add-task-modal');
+    const openBtn   = document.getElementById('add-task-btn');
+    const closeBtn  = document.getElementById('add-task-modal-close');
+    const form      = document.getElementById('add-task-form');
+    const savedMsg  = document.getElementById('add-task-saved');
+    if (!modal || !openBtn) return;
+
+    function openModal() {
+        modal.style.display = 'flex';
+        document.getElementById('add-task-title').value = '';
+        document.getElementById('add-task-due').value   = '';
+        document.getElementById('add-task-desc').value  = '';
+        if (savedMsg) savedMsg.style.display = 'none';
+    }
+    function closeModal() { modal.style.display = 'none'; }
+
+    openBtn.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+    async function submitTask(payload) {
+        const resp = await api('POST', `/api/gardens/${GARDEN_ID}/quick-task`, payload);
+        return resp;
+    }
+
+    // Preset buttons
+    document.getElementById('task-preset-grid')?.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.task-preset-btn');
+        if (!btn) return;
+        const origText = btn.textContent;
+        btn.classList.add('preset-loading');
+        btn.textContent = origText + ' …';
+        try {
+            const result = await submitTask({ task_type: btn.dataset.type });
+            if (result.ok) {
+                refreshTasks();
+                closeModal();
+            }
+        } finally {
+            btn.classList.remove('preset-loading');
+            btn.textContent = origText;
+        }
+    });
+
+    // Custom task form
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title   = document.getElementById('add-task-title').value.trim();
+        const dueRaw  = document.getElementById('add-task-due').value;
+        const desc    = document.getElementById('add-task-desc').value.trim();
+        if (!title) return;
+        const payload = { task_type: 'other', title };
+        if (dueRaw)  payload.due_date = dueRaw;
+        if (desc)    payload.description = desc;
+        const result = await submitTask(payload);
+        if (result.ok) {
+            if (savedMsg) { savedMsg.style.display = ''; setTimeout(() => { savedMsg.style.display = 'none'; }, 1500); }
+            refreshTasks();
+            form.reset();
+        }
+    });
+})();
+
+// ── Zoom ──────────────────────────────────────────────────────────────────────
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 1.0, 1.25, 1.5, 2.0];
+const CANVAS_NATURAL_W = 2400;
+const CANVAS_NATURAL_H = 1800;
+
+function applyZoom(newZoom) {
+    zoom = Math.min(2.0, Math.max(0.25, newZoom));
+    canvas.style.transform       = `scale(${zoom})`;
+    canvas.style.transformOrigin = 'top left';
+
+    const sizer = document.getElementById('canvas-sizer');
+    if (sizer) {
+        sizer.style.width  = `${CANVAS_NATURAL_W * zoom}px`;
+        sizer.style.height = `${CANVAS_NATURAL_H * zoom}px`;
+    }
+
+    const display = document.getElementById('zoom-display');
+    if (display) display.textContent = `${Math.round(zoom * 100)}%`;
+
+    updateScaleBar();
+    localStorage.setItem('plannerZoom', zoom);
+}
+
+function updateScaleBar() {
+    const fill  = document.getElementById('scale-bar-fill');
+    const label = document.getElementById('scale-bar-label');
+    if (!fill || !label) return;
+
+    // Find a "nice" distance that renders near 100 viewport px
+    const niceDistances = [0.5, 1, 2, 4, 5, 10, 15, 20, 30, 50];
+    const targetFt = 100 / (PX * zoom);
+    const niceFt   = niceDistances.find(d => d >= targetFt) || niceDistances[niceDistances.length - 1];
+    const barPx    = niceFt * PX * zoom;
+
+    fill.style.width = `${barPx}px`;
+    if (niceFt < 1) {
+        label.textContent = `${Math.round(niceFt * 12)}"`;
+    } else {
+        label.textContent = `${niceFt} ft`;
+    }
+}
+
+(function initZoom() {
+    const zoomIn  = document.getElementById('zoom-in-btn');
+    const zoomOut = document.getElementById('zoom-out-btn');
+
+    if (zoomIn) {
+        zoomIn.addEventListener('click', () => {
+            const idx = ZOOM_STEPS.findIndex(z => z > zoom);
+            if (idx !== -1) applyZoom(ZOOM_STEPS[idx]);
+        });
+    }
+    if (zoomOut) {
+        zoomOut.addEventListener('click', () => {
+            const reversed = [...ZOOM_STEPS].reverse();
+            const step = reversed.find(z => z < zoom);
+            if (step !== undefined) applyZoom(step);
+        });
+    }
+
+    // Ctrl+scroll wheel zoom
+    const wrap = document.querySelector('.planner-canvas-wrap');
+    if (wrap) {
+        wrap.addEventListener('wheel', (e) => {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            if (e.deltaY < 0) {
+                const idx = ZOOM_STEPS.findIndex(z => z > zoom);
+                if (idx !== -1) applyZoom(ZOOM_STEPS[idx]);
+            } else {
+                const reversed = [...ZOOM_STEPS].reverse();
+                const step = reversed.find(z => z < zoom);
+                if (step !== undefined) applyZoom(step);
+            }
+        }, { passive: false });
+    }
+
+    applyZoom(zoom); // apply saved zoom on load
 })();

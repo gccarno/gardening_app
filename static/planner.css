@@ -460,6 +460,70 @@ details:not([open]) > .sidebar-label--collapsible::before {
 .rp-task-title { font-weight: 600; }
 .rp-task-meta  { color: #7a907a; font-size: 0.72rem; }
 
+#add-task-btn {
+  margin-top: 0.5rem;
+  width: 100%;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.5rem;
+  background: #f4f9f4;
+  border: 1px dashed #8fbd8b;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #3a5c37;
+}
+#add-task-btn:hover { background: #e4f0e2; border-style: solid; }
+
+/* Add Task Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1rem 1.1rem 1.1rem;
+  width: 320px;
+  max-width: 95vw;
+  box-shadow: 0 6px 28px rgba(0,0,0,0.22);
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+.modal-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7a907a;
+  margin-bottom: 0.35rem;
+}
+.task-preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem;
+}
+.task-preset-btn {
+  font-size: 0.77rem;
+  padding: 0.38rem 0.5rem;
+  background: #f4f9f4;
+  border: 1px solid #c0d4be;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  color: #2d3a2d;
+  transition: background 0.12s;
+}
+.task-preset-btn:hover { background: #d6edcf; }
+.task-preset-btn.preset-loading { opacity: 0.6; pointer-events: none; }
+
 /* Canvas */
 .planner-canvas-wrap {
   flex: 1;
@@ -469,14 +533,65 @@ details:not([open]) > .sidebar-label--collapsible::before {
   flex-direction: column;
 }
 
-.planner-canvas {
+/* Zoom sizer: defines the scroll extent = canvas natural size × zoom level */
+#canvas-sizer {
   position: relative;
+  width: 2400px;
+  height: 1800px;
+  flex-shrink: 0;
+}
+
+.planner-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   min-width: 2400px;
   min-height: 1800px;
+  transform-origin: top left;
   background-image:
     linear-gradient(to right, #c8dfc5 1px, transparent 1px),
-    linear-gradient(to bottom, #c8dfc5 1px, transparent 1px);
-  background-size: 60px 60px;
+    linear-gradient(to bottom, #c8dfc5 1px, transparent 1px),
+    var(--bg-image, none);
+  background-size: 60px 60px, 60px 60px, cover;
+  background-position: 0 0, 0 0, center center;
+  background-repeat: repeat, repeat, no-repeat;
+}
+
+/* Scale bar — sticky at bottom of the visible scroll area */
+.planner-scale-bar {
+  position: sticky;
+  bottom: 10px;
+  left: 14px;
+  align-self: flex-start;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+  margin-top: -36px;
+  z-index: 20;
+}
+
+.scale-bar-ruler {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+#scale-bar-fill {
+  height: 8px;
+  border: 2px solid rgba(0,0,0,0.6);
+  border-top: none;
+  background: rgba(255,255,255,0.55);
+  transition: width 0.15s;
+  min-width: 20px;
+}
+
+#scale-bar-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #1a2e1a;
+  text-shadow: 0 0 3px rgba(255,255,255,0.9), 0 0 6px rgba(255,255,255,0.7);
+  white-space: nowrap;
 }
 
 /* Bed on canvas */
@@ -672,3 +787,218 @@ details:not([open]) > .sidebar-label--collapsible::before {
 }
 
 .chip-remove:hover { color: white; background: none; }
+
+/* ── Drawing tools ────────────────────────────────────────────────────────── */
+
+/* Toolbar wraps onto second line on smaller screens */
+.planner-toolbar { flex-wrap: wrap; }
+
+/* Draw tool group in toolbar */
+.toolbar-draw-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* Separator between toolbar sections */
+.toolbar-sep {
+  color: #c0d4be;
+  margin: 0 0.15rem;
+  user-select: none;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* Color picker sizing */
+.toolbar-color-input {
+  width: 28px;
+  height: 22px;
+  padding: 1px 2px;
+  border: 1px solid #c0d4be;
+  border-radius: 3px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+/* Active draw tool highlight */
+.draw-tool-btn.active {
+  background: #d4ecd0;
+  border-color: #3a6b35;
+  font-weight: 600;
+}
+
+/* Disable bed interaction while a draw tool is active */
+.planner-canvas.draw-mode .canvas-bed {
+  pointer-events: none;
+}
+
+/* Crosshair cursor on the SVG annotation layer while drawing */
+.planner-canvas.draw-mode #annotation-svg {
+  cursor: crosshair;
+}
+
+/* Cell cursor for eraser tool */
+.planner-canvas.draw-mode[data-tool="eraser"] #annotation-svg {
+  cursor: cell;
+}
+
+/* ── Canvas Plant Circles ──────────────────────────────────────────────────── */
+
+.canvas-plant-circle {
+  position: absolute;
+  border-radius: 50%;
+  border: 3px solid rgba(0,0,0,0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  z-index: 5;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  overflow: visible;
+  box-sizing: border-box;
+  user-select: none;
+  touch-action: none;
+}
+.canvas-plant-circle:active { cursor: grabbing; }
+.canvas-plant-circle.circle-active {
+  outline: 3px solid #f0c040;
+  outline-offset: 2px;
+  z-index: 6;
+}
+.canvas-plant-circle.dragging { opacity: 0.72; }
+
+/* Inner clip so image doesn't escape circle */
+.canvas-plant-circle .circle-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.canvas-plant-circle .circle-bg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.canvas-plant-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.65);
+  text-align: center;
+  padding: 0 4px;
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 90%;
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+.canvas-plant-resize-handle {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  background: white;
+  border: 2px solid #3a6b35;
+  border-radius: 50%;
+  cursor: ew-resize;
+  z-index: 7;
+  display: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.canvas-plant-circle:hover .canvas-plant-resize-handle,
+.canvas-plant-circle.circle-active .canvas-plant-resize-handle { display: block; }
+
+.canvas-plant-delete-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0,0,0,0.45);
+  border: none;
+  color: white;
+  font-size: 12px;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  z-index: 8;
+}
+.canvas-plant-circle:hover .canvas-plant-delete-btn { display: flex; }
+.canvas-plant-delete-btn:hover { background: #b84040; }
+
+/* ── Appearance panel toggle buttons ──────────────────────────────────────── */
+.rp-toggle-btn {
+  flex: 1;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.4rem;
+}
+.rp-toggle-btn.active {
+  background: #d4ecd0;
+  border-color: #3a6b35;
+  font-weight: 600;
+}
+
+/* ── Panel Resize Handles ─────────────────────────────────────────────────── */
+.panel-resize-handle {
+  width: 6px;
+  background: #d8e8d6;
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+  transition: background 0.1s;
+}
+.panel-resize-handle:hover,
+.panel-resize-handle.dragging { background: #8cc88a; }
+
+.panel-toggle-tab {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 36px;
+  background: #e4f0e2;
+  border: 1px solid #c0d4be;
+  border-radius: 0 4px 4px 0;
+  color: #5a705a;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 10;
+  line-height: 1;
+  right: -16px;
+}
+.panel-toggle-tab:hover {
+  background: #d4ecd0;
+  color: #2d5a1b;
+  border-color: #5a9e54;
+}
+.panel-toggle-tab.tab-left-side {
+  right: auto;
+  left: -16px;
+  border-radius: 4px 0 0 4px;
+}
+
+/* Overrides to allow resize/collapse */
+.planner-sidebar { flex-shrink: 0; min-width: 0; overflow-x: hidden; }
+.planner-sidebar.collapsed { width: 0 !important; padding: 0; border-right-color: transparent; }
+.planner-right-panel { min-width: 0 !important; }

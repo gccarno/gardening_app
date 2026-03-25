@@ -4,7 +4,8 @@ from datetime import date, timedelta
 import requests as http
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, WeatherLog
+from werkzeug.utils import secure_filename
+from models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, WeatherLog, CanvasPlant
 
 load_dotenv()
 
@@ -134,6 +135,15 @@ def create_app():
     with app.app_context():
         db.create_all()
         _seed_library()
+        # Add columns if they don't exist yet (no migrations setup)
+        with db.engine.connect() as conn:
+            cols = [row[1] for row in conn.execute(db.text("PRAGMA table_info(garden)"))]
+            if 'background_image' not in cols:
+                conn.execute(db.text("ALTER TABLE garden ADD COLUMN background_image VARCHAR(200)"))
+                conn.commit()
+            if 'annotations' not in cols:
+                conn.execute(db.text("ALTER TABLE garden ADD COLUMN annotations TEXT"))
+                conn.commit()
 
     # --- Dashboard ---
 
@@ -348,6 +358,8 @@ def create_app():
         plant_id = data.get('plant_id')
         bed_id = data.get('bed_id')
         title = data.get('title')
+        description = data.get('description')
+        due_date_override = data.get('due_date')  # explicit date from custom form
         due_date = None
 
         plant = Plant.query.get(plant_id) if plant_id else None
@@ -376,6 +388,13 @@ def create_app():
             elif plant and plant.expected_harvest:
                 due_date = plant.expected_harvest
 
+        # Explicit due_date from client overrides auto-calculated
+        if due_date_override:
+            try:
+                due_date = date.fromisoformat(due_date_override)
+            except ValueError:
+                pass
+
         # Auto-title
         if not title:
             plant_name = plant.name if plant else ''
@@ -387,11 +406,13 @@ def create_app():
                 'fertilizing': f'Fertilize {plant_name or garden.name}'.strip(),
                 'mulching': f'Mulch {plant_name or garden.name}'.strip(),
                 'weeding': f'Weed {garden.name}',
+                'pruning': f'Prune {plant_name or garden.name}'.strip(),
             }
             title = type_labels.get(task_type, 'Task')
 
         task = Task(
             title=title,
+            description=description,
             task_type=task_type,
             due_date=due_date,
             plant_id=plant_id,
@@ -517,6 +538,20 @@ def create_app():
         ]
 
         import json as _json
+        canvas_plants = CanvasPlant.query.filter_by(garden_id=garden_id).all()
+        canvas_plants_json = _json.dumps([{
+            'id':           cp.id,
+            'pos_x':        cp.pos_x,
+            'pos_y':        cp.pos_y,
+            'radius_ft':    cp.radius_ft,
+            'color':        cp.color or '#5a9e54',
+            'display_mode': cp.display_mode or 'color',
+            'library_id':   cp.library_id,
+            'plant_id':     cp.plant_id,
+            'name':         cp.label or (cp.library_entry.name if cp.library_entry else (cp.plant.name if cp.plant else '?')),
+            'image_filename': cp.custom_image or (cp.library_entry.image_filename if cp.library_entry else None),
+            'custom_image': cp.custom_image,
+        } for cp in canvas_plants])
         garden_json = _json.dumps({
             'id': garden.id,
             'name': garden.name,
@@ -537,7 +572,59 @@ def create_app():
                                library_plants=library_plants,
                                garden_plant_groups=garden_plant_groups,
                                px_per_unit=px_per_unit,
-                               garden_json=garden_json)
+                               garden_json=garden_json,
+                               canvas_plants_json=canvas_plants_json)
+
+    @app.route('/api/gardens/<int:garden_id>/upload-background', methods=['POST'])
+    def upload_garden_background(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        f = request.files.get('image')
+        if not f or not f.filename:
+            return jsonify({'error': 'No file provided'}), 400
+        ext = os.path.splitext(secure_filename(f.filename))[1].lower()
+        if ext not in ('.jpg', '.jpeg', '.png', '.gif', '.webp'):
+            return jsonify({'error': 'Unsupported file type'}), 400
+        bg_dir = os.path.join(app.static_folder, 'garden_backgrounds')
+        os.makedirs(bg_dir, exist_ok=True)
+        # Remove old file if different extension
+        if garden.background_image:
+            old_path = os.path.join(bg_dir, garden.background_image)
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        filename = f'garden_{garden_id}{ext}'
+        f.save(os.path.join(bg_dir, filename))
+        garden.background_image = filename
+        db.session.commit()
+        return jsonify({'filename': filename,
+                        'url': url_for('static', filename=f'garden_backgrounds/{filename}')})
+
+    @app.route('/api/gardens/<int:garden_id>/remove-background', methods=['POST'])
+    def remove_garden_background(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        if garden.background_image:
+            bg_dir = os.path.join(app.static_folder, 'garden_backgrounds')
+            old_path = os.path.join(bg_dir, garden.background_image)
+            if os.path.exists(old_path):
+                os.remove(old_path)
+            garden.background_image = None
+            db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/gardens/<int:garden_id>/annotations')
+    def api_get_annotations(garden_id):
+        import json as _json
+        garden = Garden.query.get_or_404(garden_id)
+        shapes = _json.loads(garden.annotations or '[]')
+        return jsonify({'shapes': shapes})
+
+    @app.route('/api/gardens/<int:garden_id>/annotations', methods=['POST'])
+    def api_save_annotations(garden_id):
+        import json as _json
+        garden = Garden.query.get_or_404(garden_id)
+        data = request.get_json(force=True)
+        garden.annotations = _json.dumps(data.get('shapes', []))
+        db.session.commit()
+        return jsonify({'ok': True})
 
     # --- Garden Beds ---
 
@@ -891,6 +978,51 @@ def create_app():
             selected_zone=selected_zone,
             all_gardens=all_gardens,
         )
+
+    @app.route('/library/<int:entry_id>/edit', methods=['GET', 'POST'])
+    def library_edit(entry_id):
+        entry = PlantLibrary.query.get_or_404(entry_id)
+        if request.method == 'POST':
+            f = request.form
+            entry.name                  = f.get('name', entry.name).strip()
+            entry.scientific_name       = f.get('scientific_name', '').strip() or None
+            entry.type                  = f.get('type', entry.type)
+            entry.difficulty            = f.get('difficulty', '').strip() or None
+            entry.family                = f.get('family', '').strip() or None
+            entry.layer                 = f.get('layer', '').strip() or None
+            entry.edible_parts          = f.get('edible_parts', '').strip() or None
+            entry.sunlight              = f.get('sunlight', '').strip() or None
+            entry.water                 = f.get('water', '').strip() or None
+            entry.spacing_in            = f.get('spacing_in', type=int) or None
+            entry.days_to_germination   = f.get('days_to_germination', type=int) or None
+            entry.days_to_harvest       = f.get('days_to_harvest', type=int) or None
+            entry.min_zone              = f.get('min_zone', type=int) or None
+            entry.max_zone              = f.get('max_zone', type=int) or None
+            entry.temp_min_f            = f.get('temp_min_f', type=int) or None
+            entry.temp_max_f            = f.get('temp_max_f', type=int) or None
+            entry.soil_ph_min           = f.get('soil_ph_min', type=float) or None
+            entry.soil_ph_max           = f.get('soil_ph_max', type=float) or None
+            entry.soil_type             = f.get('soil_type', '').strip() or None
+            entry.sow_indoor_weeks      = f.get('sow_indoor_weeks', type=int) or None
+            entry.direct_sow_offset     = f.get('direct_sow_offset', type=int) if f.get('direct_sow_offset', '').strip() != '' else None
+            entry.transplant_offset     = f.get('transplant_offset', type=int) if f.get('transplant_offset', '').strip() != '' else None
+            entry.notes                 = f.get('notes', '').strip() or None
+            entry.permapeople_description = f.get('permapeople_description', '').strip() or None
+            # JSON fields — validate before saving
+            import json as _json
+            for field in ('good_neighbors', 'bad_neighbors', 'how_to_grow', 'faqs', 'nutrition'):
+                raw = f.get(field, '').strip()
+                if raw:
+                    try:
+                        _json.loads(raw)
+                        setattr(entry, field, raw)
+                    except ValueError:
+                        pass   # ignore invalid JSON; keep existing value
+                else:
+                    setattr(entry, field, None)
+            db.session.commit()
+            return redirect(url_for('library_detail', entry_id=entry.id))
+        return render_template('library_edit.html', entry=entry)
 
     @app.route('/library/<int:entry_id>/add', methods=['POST'])
     def library_add_plant(entry_id):
@@ -1322,6 +1454,182 @@ def create_app():
         if 'planted_date'    in data: plant.planted_date    = _d(data['planted_date'])
         if 'transplant_date' in data: plant.transplant_date = _d(data['transplant_date'])
         if 'plant_notes'     in data: plant.notes           = data['plant_notes'] or None
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    # ── Canvas Plants ──────────────────────────────────────────────────────────
+
+    def _cp_color_for_type(plant_type):
+        return {
+            'vegetable': '#5a9e54',
+            'herb':      '#8bc34a',
+            'fruit':     '#ff8c42',
+            'flower':    '#e91e8c',
+        }.get((plant_type or '').lower(), '#5a9e54')
+
+    def _serialize_cp(cp):
+        lib = cp.library_entry
+        return {
+            'id':           cp.id,
+            'pos_x':        cp.pos_x,
+            'pos_y':        cp.pos_y,
+            'radius_ft':    cp.radius_ft,
+            'color':        cp.color or '#5a9e54',
+            'display_mode': cp.display_mode or 'color',
+            'library_id':   cp.library_id,
+            'plant_id':     cp.plant_id,
+            'name':         cp.label or (lib.name if lib else (cp.plant.name if cp.plant else '?')),
+            'image_filename': cp.custom_image or (lib.image_filename if lib else None),
+            'custom_image': cp.custom_image,
+            'scientific_name': lib.scientific_name if lib else None,
+            'sunlight':     lib.sunlight   if lib else None,
+            'water':        lib.water      if lib else None,
+            'spacing_in':   lib.spacing_in if lib else None,
+            'lib_notes':    lib.notes      if lib else None,
+            'planted_date':    cp.plant.planted_date.isoformat()    if cp.plant and cp.plant.planted_date    else None,
+            'transplant_date': cp.plant.transplant_date.isoformat() if cp.plant and cp.plant.transplant_date else None,
+            'plant_notes':     cp.plant.notes or ''                 if cp.plant                              else '',
+        }
+
+    @app.route('/api/gardens/<int:garden_id>/canvas-plants', methods=['GET'])
+    def api_canvas_plants_list(garden_id):
+        Garden.query.get_or_404(garden_id)
+        cps = CanvasPlant.query.filter_by(garden_id=garden_id).all()
+        return jsonify([_serialize_cp(cp) for cp in cps])
+
+    @app.route('/api/gardens/<int:garden_id>/canvas-plants', methods=['POST'])
+    def api_canvas_plants_create(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        data = request.get_json(force=True)
+        library_id = data.get('library_id')
+        plant_id   = data.get('plant_id')
+        pos_x      = float(data.get('pos_x', 0))
+        pos_y      = float(data.get('pos_y', 0))
+
+        lib = PlantLibrary.query.get(library_id) if library_id else None
+        plant = Plant.query.get(plant_id) if plant_id else None
+
+        # Create a Plant record if dragged from library with no existing plant
+        if lib and not plant:
+            plant = Plant(name=lib.name, library_id=lib.id, garden_id=garden_id, status='planning')
+            db.session.add(plant)
+            db.session.flush()
+
+        # Default radius from library spacing (spacing is diameter, halved for radius)
+        if lib and lib.spacing_in:
+            radius_ft = round((lib.spacing_in / 12) / 2, 2)
+        else:
+            radius_ft = 1.0
+        radius_ft = max(0.25, radius_ft)
+
+        color = _cp_color_for_type(lib.type if lib else None)
+
+        cp = CanvasPlant(
+            garden_id=garden_id,
+            library_id=library_id,
+            plant_id=plant.id if plant else None,
+            pos_x=pos_x,
+            pos_y=pos_y,
+            radius_ft=radius_ft,
+            color=color,
+            display_mode='color',
+        )
+        db.session.add(cp)
+        db.session.commit()
+        return jsonify({'ok': True, 'canvas_plant': _serialize_cp(cp)})
+
+    @app.route('/api/canvas-plants/<int:cp_id>', methods=['GET'])
+    def api_canvas_plant_detail(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        return jsonify(_serialize_cp(cp))
+
+    @app.route('/api/canvas-plants/<int:cp_id>/position', methods=['POST'])
+    def api_canvas_plant_position(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        data = request.get_json(force=True)
+        cp.pos_x = float(data.get('x', cp.pos_x))
+        cp.pos_y = float(data.get('y', cp.pos_y))
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/canvas-plants/<int:cp_id>/radius', methods=['POST'])
+    def api_canvas_plant_radius(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        data = request.get_json(force=True)
+        cp.radius_ft = max(0.1, float(data.get('radius_ft', cp.radius_ft)))
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/canvas-plants/<int:cp_id>/appearance', methods=['POST'])
+    def api_canvas_plant_appearance(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        data = request.get_json(force=True)
+        if 'color'        in data: cp.color        = data['color'] or cp.color
+        if 'display_mode' in data: cp.display_mode = data['display_mode'] or cp.display_mode
+        if 'label'        in data: cp.label        = data['label'] or None
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/canvas-plants/<int:cp_id>/upload-image', methods=['POST'])
+    def api_canvas_plant_upload_image(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        f = request.files.get('image')
+        if not f or not f.filename:
+            return jsonify({'error': 'No file provided'}), 400
+        ext = os.path.splitext(secure_filename(f.filename))[1].lower()
+        if ext not in ('.jpg', '.jpeg', '.png', '.gif', '.webp'):
+            return jsonify({'error': 'Unsupported file type'}), 400
+        img_dir = os.path.join(app.static_folder, 'canvas_plant_images')
+        os.makedirs(img_dir, exist_ok=True)
+        # Remove old custom image if present
+        if cp.custom_image:
+            old_path = os.path.join(img_dir, cp.custom_image)
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        filename = f'cp_{cp_id}{ext}'
+        f.save(os.path.join(img_dir, filename))
+        cp.custom_image  = filename
+        cp.display_mode  = 'image'
+        db.session.commit()
+        return jsonify({'ok': True, 'filename': filename, 'url': f'/static/canvas_plant_images/{filename}'})
+
+    @app.route('/api/canvas-plants/<int:cp_id>/save-image-to-library', methods=['POST'])
+    def api_canvas_plant_save_image_to_library(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        if not cp.custom_image or not cp.library_id:
+            return jsonify({'error': 'No custom image or library entry'}), 400
+        lib = PlantLibrary.query.get_or_404(cp.library_id)
+        import shutil
+        src = os.path.join(app.static_folder, 'canvas_plant_images', cp.custom_image)
+        if not os.path.exists(src):
+            return jsonify({'error': 'Image file not found'}), 404
+        ext = os.path.splitext(cp.custom_image)[1]
+        dest_filename = f'{lib.id}_custom{ext}'
+        dest = os.path.join(app.static_folder, 'plant_images', dest_filename)
+        shutil.copy2(src, dest)
+        lib.image_filename = dest_filename
+        db.session.commit()
+        return jsonify({'ok': True, 'library_image': dest_filename})
+
+    @app.route('/api/library/<int:entry_id>/quick-edit', methods=['POST'])
+    def api_library_quick_edit(entry_id):
+        lib = PlantLibrary.query.get_or_404(entry_id)
+        data = request.get_json(force=True)
+        if 'sunlight'   in data and data['sunlight']   is not None: lib.sunlight   = data['sunlight']
+        if 'water'      in data and data['water']      is not None: lib.water      = data['water']
+        if 'spacing_in' in data and data['spacing_in'] is not None: lib.spacing_in = int(data['spacing_in'])
+        if 'notes'      in data and data['notes']      is not None: lib.notes      = data['notes']
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/canvas-plants/<int:cp_id>/delete', methods=['POST'])
+    def api_canvas_plant_delete(cp_id):
+        cp = CanvasPlant.query.get_or_404(cp_id)
+        if cp.custom_image:
+            img_path = os.path.join(app.static_folder, 'canvas_plant_images', cp.custom_image)
+            if os.path.exists(img_path):
+                os.remove(img_path)
+        db.session.delete(cp)
         db.session.commit()
         return jsonify({'ok': True})
 

@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ entry.name }} — Plant Library{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+  <h1 style="margin:0;">Edit: {{ entry.name }}</h1>
+  <a href="{{ url_for('library_detail', entry_id=entry.id) }}" style="font-size:0.875rem;color:#3a6b35;">← Cancel</a>
+</div>
+
+<form method="post" style="max-width:760px;">
+
+  {# ── Basic Info ──────────────────────────────────────────── #}
+  <fieldset class="edit-section">
+    <legend>Basic Info</legend>
+    <div class="edit-grid">
+      <label>
+        Name <span class="req">*</span>
+        <input type="text" name="name" value="{{ entry.name }}" required>
+      </label>
+      <label>
+        Scientific Name
+        <input type="text" name="scientific_name" value="{{ entry.scientific_name or '' }}">
+      </label>
+      <label>
+        Type
+        <select name="type">
+          {% for t in ['vegetable','herb','fruit','flower','tree','shrub','other'] %}
+          <option value="{{ t }}"{% if entry.type == t %} selected{% endif %}>{{ t|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Difficulty
+        <select name="difficulty">
+          <option value="">— unset —</option>
+          {% for d in ['Easy','Medium','Hard'] %}
+          <option value="{{ d }}"{% if entry.difficulty == d %} selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Plant Family
+        <input type="text" name="family" value="{{ entry.family or '' }}">
+      </label>
+      <label>
+        Garden Layer
+        <input type="text" name="layer" value="{{ entry.layer or '' }}" placeholder="e.g. ground cover, canopy">
+      </label>
+      <label style="grid-column:1/-1;">
+        Edible Parts
+        <input type="text" name="edible_parts" value="{{ entry.edible_parts or '' }}" placeholder="e.g. leaves, roots, seeds">
+      </label>
+    </div>
+  </fieldset>
+
+  {# ── Growing Conditions ──────────────────────────────────── #}
+  <fieldset class="edit-section">
+    <legend>Growing Conditions</legend>
+    <div class="edit-grid">
+      <label>
+        Sunlight
+        <input type="text" name="sunlight" value="{{ entry.sunlight or '' }}" placeholder="e.g. full sun">
+      </label>
+      <label>
+        Watering
+        <input type="text" name="water" value="{{ entry.water or '' }}" placeholder="e.g. frequent">
+      </label>
+      <label>
+        Spacing (inches)
+        <input type="number" name="spacing_in" value="{{ entry.spacing_in or '' }}" min="1">
+      </label>
+      <label>
+        Days to Germination
+        <input type="number" name="days_to_germination" value="{{ entry.days_to_germination or '' }}" min="1">
+      </label>
+      <label>
+        Days to Harvest
+        <input type="number" name="days_to_harvest" value="{{ entry.days_to_harvest or '' }}" min="1">
+      </label>
+    </div>
+  </fieldset>
+
+  {# ── Temperature & Zones ─────────────────────────────────── #}
+  <fieldset class="edit-section">
+    <legend>Temperature &amp; Hardiness Zones</legend>
+    <div class="edit-grid">
+      <label>
+        Min USDA Zone
+        <input type="number" name="min_zone" value="{{ entry.min_zone or '' }}" min="1" max="13">
+      </label>
+      <label>
+        Max USDA Zone
+        <input type="number" name="max_zone" value="{{ entry.max_zone or '' }}" min="1" max="13">
+      </label>
+      <label>
+        Min Temp (°F)
+        <input type="number" name="temp_min_f" value="{{ entry.temp_min_f or '' }}">
+      </label>
+      <label>
+        Max Temp (°F)
+        <input type="number" name="temp_max_f" value="{{ entry.temp_max_f or '' }}">
+      </label>
+    </div>
+  </fieldset>
+
+  {# ── Soil ────────────────────────────────────────────────── #}
+  <fieldset class="edit-section">
+    <legend>Soil</legend>
+    <div class="edit-grid">
+      <label>
+        Soil pH Min
+        <input type="number" name="soil_ph_min" value="{{ entry.soil_ph_min or '' }}" step="0.1" min="0" max="14">
+      </label>
+      <label>
+        Soil pH Max
+        <input type="number" name="soil_ph_max" value="{{ entry.soil_ph_max or '' }}" step="0.1" min="0" max="14">
+      </label>
+      <label style="grid-column:1/-1;">
+        Soil Type
+        <input type="text" name="soil_type" value="{{ entry.soil_type or '' }}" placeholder="e.g. loamy, well-draining">
+      </label>
+    </div>
+  </fieldset>
+
+  {# ── Planting Calendar Offsets ───────────────────────────── #}
+  <fieldset class="edit-section">
+    <legend>Planting Calendar Offsets <span style="font-weight:normal;font-size:0.8rem;">(weeks relative to last spring frost)</span></legend>
+    <div class="edit-grid">
+      <label>
+        Start Indoors (weeks before frost)
+        <input type="number" name="sow_indoor_weeks" value="{{ entry.sow_indoor_weeks or '' }}" min="1"
+               placeholder="e.g. 6">
+      </label>
+      <label>
+        Direct Sow Offset (weeks, negative = before frost)
+        <input type="number" name="direct_sow_offset"
+               value="{{ entry.direct_sow_offset if entry.direct_sow_offset is not none else '' }}"
+               placeholder="e.g. 0 or -2">
+      </label>
+      <label>
+        Transplant Offset (weeks after frost)
+        <input type="number" name="transplant_offset"
+               value="{{ entry.transplant_offset if entry.transplant_offset is not none else '' }}"
+               placeholder="e.g. 2">
+      </label>
+    </div>
+  </fieldset>
+
+  {# ── Notes ───────────────────────────────────────────────── #}
+  <fieldset class="edit-section">
+    <legend>Notes</legend>
+    <label style="display:block;margin-bottom:0.75rem;">
+      Growing Notes
+      <textarea name="notes" rows="3" style="width:100%;margin-top:0.25rem;">{{ entry.notes or '' }}</textarea>
+    </label>
+    <label style="display:block;">
+      Description
+      <textarea name="permapeople_description" rows="4" style="width:100%;margin-top:0.25rem;">{{ entry.permapeople_description or '' }}</textarea>
+    </label>
+  </fieldset>
+
+  {# ── Advanced (JSON) ─────────────────────────────────────── #}
+  <details class="edit-section" style="border:1px solid #d8e8d6;border-radius:6px;padding:1rem;">
+    <summary style="font-weight:600;cursor:pointer;color:#3a5c37;">Advanced (JSON fields)</summary>
+    <p style="font-size:0.8rem;color:#7a907a;margin:0.5rem 0 1rem;">
+      These fields store structured data as JSON. Invalid JSON will be ignored and the existing value kept.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem;">
+      {% for field, label, hint in [
+          ('good_neighbors',  'Good Neighbors',  '["Basil", "Carrots"]'),
+          ('bad_neighbors',   'Bad Neighbors',   '["Fennel"]'),
+          ('how_to_grow',     'How to Grow',     '{"starting":"…","seedling":"…","vegetative":"…","flowering":"…","harvest":"…"}'),
+          ('faqs',            'FAQs',            '[{"q":"Why are leaves yellow?","a":"…"}]'),
+          ('nutrition',       'Nutrition',       '{"serving_size":"100g","calories":25,"protein_g":2,"carbs_g":5,"fiber_g":2,"fat_g":0.3,"vitamins":["Vitamin C: 89mg"]}'),
+      ] %}
+      <label>
+        {{ label }}
+        <span style="font-size:0.75rem;color:#9aaa9a;font-weight:normal;">— e.g. <code>{{ hint }}</code></span>
+        <textarea name="{{ field }}" rows="3"
+                  style="width:100%;margin-top:0.25rem;font-family:monospace;font-size:0.8rem;">{{ entry|attr(field) or '' }}</textarea>
+      </label>
+      {% endfor %}
+    </div>
+  </details>
+
+  <div style="margin-top:1.5rem;display:flex;gap:0.75rem;">
+    <button type="submit" class="btn-primary">Save Changes</button>
+    <a href="{{ url_for('library_detail', entry_id=entry.id) }}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+
+<style>
+.edit-section {
+  border: 1px solid #d8e8d6;
+  border-radius: 6px;
+  padding: 1rem 1.25rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.edit-section legend {
+  font-weight: 600;
+  color: #3a5c37;
+  padding: 0 0.4rem;
+}
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+.edit-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  color: #4a5e4a;
+}
+.edit-grid input, .edit-grid select,
+.edit-section textarea {
+  font: inherit;
+  padding: 0.38rem 0.5rem;
+  border: 1px solid #c0d4be;
+  border-radius: 4px;
+  background: #fbfefb;
+  color: #2d3a2d;
+}
+.edit-grid input:focus, .edit-grid select:focus,
+.edit-section textarea:focus {
+  outline: 2px solid #7ab87a;
+  border-color: #7ab87a;
+}
+.req { color: #c0392b; }
+.btn-primary {
+  background: #3a6b35;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1.25rem;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.btn-primary:hover { background: #2e5429; }
+.btn-secondary {
+  background: #f0f5ef;
+  color: #3a5c37;
+  border: 1px solid #c0d4be;
+  padding: 0.5rem 1.25rem;
+  border-radius: 4px;
+  font: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.btn-secondary:hover { background: #e0eedf; }
+</style>
+
+{% endblock %}

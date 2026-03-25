@@ -62,6 +62,16 @@ SUNLIGHT_MAP = {
     'full shade': 'Full shade',
 }
 
+LAYER_TYPE_MAP = {
+    'canopy':       'tree',
+    'sub-canopy':   'tree',
+    'shrub':        'shrub',
+    'climber':      'vine',
+    'herbaceous':   None,
+    'ground cover': None,
+    'rhizosphere':  None,
+}
+
 
 def _pp_get(path, params=None):
     """GET from Permapeople API; return parsed JSON or raise."""
@@ -148,83 +158,116 @@ def fetch_all_plants():
 
 app = create_app()
 
-with app.app_context():
-    print('=== Permapeople Sync ===\n')
 
-    print('Fetching all plants from Permapeople API…')
-    pp_plants = fetch_all_plants()
-    print(f'\nTotal fetched: {len(pp_plants)}\n')
+def main():
+    with app.app_context():
+        print('=== Permapeople Sync ===\n')
 
-    if not pp_plants:
-        sys.exit('No plants returned from API. Check credentials and connectivity.')
+        print('Fetching all plants from Permapeople API…')
+        pp_plants = fetch_all_plants()
+        print(f'\nTotal fetched: {len(pp_plants)}\n')
 
-    # Build lookup indexes from existing library
-    library = PlantLibrary.query.all()
-    by_name = {e.name.lower(): e for e in library}
-    by_sci  = {e.scientific_name.lower(): e for e in library if e.scientific_name}
+        if not pp_plants:
+            sys.exit('No plants returned from API. Check credentials and connectivity.')
 
-    matched_count = 0
-    fields_updated = 0
-    unmatched = []
+        # Build lookup indexes from existing library
+        library = PlantLibrary.query.all()
+        by_name = {e.name.lower(): e for e in library}
+        by_sci  = {e.scientific_name.lower(): e for e in library if e.scientific_name}
 
-    for pp in pp_plants:
-        name    = (pp.get('name') or '').strip()
-        sci     = (pp.get('scientific_name') or '').strip()
-        pp_id   = pp.get('id')
-        pp_link = pp.get('link') or (f'https://permapeople.org/plants/{pp.get("slug")}' if pp.get('slug') else None)
-        desc    = (pp.get('description') or '').strip() or None
+        matched_count = 0
+        fields_updated = 0
+        unmatched_plants = []
 
-        # Match by name, then scientific name
-        entry = by_name.get(name.lower()) or (by_sci.get(sci.lower()) if sci else None)
+        for pp in pp_plants:
+            name    = (pp.get('name') or '').strip()
+            sci     = (pp.get('scientific_name') or '').strip()
+            pp_id   = pp.get('id')
+            pp_link = pp.get('link') or (f'https://permapeople.org/plants/{pp.get("slug")}' if pp.get('slug') else None)
+            desc    = (pp.get('description') or '').strip() or None
 
-        if not entry:
-            unmatched.append(name or sci or f'id={pp_id}')
-            continue
+            # Match by name, then scientific name
+            entry = by_name.get(name.lower()) or (by_sci.get(sci.lower()) if sci else None)
 
-        matched_count += 1
-        kv = parse_data(pp.get('data', []))
+            if not entry:
+                unmatched_plants.append(pp)
+                continue
 
-        def fill(field, value):
-            """Set field only if currently null; return True if changed."""
-            nonlocal fields_updated
-            if value and not getattr(entry, field):
-                setattr(entry, field, value)
-                fields_updated += 1
-                return True
-            return False
+            matched_count += 1
+            kv = parse_data(pp.get('data', []))
 
-        def always_set(field, value):
-            """Always write the value (for new Permapeople-specific fields)."""
-            nonlocal fields_updated
-            if value:
-                setattr(entry, field, value)
-                fields_updated += 1
+            def fill(field, value, _entry=entry):
+                """Set field only if currently null."""
+                nonlocal fields_updated
+                if value and not getattr(_entry, field):
+                    setattr(_entry, field, value)
+                    fields_updated += 1
 
-        # Fill-in-blank for existing fields
-        fill('scientific_name', sci or None)
-        fill('water',    norm_water(kv.get('Water requirement')))
-        fill('sunlight', norm_sunlight(kv.get('Light requirement')))
-        fill('soil_type', kv.get('Soil type'))
+            def always_set(field, value, _entry=entry):
+                """Always write the value (for new Permapeople-specific fields)."""
+                nonlocal fields_updated
+                if value:
+                    setattr(_entry, field, value)
+                    fields_updated += 1
 
-        zone_min, zone_max = parse_zone(kv.get('USDA Hardiness zone'))
-        fill('min_zone', zone_min)
-        fill('max_zone', zone_max)
+            # Fill-in-blank for existing fields
+            fill('scientific_name', sci or None)
+            fill('water',    norm_water(kv.get('Water requirement')))
+            fill('sunlight', norm_sunlight(kv.get('Light requirement')))
+            fill('soil_type', kv.get('Soil type'))
 
-        # Always write Permapeople-specific fields
-        entry.permapeople_id   = pp_id
-        entry.permapeople_link = pp_link
-        always_set('permapeople_description', desc)
-        always_set('family',       kv.get('Family'))
-        always_set('layer',        kv.get('Layer'))
-        always_set('edible_parts', kv.get('Edible parts'))
+            zone_min, zone_max = parse_zone(kv.get('USDA Hardiness zone'))
+            fill('min_zone', zone_min)
+            fill('max_zone', zone_max)
 
-    db.session.commit()
+            # Always write Permapeople-specific fields
+            entry.permapeople_id   = pp_id
+            entry.permapeople_link = pp_link
+            always_set('permapeople_description', desc)
+            always_set('family',       kv.get('Family'))
+            always_set('layer',        kv.get('Layer'))
+            always_set('edible_parts', kv.get('Edible parts'))
 
-    print('=== Sync Complete ===')
-    print(f'Total Permapeople plants fetched : {len(pp_plants)}')
-    print(f'Matched to library entries       : {matched_count} / {len(library)}')
-    print(f'Fields updated                   : {fields_updated}')
-    if unmatched:
-        sample = unmatched[:10]
-        more = len(unmatched) - len(sample)
-        print(f'Unmatched plants ({len(unmatched)} total)      : {", ".join(sample)}' + (f', … +{more} more' if more else ''))
+        db.session.commit()
+
+        # Phase 2: add new plants from Permapeople not already in library
+        print(f'\nAdding {len(unmatched_plants)} new plants from Permapeople…')
+        added_count = 0
+        for pp in unmatched_plants:
+            name = (pp.get('name') or '').strip()
+            if not name:
+                continue
+            kv = parse_data(pp.get('data', []))
+            layer = (kv.get('Layer') or '').lower().strip()
+            zone_min, zone_max = parse_zone(kv.get('USDA Hardiness zone'))
+            pp_link = pp.get('link') or (f'https://permapeople.org/plants/{pp.get("slug")}' if pp.get('slug') else None)
+
+            new_entry = PlantLibrary(
+                name=name,
+                scientific_name=(pp.get('scientific_name') or '').strip() or None,
+                permapeople_id=pp.get('id'),
+                permapeople_link=pp_link,
+                permapeople_description=(pp.get('description') or '').strip() or None,
+                water=norm_water(kv.get('Water requirement')),
+                sunlight=norm_sunlight(kv.get('Light requirement')),
+                soil_type=kv.get('Soil type'),
+                min_zone=zone_min,
+                max_zone=zone_max,
+                family=kv.get('Family'),
+                layer=kv.get('Layer'),
+                edible_parts=kv.get('Edible parts'),
+                type=LAYER_TYPE_MAP.get(layer),
+            )
+            db.session.add(new_entry)
+            added_count += 1
+
+        db.session.commit()
+
+        print('=== Sync Complete ===')
+        print(f'Total Permapeople plants fetched : {len(pp_plants)}')
+        print(f'Matched to library entries       : {matched_count} / {len(library)}')
+        print(f'Fields updated                   : {fields_updated}')
+        print(f'New plants added                 : {added_count}')
+
+
+main()

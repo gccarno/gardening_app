@@ -18,6 +18,8 @@ class Garden(db.Model):
     last_frost_date = db.Column(db.Date, nullable=True)
     watering_frequency_days = db.Column(db.Integer, nullable=True, default=7)
     water_source = db.Column(db.String(30), nullable=True)  # rain/hose/drip/sprinkler
+    background_image = db.Column(db.String(200), nullable=True)
+    annotations = db.Column(db.Text, nullable=True)
     beds = db.relationship('GardenBed', backref='garden', lazy=True)
     plants = db.relationship('Plant', backref='garden', lazy=True)
     garden_tasks = db.relationship('Task', backref='task_garden',
@@ -123,6 +125,27 @@ class PlantLibrary(db.Model):
 
     def __repr__(self):
         return f'<PlantLibrary {self.name}>'
+
+
+class CanvasPlant(db.Model):
+    id           = db.Column(db.Integer, primary_key=True)
+    garden_id    = db.Column(db.Integer, db.ForeignKey('garden.id'), nullable=False)
+    library_id   = db.Column(db.Integer, db.ForeignKey('plant_library.id'), nullable=True)
+    plant_id     = db.Column(db.Integer, db.ForeignKey('plant.id'), nullable=True)
+    pos_x        = db.Column(db.Float, nullable=False, default=0.0)    # feet from canvas origin
+    pos_y        = db.Column(db.Float, nullable=False, default=0.0)    # feet from canvas origin
+    radius_ft    = db.Column(db.Float, nullable=False, default=1.0)    # radius in feet
+    color        = db.Column(db.String(20), nullable=True, default='#5a9e54')
+    display_mode = db.Column(db.String(10), nullable=False, default='color')  # 'color' or 'image'
+    custom_image = db.Column(db.String(200), nullable=True)            # filename in static/canvas_plant_images/
+    label        = db.Column(db.String(100), nullable=True)
+
+    garden        = db.relationship('Garden', backref='canvas_plants', lazy=True)
+    library_entry = db.relationship('PlantLibrary', backref='canvas_plants', lazy=True)
+    plant         = db.relationship('Plant', backref='canvas_plants', lazy=True)
+
+    def __repr__(self):
+        return f'<CanvasPlant id={self.id}>'
 
 
 class Task(db.Model):
