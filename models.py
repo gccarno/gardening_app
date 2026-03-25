@@ -46,6 +46,7 @@ class Plant(db.Model):
     type = db.Column(db.String(100))
     notes = db.Column(db.Text)
     planted_date = db.Column(db.Date)
+    transplant_date = db.Column(db.Date)
     expected_harvest = db.Column(db.Date)
     status = db.Column(db.String(20), nullable=False, default='planning')
     library_id = db.Column(db.Integer, db.ForeignKey('plant_library.id'), nullable=True)
@@ -66,6 +67,7 @@ class BedPlant(db.Model):
     grid_y = db.Column(db.Integer, nullable=True)
     last_watered = db.Column(db.Date, nullable=True)
     last_fertilized = db.Column(db.Date, nullable=True)
+    last_harvest = db.Column(db.Date, nullable=True)
     health_notes = db.Column(db.Text, nullable=True)
 
     def __repr__(self):

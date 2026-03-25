@@ -137,7 +137,15 @@ function renderChipInGrid(grid, bpId, cx, cy, name, imageFilename, spacingIn) {
         if (result.ok) {
             setCellsOccupied(grid, cx, cy, span, false);
             chip.remove();
+            closePlantCarePanel();
         }
+    });
+
+    chip.addEventListener('click', (ev) => {
+        if (ev.target.classList.contains('chip-remove')) return;
+        openPlantCarePanel({ bpId });
+        document.querySelectorAll('.grid-plant-chip.chip-active').forEach(c => c.classList.remove('chip-active'));
+        chip.classList.add('chip-active');
     });
 
     grid.appendChild(chip);
@@ -302,7 +310,7 @@ canvas.addEventListener('drop', async (e) => {
                 const bedId = grid.dataset.bedId;
                 const gridX = cx * tileIn;
                 const gridY = cy * tileIn;
-                const payload = { bed_id: bedId, grid_x: gridX, grid_y: gridY };
+                const payload = { bed_id: bedId, grid_x: gridX, grid_y: gridY, spacing_in: spacingIn };
                 if (dragState.libraryId) payload.library_id = dragState.libraryId;
                 else if (dragState.plantId) payload.plant_id = dragState.plantId;
 
@@ -483,3 +491,274 @@ if (plantSearch) {
         });
     });
 }
+
+// ── Plant Care Panel ──────────────────────────────────────────────────────────
+const careSec      = document.getElementById('rp-plant-care-section');
+const careNameEl   = document.getElementById('rp-care-name');
+const careMetaEl   = document.getElementById('rp-care-meta');
+const careBpId     = document.getElementById('rp-care-bp-id');
+const carePlantId  = document.getElementById('rp-care-plant-id');
+const careSeeded   = document.getElementById('rp-care-seeded');
+const careTransp   = document.getElementById('rp-care-transplanted');
+const careWatered  = document.getElementById('rp-care-watered');
+const careFertEl   = document.getElementById('rp-care-fertilized');
+const careHarvest  = document.getElementById('rp-care-harvested');
+const careNotes    = document.getElementById('rp-care-notes');
+const careHealth   = document.getElementById('rp-care-health');
+const careForm     = document.getElementById('rp-care-form');
+const careSaved    = document.getElementById('rp-care-saved');
+
+function closePlantCarePanel() {
+    if (careSec) careSec.style.display = 'none';
+    document.querySelectorAll('.grid-plant-chip.chip-active').forEach(c => c.classList.remove('chip-active'));
+}
+
+function populateCarePanel(d, hasBed) {
+    careNameEl.textContent = d.plant_name || d.name || '';
+    let meta = [];
+    if (d.scientific_name) meta.push(`<em>${escapeHtml(d.scientific_name)}</em>`);
+    if (d.sunlight)        meta.push(`☀ ${escapeHtml(d.sunlight)}`);
+    if (d.water)           meta.push(`💧 ${escapeHtml(d.water)}`);
+    if (d.spacing_in)      meta.push(`↔ ${d.spacing_in}" spacing`);
+    careMetaEl.innerHTML = meta.join(' · ');
+
+    careSeeded.value  = d.planted_date    || '';
+    careTransp.value  = d.transplant_date || '';
+    careNotes.value   = d.plant_notes     || '';
+
+    // Bed-specific fields
+    document.querySelectorAll('.rp-bed-field').forEach(el => {
+        el.style.display = hasBed ? '' : 'none';
+    });
+    if (hasBed) {
+        careWatered.value = d.last_watered    || '';
+        careFertEl.value  = d.last_fertilized || '';
+        careHarvest.value = d.last_harvest    || '';
+        careHealth.value  = d.health_notes    || '';
+    }
+
+    careBpId.value    = d.bp_id    || d.id    || '';
+    carePlantId.value = d.plant_id || d.id    || '';
+    careSec.style.display = '';
+
+    // Ensure right panel is open
+    const panel = document.getElementById('planner-right-panel');
+    const btn   = document.getElementById('right-panel-toggle');
+    if (panel && !panel.classList.contains('open')) {
+        panel.classList.add('open');
+        if (btn) btn.classList.add('active');
+        localStorage.setItem('plannerRightPanel', 'open');
+        if (typeof loadPanelData === 'function') loadPanelData();
+    }
+}
+
+async function openPlantCarePanel({ bpId, plantId }) {
+    try {
+        let d;
+        if (bpId) {
+            d = await fetch(`/api/bedplants/${bpId}`).then(r => r.json());
+            populateCarePanel(d, true);
+        } else {
+            d = await fetch(`/api/plants/${plantId}/detail`).then(r => r.json());
+            const hasBed = !!d.bp_id;
+            // If plant is in a bed, use the full bedplant endpoint for care fields
+            if (hasBed) {
+                const full = await fetch(`/api/bedplants/${d.bp_id}`).then(r => r.json());
+                populateCarePanel(full, true);
+            } else {
+                populateCarePanel(d, false);
+            }
+        }
+    } catch (e) {
+        console.error('openPlantCarePanel error:', e);
+    }
+}
+
+// Care form submit
+if (careForm) {
+    careForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const bpId    = careBpId.value;
+        const plantId = carePlantId.value;
+        const payload = {
+            planted_date:    careSeeded.value  || null,
+            transplant_date: careTransp.value  || null,
+            plant_notes:     careNotes.value   || null,
+        };
+        const hasBed = document.querySelector('.rp-bed-field')?.style.display !== 'none';
+        if (hasBed && bpId) {
+            payload.last_watered    = careWatered.value || null;
+            payload.last_fertilized = careFertEl.value  || null;
+            payload.last_harvest    = careHarvest.value || null;
+            payload.health_notes    = careHealth.value  || null;
+            await api('POST', `/api/bedplants/${bpId}/care`, payload);
+        } else if (plantId) {
+            await api('POST', `/api/plants/${plantId}/care`, payload);
+        }
+        if (careSaved) {
+            careSaved.style.display = '';
+            setTimeout(() => { careSaved.style.display = 'none'; }, 2000);
+        }
+    });
+}
+
+// Close button
+document.getElementById('rp-care-close')?.addEventListener('click', closePlantCarePanel);
+
+// Sidebar "Plants in this Garden" — click plant to open care panel
+document.getElementById('palette-garden-plants')?.addEventListener('click', (ev) => {
+    // Don't fire on delete button or info link
+    if (ev.target.closest('button, a')) return;
+    const item = ev.target.closest('.palette-plant');
+    if (!item) return;
+    const plantId = item.dataset.plantId;
+    if (!plantId) return;
+    openPlantCarePanel({ plantId });
+});
+
+// ── Right Info Panel ──────────────────────────────────────────────────────────
+let loadPanelData = () => {}; // set below; allows plant care panel to trigger it
+
+(function () {
+    const panel      = document.getElementById('planner-right-panel');
+    const toggleBtn  = document.getElementById('right-panel-toggle');
+    if (!panel || !toggleBtn) return;
+
+    const gd = typeof GARDEN_DATA !== 'undefined' ? GARDEN_DATA : null;
+
+    loadPanelData = function() {
+        if (!gd) return;
+        renderGardenInfo();
+        if (gd.latitude) {
+            loadWeather();
+            loadTasks();
+        } else {
+            const noLoc = '<p class="rp-muted" style="margin-top:0.4rem;">No location set. <a href="/gardens/' + gd.id + '" style="color:#3a6b35;">Set location →</a></p>';
+            const wEl = document.getElementById('rp-weather-loading');
+            if (wEl) wEl.outerHTML = noLoc;
+            const tEl = document.getElementById('rp-tasks-loading');
+            if (tEl) tEl.outerHTML = noLoc;
+        }
+    };
+
+    let panelDataLoaded = false;
+
+    // Restore panel state
+    if (localStorage.getItem('plannerRightPanel') === 'open') {
+        panel.classList.add('open');
+        toggleBtn.classList.add('active');
+        loadPanelData();
+        panelDataLoaded = true;
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        const opening = !panel.classList.contains('open');
+        panel.classList.toggle('open', opening);
+        toggleBtn.classList.toggle('active', opening);
+        localStorage.setItem('plannerRightPanel', opening ? 'open' : 'closed');
+        if (opening && !panelDataLoaded) { loadPanelData(); panelDataLoaded = true; }
+    });
+
+    // Condition string → icon emoji
+    function conditionIcon(str) {
+        const s = (str || '').toLowerCase();
+        if (s.includes('thunder'))  return '⛈️';
+        if (s.includes('snow') || s.includes('blizzard')) return '❄️';
+        if (s.includes('sleet') || s.includes('freezing')) return '🌨️';
+        if (s.includes('heavy rain') || s.includes('shower')) return '🌦️';
+        if (s.includes('rain') || s.includes('drizzle')) return '🌧️';
+        if (s.includes('fog') || s.includes('mist') || s.includes('haze')) return '🌫️';
+        if (s.includes('overcast')) return '☁️';
+        if (s.includes('cloud') || s.includes('partly')) return '🌤️';
+        if (s.includes('clear') || s.includes('sunny')) return '☀️';
+        return '🌡️';
+    }
+
+    function fmtDate(iso) {
+        if (!iso) return '';
+        const d = new Date(iso + 'T00:00:00');
+        return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    function dayAbbr(iso) {
+        const d = new Date(iso + 'T00:00:00');
+        return d.toLocaleDateString('en-US', { weekday: 'short' });
+    }
+
+    function renderGardenInfo() {
+        if (!gd) return;
+        const el = document.getElementById('rp-garden-info');
+        if (!el) return;
+        let html = '';
+        if (gd.usda_zone) html += `<div class="rp-zone-badge">Zone ${escapeHtml(gd.usda_zone)}</div>`;
+        if (gd.zone_temp_range) html += `<div class="rp-info-row"><span class="rp-info-label">Winter low</span>${escapeHtml(gd.zone_temp_range)}</div>`;
+        const location = [gd.city, gd.state].filter(Boolean).join(', ') + (gd.zip_code ? ' ' + gd.zip_code : '');
+        if (location.trim()) html += `<div class="rp-info-row"><span class="rp-info-label">Location</span>${escapeHtml(location)}</div>`;
+        html += `<div class="rp-info-row"><span class="rp-info-label">Unit</span>${escapeHtml(gd.unit)}</div>`;
+        html += `<div style="margin-top:0.4rem;"><a href="/gardens/${gd.id}" style="font-size:0.78rem;color:#3a6b35;">✎ Edit garden →</a></div>`;
+        el.innerHTML = html;
+    }
+
+    async function loadWeather() {
+        const loading = document.getElementById('rp-weather-loading');
+        const content = document.getElementById('rp-weather-content');
+        const errEl   = document.getElementById('rp-weather-error');
+        if (!content) return;
+        try {
+            const data = await fetch(`/api/gardens/${gd.id}/weather`).then(r => r.json());
+            if (data.error) throw new Error(data.error === 'no_location' ? 'No location set' : data.error);
+            const c = data.current;
+            const f = data.frost;
+            let html = `<div class="rp-current">
+                <span class="rp-current-icon">${conditionIcon(c.condition)}</span>
+                <span class="rp-current-temp">${Math.round(c.temp)}°F</span>
+                <span class="rp-current-details">${escapeHtml(c.condition)}<br>${c.humidity}% · ${Math.round(c.wind_speed)} mph</span>
+            </div>`;
+            if (f && f.last_spring !== 'unknown') {
+                html += `<div class="rp-frost-row">🌱 Last frost: ${escapeHtml(f.last_spring)} &nbsp; 🍂 First fall: ${escapeHtml(f.first_fall)}</div>`;
+            }
+            html += '<div class="rp-forecast">';
+            (data.daily || []).forEach(day => {
+                html += `<div class="rp-forecast-day">
+                    <span class="rp-day-name">${dayAbbr(day.date)}</span>
+                    <span class="rp-day-icon">${conditionIcon(day.condition)}</span>
+                    <span class="rp-day-hi">${Math.round(day.high)}°</span>
+                    <span class="rp-day-lo">${Math.round(day.low)}°</span>
+                    ${day.precip_prob != null ? `<span class="rp-day-rain">💧${day.precip_prob}%</span>` : ''}
+                </div>`;
+            });
+            html += '</div>';
+            content.innerHTML = html;
+            if (loading) loading.style.display = 'none';
+            content.style.display = '';
+        } catch (err) {
+            if (loading) loading.style.display = 'none';
+            if (errEl) { errEl.textContent = 'Weather unavailable: ' + err.message; errEl.style.display = ''; }
+        }
+    }
+
+    async function loadTasks() {
+        const loading = document.getElementById('rp-tasks-loading');
+        const list    = document.getElementById('rp-tasks-list');
+        if (!list) return;
+        try {
+            const tasks = await fetch(`/api/gardens/${gd.id}/tasks`).then(r => r.json());
+            if (loading) loading.style.display = 'none';
+            if (!tasks.length) {
+                list.innerHTML = '<p class="rp-muted">No pending tasks.</p>';
+                return;
+            }
+            list.innerHTML = tasks.map(t => {
+                const due = t.due_date ? `Due ${fmtDate(t.due_date)}` : '';
+                const plant = t.plant_name ? ` · ${escapeHtml(t.plant_name)}` : '';
+                return `<div class="rp-task-item">
+                    <div class="rp-task-title">${escapeHtml(t.title)}</div>
+                    <div class="rp-task-meta">${due}${plant}</div>
+                </div>`;
+            }).join('');
+        } catch (err) {
+            if (loading) loading.style.display = 'none';
+            if (list) list.innerHTML = '<p class="rp-error">Could not load tasks.</p>';
+        }
+    }
+})();

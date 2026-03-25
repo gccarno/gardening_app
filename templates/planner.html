@@ -76,6 +76,9 @@
               {% endif %}
               <span class="palette-plant-name">{{ first.name }}</span>
               {% if inst.beds %}<span class="palette-type">{{ inst.beds[0].name }}</span>{% else %}<span class="palette-type">{{ first.status }}</span>{% endif %}
+              {% if first.library_id %}
+              <a class="palette-info-btn" href="{{ url_for('library_detail', entry_id=first.library_id) }}?back={{ url_for('planner', garden_id=garden.id) }}" title="View plant info" draggable="false">ℹ</a>
+              {% endif %}
               <button class="palette-delete-btn" data-plant-id="{{ first.id }}" title="Delete plant" draggable="false">×</button>
             </li>
           {% else %}
@@ -96,6 +99,9 @@
                   {% endif %}
                   <span class="palette-plant-name">{{ first.name }}</span>
                   <span class="palette-type">{{ group.instances|length }}×</span>
+                  {% if first.library_id %}
+                  <a class="palette-info-btn" href="{{ url_for('library_detail', entry_id=first.library_id) }}?back={{ url_for('planner', garden_id=garden.id) }}" title="View plant info" draggable="false">ℹ</a>
+                  {% endif %}
                 </summary>
                 <ul class="palette-group-instances">
                   {% for inst in group.instances %}
@@ -146,6 +152,7 @@
             {% endif %}
             <span class="palette-plant-name">{{ plant.name }}</span>
             {% if plant.type %}<span class="palette-type">{{ plant.type }}</span>{% endif %}
+            <a class="palette-info-btn" href="{{ url_for('library_detail', entry_id=plant.id) }}?back={{ url_for('planner', garden_id=garden.id) }}" title="View plant info" draggable="false">ℹ</a>
           </li>
           {% endfor %}
         </ul>
@@ -165,6 +172,7 @@
           <option value="24">2 ft / 60 cm</option>
         </select>
       </label>
+      <button id="right-panel-toggle" class="toolbar-btn" title="Toggle info panel">&#9432; Info</button>
     </div>
     <div class="planner-canvas"
          id="planner-canvas"
@@ -205,7 +213,60 @@
 
     </div>
   </div>
+
+  <!-- Right Info Panel -->
+  <aside class="planner-right-panel" id="planner-right-panel">
+
+    <!-- Plant Care (shown when a plant is selected) -->
+    <div class="rp-section" id="rp-plant-care-section" style="display:none">
+      <div class="rp-plant-care-header">
+        <span id="rp-care-name" class="rp-care-name"></span>
+        <button id="rp-care-close" class="rp-care-close" title="Close">×</button>
+      </div>
+      <div id="rp-care-meta" class="rp-care-meta"></div>
+      <form id="rp-care-form" class="rp-care-form">
+        <input type="hidden" id="rp-care-bp-id">
+        <input type="hidden" id="rp-care-plant-id">
+        <label>Seed Date        <input type="date" id="rp-care-seeded"></label>
+        <label>Transplant Date  <input type="date" id="rp-care-transplanted"></label>
+        <label class="rp-bed-field">Last Watered    <input type="date" id="rp-care-watered"></label>
+        <label class="rp-bed-field">Last Fertilized <input type="date" id="rp-care-fertilized"></label>
+        <label class="rp-bed-field">Last Harvest    <input type="date" id="rp-care-harvested"></label>
+        <label>Plant Notes      <textarea id="rp-care-notes" rows="2"></textarea></label>
+        <label class="rp-bed-field">Care Notes      <textarea id="rp-care-health" rows="2"></textarea></label>
+        <div class="rp-care-actions">
+          <button type="submit" class="rp-care-save">Save</button>
+          <span id="rp-care-saved" style="display:none" class="rp-muted">Saved ✓</span>
+        </div>
+      </form>
+    </div>
+
+    <div class="rp-section">
+      <details open>
+        <summary class="sidebar-label sidebar-label--collapsible">Weather</summary>
+        <div id="rp-weather-loading" class="rp-loading">Loading…</div>
+        <div id="rp-weather-content" style="display:none"></div>
+        <div id="rp-weather-error" class="rp-error" style="display:none"></div>
+      </details>
+    </div>
+    <div class="rp-section">
+      <details open>
+        <summary class="sidebar-label sidebar-label--collapsible">Garden Info</summary>
+        <div id="rp-garden-info"></div>
+      </details>
+    </div>
+    <div class="rp-section">
+      <details>
+        <summary class="sidebar-label sidebar-label--collapsible">Tasks</summary>
+        <div id="rp-tasks-loading" class="rp-loading">Loading…</div>
+        <div id="rp-tasks-list"></div>
+      </details>
+    </div>
+  </aside>
 </div>
 
+<script>
+const GARDEN_DATA = {{ garden_json | safe }};
+</script>
 <script src="{{ url_for('static', filename='planner.js') }}"></script>
 {% endblock %}

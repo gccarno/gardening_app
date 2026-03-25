@@ -2,6 +2,12 @@
 {% block title %}{{ entry.name }} — Plant Library{% endblock %}
 {% block content %}
 
+{% if back %}
+<div style="padding:0.5rem 1rem;background:#f4f9f2;border-bottom:1px solid #d8e8d6;">
+  <a href="{{ back }}" style="color:#3a6b35;font-size:0.85rem;text-decoration:none;">← Back to Planner</a>
+</div>
+{% endif %}
+
 {# ── Header ──────────────────────────────────────────────────────────────── #}
 <div class="plant-hero">
   <div class="plant-hero-info">

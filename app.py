@@ -299,6 +299,21 @@ def create_app():
             'frost': {'last_spring': frost[0], 'first_fall': frost[1]},
         })
 
+    @app.route('/api/gardens/<int:garden_id>/tasks')
+    def api_garden_tasks(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        plant_ids = [p.id for p in garden.plants]
+        tasks = (Task.query
+                 .filter(Task.plant_id.in_(plant_ids), Task.completed == False)
+                 .order_by(Task.due_date)
+                 .limit(20).all())
+        return jsonify([{
+            'id': t.id,
+            'title': t.title,
+            'due_date': t.due_date.isoformat() if t.due_date else None,
+            'plant_name': t.plant.name if t.plant else None,
+        } for t in tasks])
+
     @app.route('/planner')
     def planner_index():
         first = Garden.query.order_by(Garden.name).first()
@@ -337,11 +352,25 @@ def create_app():
             for name, instances in groups.items()
         ]
 
+        import json as _json
+        garden_json = _json.dumps({
+            'id': garden.id,
+            'name': garden.name,
+            'city': garden.city or '',
+            'state': garden.state or '',
+            'zip_code': garden.zip_code or '',
+            'usda_zone': garden.usda_zone or '',
+            'zone_temp_range': garden.zone_temp_range or '',
+            'unit': garden.unit or 'ft',
+            'latitude': garden.latitude,
+            'longitude': garden.longitude,
+        })
         px_per_unit = 60
         return render_template('planner.html', garden=garden, all_gardens=all_gardens,
                                library_plants=library_plants,
                                garden_plant_groups=garden_plant_groups,
-                               px_per_unit=px_per_unit)
+                               px_per_unit=px_per_unit,
+                               garden_json=garden_json)
 
     # --- Garden Beds ---
 
@@ -663,10 +692,12 @@ def create_app():
             selected_zone = int(z) if z else None
 
         tab = request.args.get('tab', 'overview')
+        back = request.args.get('back')
         all_gardens = Garden.query.order_by(Garden.name).all()
         return render_template('library_detail.html',
             entry=entry,
             tab=tab,
+            back=back,
             good_neighbors=good_neighbors,
             bad_neighbors=bad_neighbors,
             how_to_grow=how_to_grow,
@@ -937,13 +968,32 @@ def create_app():
 
     @app.route('/api/beds/<int:bed_id>/grid-plant', methods=['POST'])
     def api_bed_grid_plant(bed_id):
-        GardenBed.query.get_or_404(bed_id)
+        bed = GardenBed.query.get_or_404(bed_id)
         data = request.get_json(force=True)
         if not data or 'grid_x' not in data or 'grid_y' not in data:
             return jsonify({'error': 'grid_x and grid_y required'}), 400
         grid_x, grid_y = int(data['grid_x']), int(data['grid_y'])
-        if BedPlant.query.filter_by(bed_id=bed_id, grid_x=grid_x, grid_y=grid_y).first():
-            return jsonify({'error': 'cell already occupied'}), 409
+        spacing_in = int(data.get('spacing_in', 12))
+
+        # Bounds check: plant footprint must fit within bed dimensions
+        bed_w_in = bed.width_ft * 12
+        bed_h_in = bed.height_ft * 12
+        if grid_x + spacing_in > bed_w_in or grid_y + spacing_in > bed_h_in:
+            return jsonify({'error': 'plant does not fit within bed bounds'}), 400
+
+        # Overlap check: no other plant's footprint may intersect
+        for existing in bed.bed_plants:
+            if existing.grid_x is None or existing.grid_y is None:
+                continue
+            ex_entry = existing.plant.library_entry if existing.plant else None
+            ex_spacing = ex_entry.spacing_in if ex_entry and ex_entry.spacing_in else 12
+            # AABB overlap test
+            if not (grid_x >= existing.grid_x + ex_spacing or
+                    existing.grid_x >= grid_x + spacing_in or
+                    grid_y >= existing.grid_y + ex_spacing or
+                    existing.grid_y >= grid_y + spacing_in):
+                return jsonify({'error': 'overlaps existing plant'}), 409
+
         if 'library_id' in data:
             plant = _plant_from_library(int(data['library_id']))
             if not plant:
@@ -967,12 +1017,17 @@ def create_app():
     def api_bedplant_care(bp_id):
         bp = BedPlant.query.get_or_404(bp_id)
         data = request.get_json(force=True)
-        if 'last_watered' in data:
-            bp.last_watered = date.fromisoformat(data['last_watered']) if data['last_watered'] else None
-        if 'last_fertilized' in data:
-            bp.last_fertilized = date.fromisoformat(data['last_fertilized']) if data['last_fertilized'] else None
-        if 'health_notes' in data:
-            bp.health_notes = data['health_notes'] or None
+        def _d(val):
+            return date.fromisoformat(val) if val else None
+        if 'last_watered'    in data: bp.last_watered    = _d(data['last_watered'])
+        if 'last_fertilized' in data: bp.last_fertilized = _d(data['last_fertilized'])
+        if 'last_harvest'    in data: bp.last_harvest    = _d(data['last_harvest'])
+        if 'health_notes'    in data: bp.health_notes    = data['health_notes'] or None
+        # Also save plant-level fields
+        if bp.plant:
+            if 'planted_date'    in data: bp.plant.planted_date    = _d(data['planted_date'])
+            if 'transplant_date' in data: bp.plant.transplant_date = _d(data['transplant_date'])
+            if 'plant_notes'     in data: bp.plant.notes           = data['plant_notes'] or None
         db.session.commit()
         return jsonify({'ok': True})
 
@@ -980,19 +1035,62 @@ def create_app():
     def api_bedplant_detail(bp_id):
         bp = BedPlant.query.get_or_404(bp_id)
         entry = bp.plant.library_entry if bp.plant else None
+        plant = bp.plant
         return jsonify({
             'id': bp.id,
-            'plant_name': bp.plant.name if bp.plant else '?',
+            'plant_id': plant.id if plant else None,
+            'plant_name': plant.name if plant else '?',
             'image_filename': entry.image_filename if entry else None,
             'scientific_name': entry.scientific_name if entry else None,
             'spacing_in': entry.spacing_in if entry else None,
             'sunlight': entry.sunlight if entry else None,
             'water': entry.water if entry else None,
             'days_to_harvest': entry.days_to_harvest if entry else None,
-            'last_watered': bp.last_watered.isoformat() if bp.last_watered else None,
+            'planted_date':    plant.planted_date.isoformat()    if plant and plant.planted_date    else None,
+            'transplant_date': plant.transplant_date.isoformat() if plant and plant.transplant_date else None,
+            'plant_notes':     plant.notes or '',
+            'last_watered':    bp.last_watered.isoformat()    if bp.last_watered    else None,
             'last_fertilized': bp.last_fertilized.isoformat() if bp.last_fertilized else None,
-            'health_notes': bp.health_notes or '',
+            'last_harvest':    bp.last_harvest.isoformat()    if bp.last_harvest    else None,
+            'health_notes':    bp.health_notes or '',
         })
+
+    @app.route('/api/plants/<int:plant_id>/detail')
+    def api_plant_detail(plant_id):
+        plant = Plant.query.get_or_404(plant_id)
+        entry = plant.library_entry
+        # Find first BedPlant for this plant (if any)
+        bp = plant.bed_plants[0] if plant.bed_plants else None
+        return jsonify({
+            'id': plant.id,
+            'plant_name': plant.name,
+            'bp_id': bp.id if bp else None,
+            'image_filename': entry.image_filename if entry else None,
+            'scientific_name': entry.scientific_name if entry else None,
+            'spacing_in': entry.spacing_in if entry else None,
+            'sunlight': entry.sunlight if entry else None,
+            'water': entry.water if entry else None,
+            'days_to_harvest': entry.days_to_harvest if entry else None,
+            'planted_date':    plant.planted_date.isoformat()    if plant.planted_date    else None,
+            'transplant_date': plant.transplant_date.isoformat() if plant.transplant_date else None,
+            'plant_notes':     plant.notes or '',
+            'last_watered':    bp.last_watered.isoformat()    if bp and bp.last_watered    else None,
+            'last_fertilized': bp.last_fertilized.isoformat() if bp and bp.last_fertilized else None,
+            'last_harvest':    bp.last_harvest.isoformat()    if bp and bp.last_harvest    else None,
+            'health_notes':    bp.health_notes or '' if bp else '',
+        })
+
+    @app.route('/api/plants/<int:plant_id>/care', methods=['POST'])
+    def api_plant_care(plant_id):
+        plant = Plant.query.get_or_404(plant_id)
+        data = request.get_json(force=True)
+        def _d(val):
+            return date.fromisoformat(val) if val else None
+        if 'planted_date'    in data: plant.planted_date    = _d(data['planted_date'])
+        if 'transplant_date' in data: plant.transplant_date = _d(data['transplant_date'])
+        if 'plant_notes'     in data: plant.notes           = data['plant_notes'] or None
+        db.session.commit()
+        return jsonify({'ok': True})
 
     return app
 
