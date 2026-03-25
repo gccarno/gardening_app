@@ -10,6 +10,7 @@
     {% for task in upcoming_tasks %}
     <li class="card">
       <span class="task-title">{{ task.title }}</span>
+      {% if task.task_type and task.task_type != 'other' %}<span class="muted">[{{ task.task_type }}]</span>{% endif %}
       {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
       {% if task.plant %}<span class="muted">— {{ task.plant.name }}</span>{% endif %}
     </li>

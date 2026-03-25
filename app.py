@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import requests as http
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary
+from models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, WeatherLog
 
 load_dotenv()
 
@@ -199,10 +199,22 @@ def create_app():
         all_gardens = Garden.query.order_by(Garden.name).all()
         return render_template('gardens.html', gardens=all_gardens)
 
+    def _rainfall_summary(garden_id, days=7):
+        cutoff = date.today() - timedelta(days=days)
+        logs = WeatherLog.query.filter(
+            WeatherLog.garden_id == garden_id,
+            WeatherLog.date >= cutoff,
+        ).all()
+        total = sum(l.rainfall_in or 0 for l in logs)
+        return {'total_in': round(total, 2), 'days_with_data': len(logs)}
+
     @app.route('/gardens/<int:garden_id>')
     def garden_detail(garden_id):
         garden = Garden.query.get_or_404(garden_id)
-        return render_template('garden_detail.html', garden=garden)
+        rainfall_7d  = _rainfall_summary(garden_id, 7)
+        rainfall_14d = _rainfall_summary(garden_id, 14)
+        return render_template('garden_detail.html', garden=garden,
+                               rainfall_7d=rainfall_7d, rainfall_14d=rainfall_14d)
 
     @app.route('/gardens/<int:garden_id>/edit', methods=['POST'])
     def edit_garden(garden_id):
@@ -210,6 +222,10 @@ def create_app():
         garden.name = request.form['name']
         garden.description = request.form.get('description')
         garden.unit = request.form.get('unit', 'ft')
+        f = request.form.get('last_frost_date')
+        garden.last_frost_date = date.fromisoformat(f) if f else None
+        garden.watering_frequency_days = request.form.get('watering_frequency_days', type=int) or 7
+        garden.water_source = request.form.get('water_source') or None
         db.session.commit()
         return redirect(url_for('garden_detail', garden_id=garden.id))
 
@@ -303,16 +319,164 @@ def create_app():
     def api_garden_tasks(garden_id):
         garden = Garden.query.get_or_404(garden_id)
         plant_ids = [p.id for p in garden.plants]
+        bed_ids = [b.id for b in garden.beds]
         tasks = (Task.query
-                 .filter(Task.plant_id.in_(plant_ids), Task.completed == False)
+                 .filter(
+                     db.or_(
+                         Task.plant_id.in_(plant_ids),
+                         Task.garden_id == garden_id,
+                         Task.bed_id.in_(bed_ids),
+                     ),
+                     Task.completed == False,
+                 )
                  .order_by(Task.due_date)
                  .limit(20).all())
         return jsonify([{
             'id': t.id,
             'title': t.title,
+            'task_type': t.task_type,
             'due_date': t.due_date.isoformat() if t.due_date else None,
             'plant_name': t.plant.name if t.plant else None,
+            'scope': 'plant' if t.plant_id else ('bed' if t.bed_id else 'garden'),
         } for t in tasks])
+
+    @app.route('/api/gardens/<int:garden_id>/quick-task', methods=['POST'])
+    def api_quick_task(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        data = request.get_json() or {}
+        task_type = data.get('task_type', 'other')
+        plant_id = data.get('plant_id')
+        bed_id = data.get('bed_id')
+        title = data.get('title')
+        due_date = None
+
+        plant = Plant.query.get(plant_id) if plant_id else None
+        lib = plant.library_entry if plant else None
+
+        # Auto-calculate due date
+        frost = garden.last_frost_date
+        if not frost and garden.usda_zone:
+            # Fall back to _FROST_DATES lookup
+            zone_num = ''.join(filter(str.isdigit, garden.usda_zone or ''))
+            spring_str, _ = _FROST_DATES.get(zone_num, (None, None))
+            if spring_str and spring_str not in ('none', 'rare', 'unknown'):
+                from datetime import datetime
+                try:
+                    frost = datetime.strptime(f'{spring_str} {date.today().year}', '%b %d %Y').date()
+                except ValueError:
+                    frost = None
+
+        if task_type == 'seeding' and lib and lib.sow_indoor_weeks and frost:
+            due_date = frost - timedelta(weeks=lib.sow_indoor_weeks)
+        elif task_type == 'transplanting' and lib and lib.transplant_offset and frost:
+            due_date = frost + timedelta(weeks=lib.transplant_offset)
+        elif task_type == 'harvest':
+            if plant and plant.planted_date and lib and lib.days_to_harvest:
+                due_date = plant.planted_date + timedelta(days=lib.days_to_harvest)
+            elif plant and plant.expected_harvest:
+                due_date = plant.expected_harvest
+
+        # Auto-title
+        if not title:
+            plant_name = plant.name if plant else ''
+            type_labels = {
+                'seeding': f'Seed {plant_name}'.strip(),
+                'transplanting': f'Transplant {plant_name}'.strip(),
+                'harvest': f'Harvest {plant_name}'.strip(),
+                'watering': f'Water {plant_name or garden.name}'.strip(),
+                'fertilizing': f'Fertilize {plant_name or garden.name}'.strip(),
+                'mulching': f'Mulch {plant_name or garden.name}'.strip(),
+                'weeding': f'Weed {garden.name}',
+            }
+            title = type_labels.get(task_type, 'Task')
+
+        task = Task(
+            title=title,
+            task_type=task_type,
+            due_date=due_date,
+            plant_id=plant_id,
+            garden_id=garden_id,
+            bed_id=bed_id,
+        )
+        db.session.add(task)
+        db.session.commit()
+        return jsonify({'ok': True, 'task_id': task.id,
+                        'due_date': due_date.isoformat() if due_date else None})
+
+    @app.route('/api/gardens/<int:garden_id>/bulk-care', methods=['POST'])
+    def api_bulk_care(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        data = request.get_json() or {}
+        action = data.get('action')
+        if action not in ('water', 'fertilize', 'mulch'):
+            return jsonify({'error': 'Invalid action'}), 400
+        care_date_str = data.get('date')
+        care_date = date.fromisoformat(care_date_str) if care_date_str else date.today()
+        create_task = data.get('create_task', True)
+
+        bed_ids = [b.id for b in garden.beds]
+        bps = BedPlant.query.filter(BedPlant.bed_id.in_(bed_ids)).all() if bed_ids else []
+        field_map = {'water': 'last_watered', 'fertilize': 'last_fertilized'}
+
+        if action in field_map:
+            for bp in bps:
+                setattr(bp, field_map[action], care_date)
+
+        if create_task:
+            type_map = {'water': 'watering', 'fertilize': 'fertilizing', 'mulch': 'mulching'}
+            task = Task(
+                title=f'{action.capitalize()} all plants — {garden.name}',
+                task_type=type_map[action],
+                garden_id=garden_id,
+                due_date=care_date,
+                completed=True,
+                completed_date=care_date,
+            )
+            db.session.add(task)
+
+        db.session.commit()
+        return jsonify({'ok': True, 'updated': len(bps)})
+
+    @app.route('/api/gardens/<int:garden_id>/fetch-weather', methods=['POST'])
+    def api_fetch_weather_history(garden_id):
+        garden = Garden.query.get_or_404(garden_id)
+        if not garden.latitude or not garden.longitude:
+            return jsonify({'error': 'no_location'}), 400
+        end_date = date.today() - timedelta(days=1)
+        start_date = end_date - timedelta(days=13)
+        try:
+            resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
+                'latitude': garden.latitude,
+                'longitude': garden.longitude,
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat(),
+                'daily': 'precipitation_sum,temperature_2m_max,temperature_2m_min',
+                'temperature_unit': 'fahrenheit',
+                'precipitation_unit': 'inch',
+                'timezone': 'auto',
+            }, timeout=10)
+            resp.raise_for_status()
+            daily = resp.json().get('daily', {})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 502
+
+        created = 0
+        for i, d_str in enumerate(daily.get('time', [])):
+            d = date.fromisoformat(d_str)
+            WeatherLog.query.filter_by(garden_id=garden_id, date=d).delete()
+            log = WeatherLog(
+                garden_id=garden_id,
+                date=d,
+                rainfall_in=daily['precipitation_sum'][i],
+                temp_high_f=daily['temperature_2m_max'][i],
+                temp_low_f=daily['temperature_2m_min'][i],
+                source='api',
+            )
+            db.session.add(log)
+            created += 1
+        db.session.commit()
+        rainfall_7d = _rainfall_summary(garden_id, 7)
+        return jsonify({'ok': True, 'days_saved': created, 'rainfall_7d': rainfall_7d})
 
     @app.route('/planner')
     def planner_index():
@@ -364,6 +528,9 @@ def create_app():
             'unit': garden.unit or 'ft',
             'latitude': garden.latitude,
             'longitude': garden.longitude,
+            'last_frost_date': garden.last_frost_date.isoformat() if garden.last_frost_date else None,
+            'watering_frequency_days': garden.watering_frequency_days,
+            'rainfall_7d': _rainfall_summary(garden.id, 7),
         })
         px_per_unit = 60
         return render_template('planner.html', garden=garden, all_gardens=all_gardens,
@@ -587,20 +754,29 @@ def create_app():
                 title=request.form['title'],
                 description=request.form.get('description'),
                 due_date=date.fromisoformat(due) if due else None,
+                task_type=request.form.get('task_type') or 'other',
                 plant_id=request.form.get('plant_id') or None,
+                garden_id=request.form.get('garden_id') or None,
+                bed_id=request.form.get('bed_id') or None,
             )
             db.session.add(task)
             db.session.commit()
             return redirect(url_for('tasks'))
         all_tasks = Task.query.order_by(Task.completed.asc(), Task.due_date.asc().nullslast()).all()
         all_plants = Plant.query.order_by(Plant.name).all()
-        return render_template('tasks.html', tasks=all_tasks, plants=all_plants)
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        all_beds = GardenBed.query.order_by(GardenBed.name).all()
+        return render_template('tasks.html', tasks=all_tasks, plants=all_plants,
+                               all_gardens=all_gardens, all_beds=all_beds)
 
     @app.route('/tasks/<int:task_id>')
     def task_detail(task_id):
         task = Task.query.get_or_404(task_id)
         all_plants = Plant.query.order_by(Plant.name).all()
-        return render_template('task_detail.html', task=task, plants=all_plants)
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        all_beds = GardenBed.query.order_by(GardenBed.name).all()
+        return render_template('task_detail.html', task=task, plants=all_plants,
+                               all_gardens=all_gardens, all_beds=all_beds)
 
     @app.route('/tasks/<int:task_id>/edit', methods=['POST'])
     def edit_task(task_id):
@@ -609,7 +785,10 @@ def create_app():
         task.title = request.form['title']
         task.description = request.form.get('description')
         task.due_date = date.fromisoformat(due) if due else None
+        task.task_type = request.form.get('task_type') or 'other'
         task.plant_id = request.form.get('plant_id') or None
+        task.garden_id = request.form.get('garden_id') or None
+        task.bed_id = request.form.get('bed_id') or None
         db.session.commit()
         return redirect(url_for('task_detail', task_id=task.id))
 
@@ -617,6 +796,7 @@ def create_app():
     def complete_task(task_id):
         task = Task.query.get_or_404(task_id)
         task.completed = not task.completed
+        task.completed_date = date.today() if task.completed else None
         db.session.commit()
         return redirect(url_for('tasks'))
 
@@ -630,6 +810,8 @@ def create_app():
     # --- Plant Library ---
 
     PERENUAL_KEY = os.getenv('PERENUAL_API_KEY', '')
+    PERMAPEOPLE_KEY_ID     = os.getenv('X-Permapeople-Key-Id', '')
+    PERMAPEOPLE_KEY_SECRET = os.getenv('X-Permapeople-Key-Secret', '')
 
 
 
@@ -860,6 +1042,53 @@ def create_app():
         db.session.add(entry)
         db.session.commit()
         return jsonify({'ok': True, 'id': entry.id, 'existing': False})
+
+    def _permapeople_post(path, body):
+        """POST to Permapeople API; return (data, err_type, err_msg)."""
+        if not PERMAPEOPLE_KEY_ID or not PERMAPEOPLE_KEY_SECRET:
+            return None, 'config', 'Permapeople credentials not configured.'
+        headers = {
+            'x-permapeople-key-id': PERMAPEOPLE_KEY_ID,
+            'x-permapeople-key-secret': PERMAPEOPLE_KEY_SECRET,
+            'Content-Type': 'application/json',
+        }
+        try:
+            resp = http.post(f'https://permapeople.org/api/{path}', json=body, headers=headers, timeout=8)
+        except http.exceptions.Timeout:
+            return None, 'network', 'Request to Permapeople timed out.'
+        except http.exceptions.RequestException as e:
+            return None, 'network', f'Network error: {e}'
+        if resp.status_code == 401:
+            return None, 'auth', 'Invalid Permapeople credentials.'
+        if not resp.ok:
+            return None, 'api', f'Permapeople returned HTTP {resp.status_code}.'
+        return resp.json(), None, None
+
+    @app.route('/api/permapeople/search', methods=['POST'])
+    def api_permapeople_search():
+        body = request.get_json(force=True) or {}
+        q = (body.get('q') or '').strip()
+        if not q:
+            return jsonify({'results': []})
+        data, err_type, err_msg = _permapeople_post('search', {'q': q})
+        if err_type:
+            return jsonify({'error': err_type, 'message': err_msg}), 502
+        results = []
+        for p in data.get('plants', []):
+            kv = {item['key']: item['value'] for item in (p.get('data') or []) if 'key' in item}
+            results.append({
+                'permapeople_id': p.get('id'),
+                'name': p.get('name'),
+                'scientific_name': p.get('scientific_name'),
+                'description': p.get('description'),
+                'link': p.get('link'),
+                'water': kv.get('Water requirement'),
+                'sunlight': kv.get('Light requirement'),
+                'zone': kv.get('USDA Hardiness zone'),
+                'family': kv.get('Family'),
+                'layer': kv.get('Layer'),
+            })
+        return jsonify({'results': results})
 
     # --- JSON API ---
 

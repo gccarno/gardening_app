@@ -7,12 +7,40 @@
   <h2>Add Task</h2>
   <form method="post" class="form">
     <label>Title <input type="text" name="title" required></label>
+    <label>Type
+      <select name="task_type">
+        <option value="other">Other</option>
+        <option value="seeding">Seeding</option>
+        <option value="transplanting">Transplanting</option>
+        <option value="watering">Watering</option>
+        <option value="fertilizing">Fertilizing</option>
+        <option value="mulching">Mulching</option>
+        <option value="weeding">Weeding</option>
+        <option value="harvest">Harvest</option>
+      </select>
+    </label>
     <label>Due Date <input type="date" name="due_date"></label>
     <label>Plant
       <select name="plant_id">
         <option value="">— None —</option>
         {% for plant in plants %}
         <option value="{{ plant.id }}">{{ plant.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Garden
+      <select name="garden_id">
+        <option value="">— None —</option>
+        {% for g in all_gardens %}
+        <option value="{{ g.id }}">{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Bed
+      <select name="bed_id">
+        <option value="">— None —</option>
+        {% for b in all_beds %}
+        <option value="{{ b.id }}">{{ b.name }}</option>
         {% endfor %}
       </select>
     </label>
@@ -30,8 +58,12 @@
       <div class="task-row">
         <span>
           <strong>{{ task.title }}</strong>
+          {% if task.task_type and task.task_type != 'other' %}<span class="muted">[{{ task.task_type }}]</span>{% endif %}
           {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
+          {% if task.completed and task.completed_date %}<span class="muted">Done {{ task.completed_date }}</span>{% endif %}
           {% if task.plant %}<span class="muted">— {{ task.plant.name }}</span>{% endif %}
+          {% if task.task_garden %}<span class="muted">— {{ task.task_garden.name }}</span>{% endif %}
+          {% if task.task_bed %}<span class="muted">— {{ task.task_bed.name }}</span>{% endif %}
           {% if task.description %}<span class="muted">{{ task.description }}</span>{% endif %}
         </span>
         <span class="task-actions">

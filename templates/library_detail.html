@@ -103,7 +103,16 @@
     {% endif %}
     {% if entry.soil_type %}<dt>Soil Type</dt><dd>{{ entry.soil_type }}</dd>{% endif %}
     {% if entry.notes %}<dt>Growing Notes</dt><dd>{{ entry.notes }}</dd>{% endif %}
+    {% if entry.family %}<dt>Plant Family</dt><dd>{{ entry.family }}</dd>{% endif %}
+    {% if entry.layer %}<dt>Garden Layer</dt><dd>{{ entry.layer }}</dd>{% endif %}
+    {% if entry.edible_parts %}<dt>Edible Parts</dt><dd>{{ entry.edible_parts }}</dd>{% endif %}
+    {% if entry.permapeople_description %}<dt>Description</dt><dd>{{ entry.permapeople_description }}</dd>{% endif %}
   </dl>
+  {% if entry.permapeople_link %}
+  <p style="margin-top:1rem;font-size:0.8rem;color:#7a907a;">
+    Plant data sourced from <a href="{{ entry.permapeople_link }}" target="_blank" rel="noopener" style="color:#3a6b35;">Permapeople.org</a> — licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener" style="color:#3a6b35;">CC BY-SA 4.0</a>
+  </p>
+  {% endif %}
 </section>
 
 {# ══ Planting Calendar ═════════════════════════════════════════════════════#}

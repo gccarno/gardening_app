@@ -6,6 +6,13 @@
 <h2>Edit Task</h2>
 <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" class="form">
   <label>Title <input type="text" name="title" value="{{ task.title }}" required></label>
+  <label>Type
+    <select name="task_type">
+      {% for tt in ['other','seeding','transplanting','watering','fertilizing','mulching','weeding','harvest'] %}
+      <option value="{{ tt }}" {% if task.task_type == tt %}selected{% endif %}>{{ tt|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </label>
   <label>Due Date <input type="date" name="due_date" value="{{ task.due_date or '' }}"></label>
   <label>Plant
     <select name="plant_id">
@@ -15,9 +22,28 @@
       {% endfor %}
     </select>
   </label>
+  <label>Garden
+    <select name="garden_id">
+      <option value="">— None —</option>
+      {% for g in all_gardens %}
+      <option value="{{ g.id }}" {% if task.garden_id == g.id %}selected{% endif %}>{{ g.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Bed
+    <select name="bed_id">
+      <option value="">— None —</option>
+      {% for b in all_beds %}
+      <option value="{{ b.id }}" {% if task.bed_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
   <label>Description <textarea name="description" rows="3">{{ task.description or '' }}</textarea></label>
   <button type="submit">Save Changes</button>
 </form>
+{% if task.completed_date %}
+<p class="muted">Completed: {{ task.completed_date }}</p>
+{% endif %}
 
 <p><a href="{{ url_for('tasks') }}">← Back to Tasks</a></p>
 {% endblock %}

@@ -15,8 +15,15 @@ class Garden(db.Model):
     longitude = db.Column(db.Float, nullable=True)
     usda_zone = db.Column(db.String(10), nullable=True)
     zone_temp_range = db.Column(db.String(50), nullable=True)
+    last_frost_date = db.Column(db.Date, nullable=True)
+    watering_frequency_days = db.Column(db.Integer, nullable=True, default=7)
+    water_source = db.Column(db.String(30), nullable=True)  # rain/hose/drip/sprinkler
     beds = db.relationship('GardenBed', backref='garden', lazy=True)
     plants = db.relationship('Plant', backref='garden', lazy=True)
+    garden_tasks = db.relationship('Task', backref='task_garden',
+                                   foreign_keys='Task.garden_id', lazy=True)
+    weather_logs = db.relationship('WeatherLog', backref='garden_ref',
+                                   order_by='WeatherLog.date.desc()', lazy=True)
 
     def __repr__(self):
         return f'<Garden {self.name}>'
@@ -35,6 +42,8 @@ class GardenBed(db.Model):
     pos_y = db.Column(db.Float, nullable=False, default=0.0)
     soil_notes = db.Column(db.Text, nullable=True)
     bed_plants = db.relationship('BedPlant', backref='bed', lazy=True, cascade='all, delete-orphan')
+    bed_tasks = db.relationship('Task', backref='task_bed',
+                                foreign_keys='Task.bed_id', lazy=True)
 
     def __repr__(self):
         return f'<GardenBed {self.name}>'
@@ -104,6 +113,13 @@ class PlantLibrary(db.Model):
     how_to_grow = db.Column(db.Text)          # JSON {starting,seedling,vegetative,flowering,harvest}
     faqs = db.Column(db.Text)                 # JSON [{q,a}]
     nutrition = db.Column(db.Text)            # JSON nutrition data
+    # Permapeople (CC BY-SA 4.0 — https://permapeople.org)
+    permapeople_id          = db.Column(db.Integer, nullable=True)
+    permapeople_link        = db.Column(db.String(200), nullable=True)
+    permapeople_description = db.Column(db.Text, nullable=True)
+    family                  = db.Column(db.String(100), nullable=True)
+    layer                   = db.Column(db.String(100), nullable=True)
+    edible_parts            = db.Column(db.String(200), nullable=True)
 
     def __repr__(self):
         return f'<PlantLibrary {self.name}>'
@@ -115,7 +131,28 @@ class Task(db.Model):
     description = db.Column(db.Text)
     due_date = db.Column(db.Date)
     completed = db.Column(db.Boolean, default=False, nullable=False)
+    completed_date = db.Column(db.Date, nullable=True)
+    task_type = db.Column(db.String(30), nullable=False, default='other')
+    # task_type values: seeding, transplanting, weeding, watering, fertilizing, mulching, harvest, other
     plant_id = db.Column(db.Integer, db.ForeignKey('plant.id'), nullable=True)
+    garden_id = db.Column(db.Integer, db.ForeignKey('garden.id'), nullable=True)
+    bed_id = db.Column(db.Integer, db.ForeignKey('garden_bed.id'), nullable=True)
 
     def __repr__(self):
         return f'<Task {self.title}>'
+
+
+class WeatherLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    garden_id = db.Column(db.Integer, db.ForeignKey('garden.id'), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    rainfall_in = db.Column(db.Float, nullable=True)
+    temp_high_f = db.Column(db.Float, nullable=True)
+    temp_low_f = db.Column(db.Float, nullable=True)
+    source = db.Column(db.String(10), nullable=False, default='manual')
+    # source: 'manual' or 'api'
+    __table_args__ = (db.UniqueConstraint('garden_id', 'date',
+                                          name='uq_weatherlog_garden_date'),)
+
+    def __repr__(self):
+        return f'<WeatherLog garden={self.garden_id} date={self.date}>'

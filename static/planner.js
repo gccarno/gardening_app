@@ -678,15 +678,13 @@ let loadPanelData = () => {}; // set below; allows plant care panel to trigger i
     loadPanelData = function() {
         if (!gd) return;
         renderGardenInfo();
+        loadTasks();
         if (gd.latitude) {
             loadWeather();
-            loadTasks();
         } else {
             const noLoc = '<p class="rp-muted" style="margin-top:0.4rem;">No location set. <a href="/gardens/' + gd.id + '" style="color:#3a6b35;">Set location →</a></p>';
             const wEl = document.getElementById('rp-weather-loading');
             if (wEl) wEl.outerHTML = noLoc;
-            const tEl = document.getElementById('rp-tasks-loading');
-            if (tEl) tEl.outerHTML = noLoc;
         }
     };
 
@@ -744,6 +742,10 @@ let loadPanelData = () => {}; // set below; allows plant care panel to trigger i
         const location = [gd.city, gd.state].filter(Boolean).join(', ') + (gd.zip_code ? ' ' + gd.zip_code : '');
         if (location.trim()) html += `<div class="rp-info-row"><span class="rp-info-label">Location</span>${escapeHtml(location)}</div>`;
         html += `<div class="rp-info-row"><span class="rp-info-label">Unit</span>${escapeHtml(gd.unit)}</div>`;
+        if (gd.last_frost_date) html += `<div class="rp-info-row"><span class="rp-info-label">Last frost</span>${escapeHtml(gd.last_frost_date)}</div>`;
+        if (gd.rainfall_7d && gd.rainfall_7d.days_with_data > 0) {
+            html += `<div class="rp-info-row"><span class="rp-info-label">7-day rain</span>${gd.rainfall_7d.total_in}"</div>`;
+        }
         html += `<div style="margin-top:0.4rem;"><a href="/gardens/${gd.id}" style="font-size:0.78rem;color:#3a6b35;">✎ Edit garden →</a></div>`;
         el.innerHTML = html;
     }
@@ -800,8 +802,11 @@ let loadPanelData = () => {}; // set below; allows plant care panel to trigger i
             list.innerHTML = tasks.map(t => {
                 const due = t.due_date ? `Due ${fmtDate(t.due_date)}` : '';
                 const plant = t.plant_name ? ` · ${escapeHtml(t.plant_name)}` : '';
+                const typeTag = (t.task_type && t.task_type !== 'other')
+                    ? `<span style="font-size:0.72rem;background:#e8f5e8;padding:1px 5px;border-radius:3px;margin-right:4px;">${escapeHtml(t.task_type)}</span>`
+                    : '';
                 return `<div class="rp-task-item">
-                    <div class="rp-task-title">${escapeHtml(t.title)}</div>
+                    <div class="rp-task-title">${typeTag}${escapeHtml(t.title)}</div>
                     <div class="rp-task-meta">${due}${plant}</div>
                 </div>`;
             }).join('');

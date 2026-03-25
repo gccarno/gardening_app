@@ -63,9 +63,70 @@
         <option value="m" {% if garden.unit == 'm' %}selected{% endif %}>Meters (m)</option>
       </select>
     </label>
+    <label>Last Frost Date
+      <input type="date" name="last_frost_date" value="{{ garden.last_frost_date or '' }}">
+    </label>
+    <label>Water Every (days)
+      <input type="number" name="watering_frequency_days" min="1" max="30"
+             value="{{ garden.watering_frequency_days or 7 }}">
+    </label>
+    <label>Water Source
+      <select name="water_source">
+        <option value="">— Not set —</option>
+        <option value="rain" {% if garden.water_source == 'rain' %}selected{% endif %}>Rain only</option>
+        <option value="hose" {% if garden.water_source == 'hose' %}selected{% endif %}>Hose</option>
+        <option value="drip" {% if garden.water_source == 'drip' %}selected{% endif %}>Drip irrigation</option>
+        <option value="sprinkler" {% if garden.water_source == 'sprinkler' %}selected{% endif %}>Sprinkler</option>
+      </select>
+    </label>
     <button type="submit">Save Changes</button>
   </form>
 </details>
+
+{# ── Rainfall & Watering ──────────────────────────────────────────────── #}
+{% if garden.latitude %}
+<section>
+  <h2>Rainfall &amp; Watering</h2>
+  <div id="rainfall-summary">
+    <p>
+      <strong>7-day rainfall:</strong> {{ rainfall_7d.total_in }}"
+      <span class="muted">({{ rainfall_7d.days_with_data }} days of data)</span>
+      &nbsp;&nbsp;
+      <strong>14-day:</strong> {{ rainfall_14d.total_in }}"
+    </p>
+    {% set need = 1.0 %}
+    {% if rainfall_7d.total_in >= need %}
+    <p class="muted">Rain has covered your watering needs this week.</p>
+    {% elif rainfall_7d.total_in >= 0.5 %}
+    <p class="muted">Moderate rainfall — consider supplemental watering.</p>
+    {% else %}
+    <p class="muted">Low rainfall — plants likely need watering.</p>
+    {% endif %}
+    {% if garden.water_source %}
+    <p class="muted">Water source: {{ garden.water_source }}{% if garden.watering_frequency_days %}, every {{ garden.watering_frequency_days }} day(s){% endif %}.</p>
+    {% endif %}
+    {% if garden.last_frost_date %}
+    <p class="muted">Last frost date: {{ garden.last_frost_date }}.</p>
+    {% endif %}
+  </div>
+  <div class="actions">
+    <button id="btn-fetch-weather">Fetch Weather History</button>
+    <span id="fetch-weather-result" class="muted"></span>
+  </div>
+</section>
+{% endif %}
+
+{# ── Bulk Care ────────────────────────────────────────────────────────── #}
+<section>
+  <h2>Bulk Care</h2>
+  <p class="muted">Mark all plants in all beds as cared for today:</p>
+  <div class="actions">
+    <button id="btn-bulk-water">Water All</button>
+    <button id="btn-bulk-fertilize">Fertilize All</button>
+    <button id="btn-bulk-mulch">Mulch All</button>
+  </div>
+  <div id="bulk-result" class="muted"></div>
+</section>
 
 {# ── Beds ────────────────────────────────────────────────────────────── #}
 <h2>Beds in this Garden</h2>
@@ -99,6 +160,62 @@
 </div>
 
 <p><a href="{{ url_for('gardens') }}">← Back to Gardens</a></p>
+
+<script>
+const GARD_ID = {{ garden.id }};
+
+{% if garden.latitude %}
+document.getElementById('btn-fetch-weather').addEventListener('click', async function() {
+  const resultEl = document.getElementById('fetch-weather-result');
+  this.disabled = true;
+  resultEl.textContent = 'Fetching…';
+  try {
+    const r = await fetch(`/api/gardens/${GARD_ID}/fetch-weather`, { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      resultEl.textContent = `Saved ${d.days_saved} days. 7-day rainfall: ${d.rainfall_7d.total_in}".`;
+      // Update the displayed rainfall numbers without page reload
+      const summary = document.getElementById('rainfall-summary');
+      if (summary && d.rainfall_7d) {
+        summary.querySelector('strong').nextSibling.textContent = `${d.rainfall_7d.total_in}"`;
+      }
+    } else {
+      resultEl.textContent = d.error || 'Error fetching weather.';
+    }
+  } catch(e) {
+    resultEl.textContent = 'Request failed.';
+  }
+  this.disabled = false;
+});
+{% endif %}
+
+['water','fertilize','mulch'].forEach(action => {
+  const btn = document.getElementById(`btn-bulk-${action}`);
+  if (!btn) return;
+  btn.addEventListener('click', async function() {
+    const resultEl = document.getElementById('bulk-result');
+    this.disabled = true;
+    resultEl.textContent = 'Updating…';
+    try {
+      const r = await fetch(`/api/gardens/${GARD_ID}/bulk-care`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ action }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        const label = action === 'water' ? 'Watered' : action === 'fertilize' ? 'Fertilized' : 'Mulched';
+        resultEl.textContent = `${label} ${d.updated} plant(s). Task recorded.`;
+      } else {
+        resultEl.textContent = d.error || 'Error.';
+      }
+    } catch(e) {
+      resultEl.textContent = 'Request failed.';
+    }
+    this.disabled = false;
+  });
+});
+</script>
 
 {% if garden.latitude %}
 <script>
