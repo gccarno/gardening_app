@@ -1,7 +1,9 @@
 """Populate extended plant library data for all 44 plants."""
+import os
 import sqlite3, json
 
-DB = 'instance/garden.db'
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB = os.path.join(_REPO_ROOT, 'apps', 'api', 'instance', 'garden.db')
 
 # Each entry keyed by plant name (must match plant_library.name exactly)
 # sow_indoor_weeks: weeks before last spring frost to start indoors (None = no indoor start)

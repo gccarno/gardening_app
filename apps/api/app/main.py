@@ -5,7 +5,7 @@ import requests as http
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from werkzeug.utils import secure_filename
-from models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, WeatherLog, CanvasPlant
+from .db.models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, WeatherLog, CanvasPlant
 
 load_dotenv()
 
@@ -126,7 +126,14 @@ def _seed_library():
 
 
 def create_app():
-    app = Flask(__name__)
+    _here     = os.path.dirname(os.path.abspath(__file__))   # apps/api/app/
+    _api_root = os.path.dirname(_here)                        # apps/api/
+    app = Flask(
+        __name__,
+        static_folder=os.path.join(_api_root, 'static'),
+        template_folder=os.path.join(_api_root, 'templates'),
+        instance_path=os.path.join(_api_root, 'instance'),
+    )
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///garden.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 

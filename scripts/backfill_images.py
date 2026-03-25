@@ -7,12 +7,16 @@ import os
 import sys
 import time
 
+# Add apps/api to sys.path so the 'app' package is importable
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'api'))
+
 from dotenv import load_dotenv
 load_dotenv()
 
 import requests
-from app import create_app
-from models import db, PlantLibrary
+from app.main import create_app
+from app.db.models import db, PlantLibrary
 
 PERENUAL_KEY = os.getenv('PERENUAL_API_KEY', '')
 if not PERENUAL_KEY:
