@@ -415,9 +415,10 @@ def create_app():
     @app.route('/beds/<int:bed_id>/delete', methods=['POST'])
     def delete_bed(bed_id):
         bed = GardenBed.query.get_or_404(bed_id)
+        next_url = request.form.get('next') or url_for('beds')
         db.session.delete(bed)
         db.session.commit()
-        return redirect(url_for('beds'))
+        return redirect(next_url)
 
     @app.route('/api/beds/<int:bed_id>/delete', methods=['POST'])
     def api_delete_bed(bed_id):
@@ -564,9 +565,10 @@ def create_app():
     @app.route('/plants/<int:plant_id>/delete', methods=['POST'])
     def delete_plant(plant_id):
         plant = Plant.query.get_or_404(plant_id)
+        next_url = request.form.get('next') or url_for('plants')
         db.session.delete(plant)
         db.session.commit()
-        return redirect(url_for('plants'))
+        return redirect(next_url)
 
     @app.route('/api/plants/<int:plant_id>/delete', methods=['POST'])
     def api_delete_plant(plant_id):
@@ -1008,6 +1010,8 @@ def create_app():
         entry = plant.library_entry
         return jsonify({
             'ok': True, 'id': bp.id,
+            'plant_id': plant.id,
+            'library_id': plant.library_id,
             'plant_name': plant.name,
             'image_filename': entry.image_filename if entry else None,
             'spacing_in': entry.spacing_in if entry and entry.spacing_in else 12,

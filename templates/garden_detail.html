@@ -75,6 +75,11 @@
   <li class="card">
     <a href="{{ url_for('bed_detail', bed_id=bed.id) }}">{{ bed.name }}</a>
     <span class="muted">{{ bed.width_ft }}×{{ bed.height_ft }} {{ garden.unit }}</span>
+    <form method="post" action="{{ url_for('delete_bed', bed_id=bed.id) }}" style="margin-left:auto;"
+          onsubmit="return confirm('Delete bed {{ bed.name }}? This will remove all plants placed in it.')">
+      <input type="hidden" name="next" value="{{ url_for('garden_detail', garden_id=garden.id) }}">
+      <button type="submit" class="btn-danger btn-small">Delete</button>
+    </form>
   </li>
   {% endfor %}
 </ul>

@@ -319,6 +319,10 @@ canvas.addEventListener('drop', async (e) => {
                     const sIn = result.spacing_in || spacingIn;
                     renderChipInGrid(grid, result.id, cx, cy, result.plant_name, result.image_filename, sIn);
                     updateBedPlantsData(grid.closest('.canvas-bed'), result.id, result.plant_name, result.image_filename, sIn, gridX, gridY);
+                    // If dragged from library (creates a new Plant), add it to the sidebar
+                    if (dragState && dragState.libraryId && result.plant_id) {
+                        addPlantToGardenPalette(result.plant_id, result.library_id, result.plant_name, result.image_filename, sIn);
+                    }
                 }
             }
         }
@@ -359,7 +363,7 @@ canvas.addEventListener('drop', async (e) => {
 });
 
 // ── Plant palette drag start ──────────────────────────────────────────────────
-document.querySelectorAll('.palette-plant').forEach(el => {
+function bindPalettePlantDrag(el) {
     el.addEventListener('dragstart', (e) => {
         e.stopPropagation();
         dragState = {
@@ -372,11 +376,56 @@ document.querySelectorAll('.palette-plant').forEach(el => {
         };
         e.dataTransfer.effectAllowed = 'copy';
     });
-
     if (el.tagName === 'SUMMARY') {
         el.addEventListener('click', (e) => { if (dragState) e.preventDefault(); });
     }
-});
+}
+document.querySelectorAll('.palette-plant').forEach(bindPalettePlantDrag);
+
+// ── Add a newly-created plant to the "Plants in this Garden" sidebar ──────────
+function addPlantToGardenPalette(plantId, libraryId, name, imageFilename, spacingIn) {
+    // Find or create the palette list
+    let list = document.getElementById('palette-garden-plants');
+    if (!list) {
+        // No plants yet — the template rendered a <p> instead of a <ul>
+        const section = document.querySelector('.sidebar-section details');
+        if (!section) return;
+        const noMsg = section.querySelector('p.muted');
+        list = document.createElement('ul');
+        list.className = 'palette-list';
+        list.id = 'palette-garden-plants';
+        list.style.marginTop = '0.4rem';
+        if (noMsg) noMsg.replaceWith(list);
+        else section.appendChild(list);
+        // Re-attach the event-delegation delete handler for this new list
+        list.addEventListener('click', gardenPlantDeleteHandler);
+    }
+
+    const imgHtml = imageFilename
+        ? `<img src="/static/plant_images/${imageFilename}" class="palette-plant-img" alt="${escapeHtml(name)}">`
+        : `<span class="palette-plant-img palette-plant-img--empty">🌱</span>`;
+    const infoHref = libraryId
+        ? `/library/${libraryId}?back=${encodeURIComponent(window.location.pathname)}`
+        : null;
+    const infoBtn = infoHref
+        ? `<a class="palette-info-btn" href="${infoHref}" title="View plant info" draggable="false">ℹ</a>`
+        : '';
+
+    const li = document.createElement('li');
+    li.className = 'palette-item palette-plant';
+    li.setAttribute('draggable', 'true');
+    li.dataset.plantId   = plantId;
+    li.dataset.libraryId = libraryId || '';
+    li.dataset.name      = name;
+    li.dataset.image     = imageFilename || '';
+    li.dataset.spacing   = spacingIn;
+    li.innerHTML = `${imgHtml}<span class="palette-plant-name">${escapeHtml(name)}</span>`
+                 + `<span class="palette-type">Unplaced</span>`
+                 + infoBtn
+                 + `<button class="palette-delete-btn" data-plant-id="${plantId}" title="Delete plant" draggable="false">×</button>`;
+    bindPalettePlantDrag(li);
+    list.appendChild(li);
+}
 
 // ── Bed palette drag start ────────────────────────────────────────────────────
 document.querySelectorAll('.palette-bed').forEach(el => {
@@ -455,7 +504,7 @@ function bindBedHeaderDelete(btn) {
 document.querySelectorAll('.bed-header-delete').forEach(bindBedHeaderDelete);
 
 // ── Delete garden plant from sidebar ─────────────────────────────────────────
-document.getElementById('palette-garden-plants')?.addEventListener('click', async (e) => {
+async function gardenPlantDeleteHandler(e) {
     const btn = e.target.closest('.palette-delete-btn');
     if (!btn) return;
     e.stopPropagation();
@@ -466,7 +515,6 @@ document.getElementById('palette-garden-plants')?.addEventListener('click', asyn
     const result = await api('POST', `/api/plants/${plantId}/delete`);
     if (result.ok) {
         const li = btn.closest('li');
-        // If inside a group, check if the group is now empty
         const groupDetails = li.closest('details');
         if (groupDetails) {
             const remaining = groupDetails.querySelectorAll('.palette-instance');
@@ -479,7 +527,8 @@ document.getElementById('palette-garden-plants')?.addEventListener('click', asyn
             li.remove();
         }
     }
-});
+}
+document.getElementById('palette-garden-plants')?.addEventListener('click', gardenPlantDeleteHandler);
 
 // ── Plant search filter ───────────────────────────────────────────────────────
 const plantSearch = document.getElementById('plant-search');

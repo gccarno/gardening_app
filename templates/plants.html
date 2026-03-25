@@ -73,11 +73,18 @@
         {% endif %}
         {% if plant.notes %}<span class="muted" style="font-size:0.8rem;">{{ plant.notes }}</span>{% endif %}
       </div>
-      <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}" style="margin-left:auto;">
-        <input type="hidden" name="status" value="growing">
-        <input type="hidden" name="garden_id" value="{{ garden_id or '' }}">
-        <button type="submit" class="btn-small" title="Mark as planted today">Plant now →</button>
-      </form>
+      <div style="margin-left:auto;display:flex;gap:0.4rem;align-items:center;">
+        <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}">
+          <input type="hidden" name="status" value="growing">
+          <input type="hidden" name="garden_id" value="{{ garden_id or '' }}">
+          <button type="submit" class="btn-small" title="Mark as planted today">Plant now →</button>
+        </form>
+        <form method="post" action="{{ url_for('delete_plant', plant_id=plant.id) }}"
+              onsubmit="return confirm('Delete {{ plant.name }}?')">
+          <input type="hidden" name="next" value="{{ url_for('plants', tab='planning', garden_id=garden_id or '') }}">
+          <button type="submit" class="btn-danger btn-small">Delete</button>
+        </form>
+      </div>
     </li>
     {% endfor %}
   </ul>
@@ -140,11 +147,18 @@
         </span>
         {% endif %}
       </div>
-      <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}" style="margin-left:auto;">
-        <input type="hidden" name="status" value="planning">
-        <input type="hidden" name="garden_id" value="{{ garden_id or '' }}">
-        <button type="submit" class="btn-small btn-link" title="Move back to planning">← Planning</button>
-      </form>
+      <div style="margin-left:auto;display:flex;gap:0.4rem;align-items:center;">
+        <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}">
+          <input type="hidden" name="status" value="planning">
+          <input type="hidden" name="garden_id" value="{{ garden_id or '' }}">
+          <button type="submit" class="btn-small btn-link" title="Move back to planning">← Planning</button>
+        </form>
+        <form method="post" action="{{ url_for('delete_plant', plant_id=plant.id) }}"
+              onsubmit="return confirm('Delete {{ plant.name }}?')">
+          <input type="hidden" name="next" value="{{ url_for('plants', tab='growing', garden_id=garden_id or '') }}">
+          <button type="submit" class="btn-danger btn-small">Delete</button>
+        </form>
+      </div>
     </li>
     {% endfor %}
   </ul>
