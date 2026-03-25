@@ -15,6 +15,5 @@ dev = ["pytest", "ruff"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.uv]
+package = false
