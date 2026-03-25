@@ -151,6 +151,20 @@ def create_app():
             if 'annotations' not in cols:
                 conn.execute(db.text("ALTER TABLE garden ADD COLUMN annotations TEXT"))
                 conn.commit()
+            bed_cols = [row[1] for row in conn.execute(db.text("PRAGMA table_info(garden_bed)"))]
+            for col, ddl in [
+                ('soil_ph',     'ALTER TABLE garden_bed ADD COLUMN soil_ph FLOAT'),
+                ('clay_pct',    'ALTER TABLE garden_bed ADD COLUMN clay_pct FLOAT'),
+                ('compost_pct', 'ALTER TABLE garden_bed ADD COLUMN compost_pct FLOAT'),
+                ('sand_pct',    'ALTER TABLE garden_bed ADD COLUMN sand_pct FLOAT'),
+            ]:
+                if col not in bed_cols:
+                    conn.execute(db.text(ddl))
+                    conn.commit()
+            bp_cols = [row[1] for row in conn.execute(db.text("PRAGMA table_info(bed_plant)"))]
+            if 'stage' not in bp_cols:
+                conn.execute(db.text("ALTER TABLE bed_plant ADD COLUMN stage VARCHAR(20)"))
+                conn.commit()
 
     # --- Dashboard ---
 
@@ -697,6 +711,14 @@ def create_app():
         bed.description = request.form.get('description')
         bed.depth_ft = float(depth) if depth else None
         bed.soil_notes = request.form.get('soil_notes')
+        soil_ph = request.form.get('soil_ph')
+        bed.soil_ph = float(soil_ph) if soil_ph else None
+        clay_pct = request.form.get('clay_pct')
+        bed.clay_pct = float(clay_pct) if clay_pct else None
+        compost_pct = request.form.get('compost_pct')
+        bed.compost_pct = float(compost_pct) if compost_pct else None
+        sand_pct = request.form.get('sand_pct')
+        bed.sand_pct = float(sand_pct) if sand_pct else None
         db.session.commit()
         return redirect(url_for('bed_detail', bed_id=bed.id))
 
@@ -1400,8 +1422,33 @@ def create_app():
             if 'planted_date'    in data: bp.plant.planted_date    = _d(data['planted_date'])
             if 'transplant_date' in data: bp.plant.transplant_date = _d(data['transplant_date'])
             if 'plant_notes'     in data: bp.plant.notes           = data['plant_notes'] or None
+        if 'stage' in data: bp.stage = data['stage'] or None
         db.session.commit()
         return jsonify({'ok': True})
+
+    @app.route('/api/bedplants/bulk-care', methods=['POST'])
+    def api_bedplants_bulk_care():
+        data = request.get_json(force=True)
+        ids = data.get('ids', [])
+        def _d(val):
+            return date.fromisoformat(val) if val else None
+        updated = 0
+        for bp_id in ids:
+            bp = BedPlant.query.get(bp_id)
+            if not bp:
+                continue
+            if 'last_watered'    in data: bp.last_watered    = _d(data['last_watered'])
+            if 'last_fertilized' in data: bp.last_fertilized = _d(data['last_fertilized'])
+            if 'last_harvest'    in data: bp.last_harvest    = _d(data['last_harvest'])
+            if 'health_notes'    in data: bp.health_notes    = data['health_notes'] or None
+            if 'stage'           in data: bp.stage           = data['stage'] or None
+            if bp.plant:
+                if 'planted_date'    in data: bp.plant.planted_date    = _d(data['planted_date'])
+                if 'transplant_date' in data: bp.plant.transplant_date = _d(data['transplant_date'])
+                if 'plant_notes'     in data: bp.plant.notes           = data['plant_notes'] or None
+            updated += 1
+        db.session.commit()
+        return jsonify({'ok': True, 'updated': updated})
 
     @app.route('/api/bedplants/<int:bp_id>')
     def api_bedplant_detail(bp_id):
@@ -1425,6 +1472,7 @@ def create_app():
             'last_fertilized': bp.last_fertilized.isoformat() if bp.last_fertilized else None,
             'last_harvest':    bp.last_harvest.isoformat()    if bp.last_harvest    else None,
             'health_notes':    bp.health_notes or '',
+            'stage':           bp.stage or 'seedling',
         })
 
     @app.route('/api/plants/<int:plant_id>/detail')

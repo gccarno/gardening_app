@@ -1002,3 +1002,140 @@ details:not([open]) > .sidebar-label--collapsible::before {
 .planner-sidebar { flex-shrink: 0; min-width: 0; overflow-x: hidden; }
 .planner-sidebar.collapsed { width: 0 !important; padding: 0; border-right-color: transparent; }
 .planner-right-panel { min-width: 0 !important; }
+
+/* ── Multi-select plant highlights ─────────────────────────────────────────── */
+.grid-plant-chip.chip-multi-selected {
+  outline: 3px solid #4a90d9;
+  outline-offset: 1px;
+  z-index: 3;
+}
+.canvas-plant-circle.circle-multi-selected {
+  outline: 3px solid #4a90d9;
+  outline-offset: 2px;
+  z-index: 3;
+}
+
+/* ── Stage badges on chips ───────────────────────────────────────────────────*/
+.chip-stage-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 0.55rem;
+  padding: 1px 3px;
+  border-radius: 3px;
+  font-weight: 700;
+  line-height: 1.2;
+  pointer-events: none;
+}
+.chip-stage-badge.stage-seedling  { background: #c8f0c0; color: #2d5a1b; }
+.chip-stage-badge.stage-growing   { background: #a0d4c8; color: #1a4a40; }
+.chip-stage-badge.stage-harvesting{ background: #f0d080; color: #5a3a00; }
+.chip-stage-badge.stage-done      { background: #d0d0d0; color: #555; }
+
+/* ── Navigate (pan) mode cursor ─────────────────────────────────────────────*/
+.planner-canvas-wrap.navigate-mode { cursor: grab; }
+.planner-canvas-wrap.navigate-mode.panning { cursor: grabbing; }
+
+/* ── Selection count badge ──────────────────────────────────────────────────*/
+.selection-count-badge {
+  margin-left: 0.4rem;
+  background: #4a90d9;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  vertical-align: middle;
+}
+
+/* ── Select-all checkbox label ──────────────────────────────────────────────*/
+.select-all-label {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.35rem;
+  cursor: pointer;
+}
+.select-all-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  width: 13px;
+  height: 13px;
+}
+
+/* ── Bulk care panel quick buttons ──────────────────────────────────────────*/
+.rp-bulk-quick-btns {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.bulk-quick-btn {
+  flex: 1;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.4rem;
+  white-space: nowrap;
+}
+
+/* ── Soil mix row (bed detail) ──────────────────────────────────────────────*/
+.soil-mix-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.soil-mix-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Info tip (ⓘ icon with tooltip) ────────────────────────────────────────*/
+.info-tip {
+  display: inline-block;
+  cursor: help;
+  color: #3a6b35;
+  font-size: 0.85rem;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+/* ── Help modal ──────────────────────────────────────────────────────────────*/
+.help-modal-box {
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+.help-table td {
+  padding: 0.25rem 0.4rem;
+  vertical-align: top;
+  border-bottom: 1px solid #e8f0e8;
+}
+.help-table td:first-child {
+  white-space: nowrap;
+  font-weight: 600;
+  width: 38%;
+  color: #2d5a1b;
+}
+.help-table kbd {
+  display: inline-block;
+  background: #f0f4f0;
+  border: 1px solid #b0c8b0;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  line-height: 1.4;
+}
+.help-list {
+  margin: 0 0 0.5rem 0;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+}
+.help-list li {
+  margin-bottom: 0.25rem;
+  line-height: 1.4;
+}

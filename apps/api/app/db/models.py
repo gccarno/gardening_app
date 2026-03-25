@@ -43,6 +43,10 @@ class GardenBed(db.Model):
     pos_x = db.Column(db.Float, nullable=False, default=0.0)
     pos_y = db.Column(db.Float, nullable=False, default=0.0)
     soil_notes = db.Column(db.Text, nullable=True)
+    soil_ph = db.Column(db.Float, nullable=True)
+    clay_pct = db.Column(db.Float, nullable=True)
+    compost_pct = db.Column(db.Float, nullable=True)
+    sand_pct = db.Column(db.Float, nullable=True)
     bed_plants = db.relationship('BedPlant', backref='bed', lazy=True, cascade='all, delete-orphan')
     bed_tasks = db.relationship('Task', backref='task_bed',
                                 foreign_keys='Task.bed_id', lazy=True)
@@ -80,6 +84,7 @@ class BedPlant(db.Model):
     last_fertilized = db.Column(db.Date, nullable=True)
     last_harvest = db.Column(db.Date, nullable=True)
     health_notes = db.Column(db.Text, nullable=True)
+    stage = db.Column(db.String(20), nullable=True, default='seedling')
 
     def __repr__(self):
         return f'<BedPlant bed={self.bed_id} plant={self.plant_id}>'

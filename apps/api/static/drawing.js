@@ -373,12 +373,16 @@ document.querySelectorAll('.draw-tool-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const tool = btn.dataset.tool;
         if (activeTool === tool) {
+            // Toggle off: deactivate and restore select mode
             deactivateTool();
+            setCanvasMode('select');
             return;
         }
-        // Cancel any in-progress draw before switching
+        // Cancel any in-progress draw before switching tools
         if (drawState && drawState.el) drawState.el.remove();
         drawState  = null;
+        // Switch planner to 'draw' mode: clears select/navigate button highlights, disables panning
+        setCanvasMode('draw');
         activeTool = tool;
         document.querySelectorAll('.draw-tool-btn').forEach(b =>
             b.classList.toggle('active', b === btn));
@@ -388,9 +392,12 @@ document.querySelectorAll('.draw-tool-btn').forEach(btn => {
     });
 });
 
-// Escape deactivates
+// Escape deactivates draw tool and restores select mode
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && activeTool) deactivateTool();
+    if (e.key === 'Escape' && activeTool) {
+        deactivateTool();
+        setCanvasMode('select');
+    }
 });
 
 // SVG mouse events

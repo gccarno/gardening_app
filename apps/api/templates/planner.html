@@ -51,8 +51,12 @@
     <div class="sidebar-section">
       <details open>
         <summary class="sidebar-label sidebar-label--collapsible">
+          <label class="select-all-label" title="Select all plants (Ctrl+A)" onclick="event.stopPropagation()">
+            <input type="checkbox" id="select-all-plants">
+          </label>
           Plants in this Garden
           {% if garden_plant_groups %}<span class="tab-count" style="margin-left:0.4rem;">{{ garden_plant_groups|length }}</span>{% endif %}
+          <span id="selection-count-badge" class="selection-count-badge" style="display:none;"></span>
         </summary>
         {% if garden_plant_groups %}
         <ul class="palette-list" id="palette-garden-plants" style="margin-top:0.4rem;">
@@ -216,10 +220,14 @@
       </div>
       <span class="toolbar-sep">|</span>
       <span class="toolbar-label" style="margin:0;">Zoom:</span>
-      <button id="zoom-out-btn" class="toolbar-btn" title="Zoom out">−</button>
+      <button id="zoom-out-btn" class="toolbar-btn" title="Zoom out (-)">−</button>
       <span id="zoom-display" style="min-width:2.8rem;text-align:center;font-size:0.82rem;font-weight:600;color:#3a5c37;">100%</span>
-      <button id="zoom-in-btn" class="toolbar-btn" title="Zoom in">+</button>
+      <button id="zoom-in-btn" class="toolbar-btn" title="Zoom in (+)">+</button>
+      <span class="toolbar-sep">|</span>
+      <button id="mode-select-btn" class="toolbar-btn active" title="Select mode — click to select plants (S)">↖ Select</button>
+      <button id="mode-navigate-btn" class="toolbar-btn" title="Navigate mode — drag to pan canvas (N)">🧭 Pan</button>
       <button id="right-panel-toggle" class="toolbar-btn" title="Toggle info panel">&#9432; Info</button>
+      <button id="btn-help" class="toolbar-btn" title="Help (H)">? Help</button>
       <button id="refresh-btn" class="toolbar-btn" title="Refresh page" onclick="location.reload()">↺ Refresh</button>
     </div>
     <div id="canvas-sizer">
@@ -244,7 +252,8 @@
           'grid_y': bp.grid_y if bp.grid_y is not none else -1,
           'name': bp.plant.name if bp.plant else '?',
           'image': entry.image_filename if (entry and entry.image_filename) else '',
-          'spacing_in': entry.spacing_in if (entry and entry.spacing_in) else 12
+          'spacing_in': entry.spacing_in if (entry and entry.spacing_in) else 12,
+          'stage': bp.stage or 'seedling'
         }) %}
       {% endfor %}
       <div class="canvas-bed"
@@ -298,6 +307,14 @@
         <input type="hidden" id="rp-care-plant-id">
         <label>Seed Date        <input type="date" id="rp-care-seeded"></label>
         <label>Transplant Date  <input type="date" id="rp-care-transplanted"></label>
+        <label class="rp-bed-field">Stage
+          <select id="rp-care-stage">
+            <option value="seedling">🌱 Seedling</option>
+            <option value="growing">🌿 Growing</option>
+            <option value="harvesting">🥕 Harvesting</option>
+            <option value="done">✓ Done</option>
+          </select>
+        </label>
         <label class="rp-bed-field">Last Watered    <input type="date" id="rp-care-watered"></label>
         <label class="rp-bed-field">Last Fertilized <input type="date" id="rp-care-fertilized"></label>
         <label class="rp-bed-field">Last Harvest    <input type="date" id="rp-care-harvested"></label>
@@ -306,6 +323,38 @@
         <div class="rp-care-actions">
           <button type="submit" class="rp-care-save">Save</button>
           <span id="rp-care-saved" style="display:none" class="rp-muted">Saved ✓</span>
+        </div>
+      </form>
+    </div>
+
+    <!-- Bulk Care (shown when 2+ plants are selected) -->
+    <div class="rp-section" id="rp-bulk-care-section" style="display:none">
+      <div class="rp-plant-care-header">
+        <span class="rp-care-name">Bulk Update — <span id="bulk-count">0</span> plants</span>
+        <button id="rp-bulk-close" class="rp-care-close" title="Deselect all">×</button>
+      </div>
+      <div class="rp-bulk-quick-btns">
+        <button id="bulk-mark-watered-btn" class="toolbar-btn bulk-quick-btn">💧 Watered Today</button>
+        <button id="bulk-mark-growing-btn" class="toolbar-btn bulk-quick-btn">🌿 Mark as Growing</button>
+      </div>
+      <form id="rp-bulk-form" class="rp-care-form">
+        <label>Stage
+          <select id="bulk-stage">
+            <option value="">(no change)</option>
+            <option value="seedling">🌱 Seedling</option>
+            <option value="growing">🌿 Growing</option>
+            <option value="harvesting">🥕 Harvesting</option>
+            <option value="done">✓ Done</option>
+          </select>
+        </label>
+        <label>Last Watered    <input type="date" id="bulk-watered"></label>
+        <label>Last Fertilized <input type="date" id="bulk-fertilized"></label>
+        <label>Seeded Date     <input type="date" id="bulk-seeded"></label>
+        <label>Transplant Date <input type="date" id="bulk-transplant"></label>
+        <label>Notes (appended to each)<textarea id="bulk-notes" rows="2"></textarea></label>
+        <div class="rp-care-actions">
+          <button type="submit" class="rp-care-save">Update Selected</button>
+          <span id="bulk-saved" style="display:none" class="rp-muted">Saved ✓</span>
         </div>
       </form>
     </div>
@@ -375,6 +424,63 @@
       </details>
     </div>
   </aside>
+</div>
+
+<!-- Help Modal -->
+<div id="help-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box help-modal-box">
+    <div class="modal-header">
+      <span class="sidebar-label" style="margin:0;">Planner Help</span>
+      <button id="help-modal-close" class="rp-care-close" title="Close">×</button>
+    </div>
+
+    <div class="modal-section-label">Toolbar Icons</div>
+    <table class="help-table">
+      <tr><td>Tile size</td><td>Grid resolution per cell (3 in, 6 in, 1 ft, 2 ft)</td></tr>
+      <tr><td>🖼 Background</td><td>Upload a photo or plan as the canvas background</td></tr>
+      <tr><td>▭ ◯ ╱ ✏ ⌫</td><td>Draw tools: annotate with rectangles, ellipses, lines, freehand, or eraser</td></tr>
+      <tr><td>− / +</td><td>Zoom out / in. Also: <kbd>-</kbd> <kbd>+</kbd> keys or <kbd>Ctrl</kbd>+scroll</td></tr>
+      <tr><td>↖ Select</td><td>Select mode: click plants to select, Ctrl+click to multi-select. Hotkey: <kbd>S</kbd></td></tr>
+      <tr><td>🧭 Pan</td><td>Navigate mode: drag canvas background to pan. Hotkey: <kbd>N</kbd></td></tr>
+      <tr><td>ℹ Info</td><td>Toggle the right-side info &amp; care panel</td></tr>
+      <tr><td>? Help</td><td>This help dialog. Hotkey: <kbd>H</kbd></td></tr>
+    </table>
+
+    <div class="modal-section-label" style="margin-top:0.85rem;">Plants</div>
+    <ul class="help-list">
+      <li>Drag from <strong>Plant Library</strong> → bed grid to place in a bed cell</li>
+      <li>Drag from <strong>Plant Library</strong> → open canvas to place as a free circle</li>
+      <li><strong>Click</strong> a placed plant → open care panel (watering, dates, notes)</li>
+      <li><strong>Ctrl+click</strong> multiple plants → bulk update panel appears</li>
+      <li><strong>Select All</strong> checkbox (beside "Plants in this Garden") → select all</li>
+      <li>Click <strong>×</strong> on a chip or circle → remove that plant</li>
+    </ul>
+
+    <div class="modal-section-label" style="margin-top:0.85rem;">Beds</div>
+    <ul class="help-list">
+      <li>Drag from <strong>Beds</strong> palette → canvas to place a bed</li>
+      <li>Drag a placed bed by its <strong>header</strong> to reposition (snaps to 1 ft grid)</li>
+      <li>Click <strong>×</strong> on a bed header → remove the bed from canvas</li>
+    </ul>
+
+    <div class="modal-section-label" style="margin-top:0.85rem;">Keyboard Shortcuts</div>
+    <table class="help-table">
+      <tr><td><kbd>+</kbd> / <kbd>=</kbd></td><td>Zoom in</td></tr>
+      <tr><td><kbd>-</kbd></td><td>Zoom out</td></tr>
+      <tr><td><kbd>0</kbd></td><td>Reset zoom to 100%</td></tr>
+      <tr><td><kbd>S</kbd></td><td>Switch to Select mode</td></tr>
+      <tr><td><kbd>N</kbd></td><td>Switch to Navigate (pan) mode</td></tr>
+      <tr><td><kbd>H</kbd></td><td>Open this help</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all plants</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Deselect all / close panel</td></tr>
+      <tr><td><kbd>Delete</kbd></td><td>Delete selected plant(s)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>scroll</kbd></td><td>Zoom in/out</td></tr>
+    </table>
+
+    <div class="rp-care-actions" style="margin-top:1rem;">
+      <button id="help-modal-close-btn" class="rp-care-save">Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- Add Task Modal -->

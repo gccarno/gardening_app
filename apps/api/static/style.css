@@ -919,3 +919,22 @@ details[open] .faq-q::after { content: '▾'; }
   border-top: 1px solid #e8f0e8;
   margin: 0;
 }
+
+
+/* ── Soil mix row (bed detail form) ─────────────────────────────────────────*/
+.soil-mix-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.soil-mix-row input { flex: 1; min-width: 0; }
+
+/* ── Info tip icon ───────────────────────────────────────────────────────────*/
+.info-tip {
+  display: inline-block;
+  cursor: help;
+  color: #3a6b35;
+  font-size: 0.85rem;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}

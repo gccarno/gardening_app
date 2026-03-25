@@ -64,7 +64,7 @@ function buildBedGrid(bedEl) {
         if (bp.grid_x < 0 || bp.grid_y < 0) return;
         const cx = Math.floor(bp.grid_x / tileIn);
         const cy = Math.floor(bp.grid_y / tileIn);
-        renderChipInGrid(grid, bp.id, cx, cy, bp.name, bp.image, bp.spacing_in || 12);
+        renderChipInGrid(grid, bp.id, cx, cy, bp.name, bp.image, bp.spacing_in || 12, bp.stage || 'seedling');
     });
 
     bindGridHover(grid);
@@ -109,7 +109,7 @@ function setDropHighlight(grid, cx, cy, span, highlight) {
 }
 
 // ── Render a plant chip as an absolutely-positioned element in the grid ───────
-function renderChipInGrid(grid, bpId, cx, cy, name, imageFilename, spacingIn) {
+function renderChipInGrid(grid, bpId, cx, cy, name, imageFilename, spacingIn, stage) {
     const tilePx = tileIn * PX_PER_IN;
     const span   = plantSpan(spacingIn);
 
@@ -129,7 +129,12 @@ function renderChipInGrid(grid, bpId, cx, cy, name, imageFilename, spacingIn) {
     const imgHtml = imageFilename
         ? `<img src="/static/plant_images/${imageFilename}" class="chip-img" alt="${escapeHtml(name)}">`
         : `<span class="chip-img chip-img--empty">🌱</span>`;
+    const stageLabels = { seedling: '🌱', growing: '🌿', harvesting: '🥕', done: '✓' };
+    const stageBadge = (stage && stage !== 'seedling')
+        ? `<span class="chip-stage-badge stage-${stage}">${stageLabels[stage] || stage}</span>`
+        : '';
     chip.innerHTML = `${imgHtml}<span class="chip-name">${escapeHtml(name)}</span>`
+                   + stageBadge
                    + `<button class="chip-remove" title="Remove">×</button>`;
 
     chip.querySelector('.chip-remove').addEventListener('click', async (ev) => {
@@ -709,7 +714,7 @@ canvas.addEventListener('drop', async (e) => {
                 const result = await api('POST', `/api/beds/${bedId}/grid-plant`, payload);
                 if (result.ok) {
                     const sIn = result.spacing_in || spacingIn;
-                    renderChipInGrid(grid, result.id, cx, cy, result.plant_name, result.image_filename, sIn);
+                    renderChipInGrid(grid, result.id, cx, cy, result.plant_name, result.image_filename, sIn, 'seedling');
                     updateBedPlantsData(grid.closest('.canvas-bed'), result.id, result.plant_name, result.image_filename, sIn, gridX, gridY);
                     // If dragged from library (creates a new Plant), add it to the sidebar
                     if (dragState && dragState.libraryId && result.plant_id) {
@@ -999,6 +1004,8 @@ function populateCarePanel(d, hasBed) {
         careFertEl.value  = d.last_fertilized || '';
         careHarvest.value = d.last_harvest    || '';
         careHealth.value  = d.health_notes    || '';
+        const stageEl = document.getElementById('rp-care-stage');
+        if (stageEl) stageEl.value = d.stage || 'seedling';
     }
 
     careBpId.value    = d.bp_id    || d.id    || '';
@@ -1055,6 +1062,8 @@ if (careForm) {
             payload.last_fertilized = careFertEl.value  || null;
             payload.last_harvest    = careHarvest.value || null;
             payload.health_notes    = careHealth.value  || null;
+            const stageEl = document.getElementById('rp-care-stage');
+            if (stageEl) payload.stage = stageEl.value || null;
             await api('POST', `/api/bedplants/${bpId}/care`, payload);
         } else if (plantId) {
             await api('POST', `/api/plants/${plantId}/care`, payload);
@@ -1062,6 +1071,21 @@ if (careForm) {
         if (careSaved) {
             careSaved.style.display = '';
             setTimeout(() => { careSaved.style.display = 'none'; }, 2000);
+        }
+        // Update stage badge on the active chip
+        if (hasBed && bpId && payload.stage) {
+            const chip = document.querySelector(`.grid-plant-chip[data-bp-id="${bpId}"]`);
+            if (chip) {
+                let badge = chip.querySelector('.chip-stage-badge');
+                const stageLabels = { seedling: '🌱', growing: '🌿', harvesting: '🥕', done: '✓' };
+                if (payload.stage === 'seedling') {
+                    badge?.remove();
+                } else {
+                    if (!badge) { badge = document.createElement('span'); chip.appendChild(badge); }
+                    badge.className = `chip-stage-badge stage-${payload.stage}`;
+                    badge.textContent = stageLabels[payload.stage] || payload.stage;
+                }
+            }
         }
     });
 }
@@ -1379,3 +1403,390 @@ function updateScaleBar() {
 
     applyZoom(zoom); // apply saved zoom on load
 })();
+
+// ── Navigate / Select mode ────────────────────────────────────────────────────
+let canvasMode = localStorage.getItem('plannerCanvasMode') || 'select';
+const canvasWrap = document.querySelector('.planner-canvas-wrap');
+const modeSelectBtn   = document.getElementById('mode-select-btn');
+const modeNavigateBtn = document.getElementById('mode-navigate-btn');
+
+function setCanvasMode(mode) {
+    canvasMode = mode;
+    // Persist non-draw modes so the preferred mode is restored on next load
+    if (mode === 'select' || mode === 'navigate') {
+        localStorage.setItem('plannerCanvasMode', mode);
+    }
+    // When switching to select or navigate, deactivate any active draw tool
+    if (mode !== 'draw') {
+        // Guard: deactivateTool is defined in drawing.js which loads after this file
+        if (typeof deactivateTool === 'function' &&
+            typeof activeTool !== 'undefined' && activeTool) {
+            deactivateTool();
+        }
+    }
+    if (mode === 'navigate') {
+        canvasWrap && canvasWrap.classList.add('navigate-mode');
+        modeNavigateBtn && modeNavigateBtn.classList.add('active');
+        modeSelectBtn   && modeSelectBtn.classList.remove('active');
+    } else if (mode === 'select') {
+        canvasWrap && canvasWrap.classList.remove('navigate-mode');
+        modeSelectBtn   && modeSelectBtn.classList.add('active');
+        modeNavigateBtn && modeNavigateBtn.classList.remove('active');
+    } else {
+        // 'draw' mode: neither mode button is active, no panning
+        canvasWrap && canvasWrap.classList.remove('navigate-mode');
+        modeSelectBtn   && modeSelectBtn.classList.remove('active');
+        modeNavigateBtn && modeNavigateBtn.classList.remove('active');
+    }
+}
+
+// Navigate: pan on mousedown+drag on canvas background
+if (canvasWrap) {
+    let panStart = null;
+
+    canvasWrap.addEventListener('mousedown', (e) => {
+        if (canvasMode !== 'navigate') return;
+        // Only pan if clicking on background (not on a bed/chip/circle)
+        if (e.target.closest('.canvas-bed, .canvas-plant-circle, .grid-plant-chip')) return;
+        panStart = { x: e.clientX, y: e.clientY, sl: canvasWrap.scrollLeft, st: canvasWrap.scrollTop };
+        canvasWrap.classList.add('panning');
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!panStart) return;
+        const dx = e.clientX - panStart.x;
+        const dy = e.clientY - panStart.y;
+        canvasWrap.scrollLeft = panStart.sl - dx;
+        canvasWrap.scrollTop  = panStart.st - dy;
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!panStart) return;
+        panStart = null;
+        canvasWrap.classList.remove('panning');
+    });
+}
+
+modeSelectBtn?.addEventListener('click', () => setCanvasMode('select'));
+modeNavigateBtn?.addEventListener('click', () => setCanvasMode('navigate'));
+setCanvasMode(canvasMode); // apply on load
+
+// ── Multi-select plants ───────────────────────────────────────────────────────
+// Each entry: { type: 'chip'|'circle', id: bpId|cpId, el: element }
+const selectedPlants = new Map(); // key = 'chip-<bpId>' or 'circle-<cpId>'
+
+function togglePlantSelection(key, entry) {
+    if (selectedPlants.has(key)) {
+        selectedPlants.delete(key);
+        entry.el.classList.remove('chip-multi-selected', 'circle-multi-selected');
+    } else {
+        selectedPlants.set(key, entry);
+        if (entry.type === 'chip') {
+            entry.el.classList.add('chip-multi-selected');
+            entry.el.classList.remove('chip-active');
+        } else {
+            entry.el.classList.add('circle-multi-selected');
+            entry.el.classList.remove('circle-active');
+        }
+    }
+    updateSelectionUI();
+}
+
+function clearSelection() {
+    selectedPlants.forEach(entry => {
+        entry.el.classList.remove('chip-multi-selected', 'circle-multi-selected');
+    });
+    selectedPlants.clear();
+    const cb = document.getElementById('select-all-plants');
+    if (cb) cb.checked = false;
+    updateSelectionUI();
+}
+
+function selectAllPlants() {
+    clearSelection();
+    document.querySelectorAll('.grid-plant-chip').forEach(chip => {
+        const bpId = chip.dataset.bpId;
+        if (!bpId) return;
+        const key = `chip-${bpId}`;
+        selectedPlants.set(key, { type: 'chip', id: bpId, el: chip });
+        chip.classList.add('chip-multi-selected');
+        chip.classList.remove('chip-active');
+    });
+    document.querySelectorAll('.canvas-plant-circle').forEach(circle => {
+        const cpId = circle.dataset.cpId;
+        if (!cpId) return;
+        const key = `circle-${cpId}`;
+        selectedPlants.set(key, { type: 'circle', id: cpId, el: circle });
+        circle.classList.add('circle-multi-selected');
+        circle.classList.remove('circle-active');
+    });
+    const cb = document.getElementById('select-all-plants');
+    if (cb) cb.checked = true;
+    updateSelectionUI();
+}
+
+function updateSelectionUI() {
+    const count = selectedPlants.size;
+    const badge = document.getElementById('selection-count-badge');
+    const bulkSec = document.getElementById('rp-bulk-care-section');
+    const careSec2 = document.getElementById('rp-plant-care-section');
+    const countEl = document.getElementById('bulk-count');
+
+    if (badge) {
+        if (count >= 2) {
+            badge.textContent = `${count} selected`;
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    if (count >= 2) {
+        if (bulkSec) bulkSec.style.display = '';
+        if (careSec2) careSec2.style.display = 'none';
+        if (countEl) countEl.textContent = count;
+        // Ensure right panel is open
+        const panel = document.getElementById('planner-right-panel');
+        const btn   = document.getElementById('right-panel-toggle');
+        if (panel && !panel.classList.contains('open')) {
+            panel.classList.add('open');
+            if (btn) btn.classList.add('active');
+            localStorage.setItem('plannerRightPanel', 'open');
+            if (typeof loadPanelData === 'function') loadPanelData();
+        }
+    } else {
+        if (bulkSec) bulkSec.style.display = 'none';
+        // Only restore careSec if count went to 0 (not 1 — single selection handles its own display)
+        if (count === 0 && careSec2) {
+            // leave as-is; closePlantCarePanel will hide if needed
+        }
+    }
+}
+
+// Capture-phase handler: Ctrl+click for multi-select, and block plant clicks in navigate mode
+canvas.addEventListener('click', (e) => {
+    // In navigate mode: block all clicks on plant elements (no care panel opening)
+    if (canvasMode === 'navigate') {
+        if (e.target.closest('.grid-plant-chip, .canvas-plant-circle')) {
+            if (!e.target.classList.contains('chip-remove') &&
+                !e.target.classList.contains('canvas-plant-delete-btn')) {
+                e.stopPropagation();
+            }
+        }
+        return;
+    }
+
+    // Ctrl+click on a chip → multi-select
+    if (e.ctrlKey || e.metaKey) {
+        const chip = e.target.closest('.grid-plant-chip');
+        if (chip && !e.target.classList.contains('chip-remove')) {
+            e.stopPropagation();
+            const bpId = chip.dataset.bpId;
+            if (bpId) togglePlantSelection(`chip-${bpId}`, { type: 'chip', id: bpId, el: chip });
+            return;
+        }
+        const circle = e.target.closest('.canvas-plant-circle');
+        if (circle &&
+            !e.target.classList.contains('canvas-plant-delete-btn') &&
+            !e.target.classList.contains('canvas-plant-resize-handle')) {
+            e.stopPropagation();
+            const cpId = circle.dataset.cpId;
+            if (cpId) togglePlantSelection(`circle-${cpId}`, { type: 'circle', id: cpId, el: circle });
+            return;
+        }
+    }
+}, true);
+
+// Deselect all when clicking empty canvas background (not Ctrl)
+canvas.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey) return;
+    if (selectedPlants.size === 0) return;
+    const isPlantEl = e.target.closest('.grid-plant-chip, .canvas-plant-circle, .canvas-bed-header');
+    if (!isPlantEl) clearSelection();
+});
+
+// Select-all checkbox
+document.getElementById('select-all-plants')?.addEventListener('change', (e) => {
+    if (e.target.checked) selectAllPlants();
+    else clearSelection();
+});
+
+// Bulk close button
+document.getElementById('rp-bulk-close')?.addEventListener('click', () => {
+    clearSelection();
+    closePlantCarePanel();
+});
+
+// Bulk quick buttons
+document.getElementById('bulk-mark-watered-btn')?.addEventListener('click', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const el = document.getElementById('bulk-watered');
+    if (el) el.value = today;
+});
+
+document.getElementById('bulk-mark-growing-btn')?.addEventListener('click', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const transplantEl = document.getElementById('bulk-transplant');
+    const stageEl = document.getElementById('bulk-stage');
+    if (transplantEl) transplantEl.value = today;
+    if (stageEl) stageEl.value = 'growing';
+});
+
+// Bulk form submit
+document.getElementById('rp-bulk-form')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const chipIds = [];
+    selectedPlants.forEach((entry) => {
+        if (entry.type === 'chip') chipIds.push(parseInt(entry.id));
+    });
+    if (!chipIds.length) {
+        alert('No bed plants selected. Canvas circle plants do not support bulk care updates yet.');
+        return;
+    }
+    const payload = { ids: chipIds };
+    const watered     = document.getElementById('bulk-watered').value;
+    const fertilized  = document.getElementById('bulk-fertilized').value;
+    const seeded      = document.getElementById('bulk-seeded').value;
+    const transplant  = document.getElementById('bulk-transplant').value;
+    const notes       = document.getElementById('bulk-notes').value;
+    const stage       = document.getElementById('bulk-stage').value;
+    if (watered)    payload.last_watered    = watered;
+    if (fertilized) payload.last_fertilized = fertilized;
+    if (seeded)     payload.planted_date    = seeded;
+    if (transplant) payload.transplant_date = transplant;
+    if (notes)      payload.plant_notes     = notes;
+    if (stage)      payload.stage           = stage;
+    const result = await api('POST', '/api/bedplants/bulk-care', payload);
+    if (result.ok) {
+        const savedEl = document.getElementById('bulk-saved');
+        if (savedEl) {
+            savedEl.textContent = `Saved ✓ (${result.updated} updated)`;
+            savedEl.style.display = '';
+            setTimeout(() => { savedEl.style.display = 'none'; }, 2500);
+        }
+        // Update stage badges on updated chips
+        if (stage) {
+            selectedPlants.forEach(entry => {
+                if (entry.type !== 'chip') return;
+                let badge = entry.el.querySelector('.chip-stage-badge');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'chip-stage-badge';
+                    entry.el.appendChild(badge);
+                }
+                const labels = { seedling: '🌱', growing: '🌿', harvesting: '🥕', done: '✓' };
+                badge.textContent = labels[stage] || stage;
+                badge.className = `chip-stage-badge stage-${stage}`;
+            });
+        }
+        // Clear date fields after save
+        ['bulk-watered','bulk-fertilized','bulk-seeded','bulk-transplant','bulk-notes'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        document.getElementById('bulk-stage').value = '';
+    }
+});
+
+// Add stage badge when opening individual care panel
+const _origPopulateCarePanel = populateCarePanel;
+// (stage badge is rendered at chip creation time via renderChipInGrid;
+//  we update it live when bulk stage changes above)
+
+// ── Help modal ────────────────────────────────────────────────────────────────
+function openHelpModal() {
+    const modal = document.getElementById('help-modal');
+    if (modal) modal.style.display = 'flex';
+}
+function closeHelpModal() {
+    const modal = document.getElementById('help-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+document.getElementById('btn-help')?.addEventListener('click', openHelpModal);
+document.getElementById('help-modal-close')?.addEventListener('click', closeHelpModal);
+document.getElementById('help-modal-close-btn')?.addEventListener('click', closeHelpModal);
+document.getElementById('help-modal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('help-modal')) closeHelpModal();
+});
+
+// ── Hotkeys ───────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+    // Skip if focus is in an input/textarea/select
+    const tag = document.activeElement?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+    // Ctrl+A: select all
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        selectAllPlants();
+        return;
+    }
+
+    // Ctrl combos — don't override other Ctrl shortcuts
+    if (e.ctrlKey || e.metaKey) return;
+
+    switch (e.key) {
+        case '+':
+        case '=': {
+            e.preventDefault();
+            const idx = ZOOM_STEPS.findIndex(z => z > zoom);
+            if (idx !== -1) applyZoom(ZOOM_STEPS[idx]);
+            break;
+        }
+        case '-': {
+            e.preventDefault();
+            const reversed = [...ZOOM_STEPS].reverse();
+            const step = reversed.find(z => z < zoom);
+            if (step !== undefined) applyZoom(step);
+            break;
+        }
+        case '0': {
+            e.preventDefault();
+            applyZoom(1.0);
+            break;
+        }
+        case 'Escape': {
+            e.preventDefault();
+            clearSelection();
+            closePlantCarePanel();
+            closeHelpModal();
+            break;
+        }
+        case 'Delete':
+        case 'Backspace': {
+            if (selectedPlants.size === 0) break;
+            e.preventDefault();
+            const count = selectedPlants.size;
+            if (!confirm(`Delete ${count} selected plant(s)? This cannot be undone.`)) break;
+            const toDelete = [...selectedPlants.values()];
+            clearSelection();
+            Promise.all(toDelete.map(async entry => {
+                if (entry.type === 'chip') {
+                    const r = await api('POST', `/api/bedplants/${entry.id}/delete`);
+                    if (r.ok) entry.el.remove();
+                } else {
+                    const r = await api('POST', `/api/canvas-plants/${entry.id}/delete`, {});
+                    if (r.ok) { entry.el.remove(); delete canvasPlantEls[entry.id]; }
+                }
+            }));
+            break;
+        }
+        case 'n':
+        case 'N':
+            e.preventDefault();
+            setCanvasMode('navigate');
+            break;
+        case 's':
+        case 'S':
+            e.preventDefault();
+            setCanvasMode('select');
+            break;
+        case 'h':
+        case 'H':
+            e.preventDefault();
+            openHelpModal();
+            break;
+    }
+});

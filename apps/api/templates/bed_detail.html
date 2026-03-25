@@ -11,16 +11,37 @@
     <label>Description <textarea name="description" rows="2">{{ bed.description or '' }}</textarea></label>
     <label>Depth (ft) <input type="number" name="depth_ft" step="0.5" min="0" value="{{ bed.depth_ft or '' }}" placeholder="e.g. 1"></label>
     <label>Soil Notes <textarea name="soil_notes" rows="2">{{ bed.soil_notes or '' }}</textarea></label>
+    <label>Soil pH
+      <span class="info-tip" title="Soil pH affects nutrient availability. Most vegetables thrive at 6.0–7.0. Below 6.0 locks out calcium and magnesium; above 7.5 blocks iron and manganese.">ⓘ</span>
+      <input type="number" name="soil_ph" min="0" max="14" step="0.1" value="{{ bed.soil_ph or '' }}" placeholder="e.g. 6.5">
+    </label>
+    <label>Soil Composition (%)
+      <span class="info-tip" title="Ideal raised bed mix: ~60% topsoil, ~30% compost, ~10% coarse sand. Clay holds moisture and nutrients; compost feeds microbes and adds organic matter; sand improves drainage and aeration.">ⓘ</span>
+    </label>
+    <div class="soil-mix-row">
+      <input type="number" name="clay_pct"    min="0" max="100" step="1" placeholder="Clay %"    value="{{ bed.clay_pct    or '' }}">
+      <input type="number" name="compost_pct" min="0" max="100" step="1" placeholder="Compost %" value="{{ bed.compost_pct or '' }}">
+      <input type="number" name="sand_pct"    min="0" max="100" step="1" placeholder="Sand %"    value="{{ bed.sand_pct    or '' }}">
+    </div>
     <button type="submit">Save Changes</button>
   </form>
 </details>
 
-{% if bed.description or bed.location or bed.depth_ft or bed.soil_notes %}
+{% if bed.description or bed.location or bed.depth_ft or bed.soil_notes or bed.soil_ph or bed.clay_pct or bed.compost_pct or bed.sand_pct %}
 <dl class="details" style="margin-bottom:1.5rem;">
   {% if bed.location %}<dt>Location</dt><dd>{{ bed.location }}</dd>{% endif %}
   {% if bed.description %}<dt>Description</dt><dd>{{ bed.description }}</dd>{% endif %}
   {% if bed.depth_ft %}<dt>Depth</dt><dd>{{ bed.depth_ft }} ft</dd>{% endif %}
   {% if bed.soil_notes %}<dt>Soil Notes</dt><dd>{{ bed.soil_notes }}</dd>{% endif %}
+  {% if bed.soil_ph %}<dt>Soil pH</dt><dd>{{ bed.soil_ph }}</dd>{% endif %}
+  {% if bed.clay_pct or bed.compost_pct or bed.sand_pct %}
+  <dt>Soil Mix</dt>
+  <dd>
+    {% if bed.clay_pct %}Clay {{ bed.clay_pct|int }}%{% endif %}
+    {% if bed.compost_pct %}{% if bed.clay_pct %} · {% endif %}Compost {{ bed.compost_pct|int }}%{% endif %}
+    {% if bed.sand_pct %}{% if bed.clay_pct or bed.compost_pct %} · {% endif %}Sand {{ bed.sand_pct|int }}%{% endif %}
+  </dd>
+  {% endif %}
 </dl>
 {% endif %}
 
