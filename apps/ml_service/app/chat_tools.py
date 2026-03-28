@@ -173,6 +173,41 @@ TOOL_SCHEMAS = [
             'required': [],
         },
     },
+    {
+        'name': 'get_weather_forecast',
+        'description': (
+            'Get the 7-day weather forecast for the garden location, including daily '
+            'temperature, precipitation probability, expected rain (mm), wind speed, '
+            'and ET0 (reference evapotranspiration). Use before making watering recommendations.'
+        ),
+        'input_schema': {'type': 'object', 'properties': {}, 'required': []},
+    },
+    {
+        'name': 'get_watering_history',
+        'description': (
+            'Get recent rainfall logs and the last watering date for each bed. '
+            'Use alongside get_weather_forecast to reason about watering needs.'
+        ),
+        'input_schema': {
+            'type': 'object',
+            'properties': {
+                'days_back': {
+                    'type': 'integer',
+                    'description': 'How many days of history to return (default 14)',
+                },
+            },
+            'required': [],
+        },
+    },
+    {
+        'name': 'get_watering_recommendation',
+        'description': (
+            'Calculate per-bed watering urgency scores and recommendations based on '
+            'soil moisture deficit, recent rainfall, and today\'s forecast. '
+            'Use when the user asks whether they need to water or wants a watering schedule.'
+        ),
+        'input_schema': {'type': 'object', 'properties': {}, 'required': []},
+    },
 ]
 
 
@@ -565,6 +600,122 @@ def _tool_list_upcoming_tasks(input_data: dict, garden) -> dict:
     }
 
 
+def _tool_get_weather_forecast(input_data: dict, garden) -> dict:
+    if not garden:
+        return {'error': 'No garden selected.'}
+    if not garden.latitude or not garden.longitude:
+        return {'error': 'Garden has no location set. Add a zip code or coordinates first.'}
+    from apps.ml_service.app.watering_engine import fetch_7day_forecast
+    forecast = fetch_7day_forecast(garden.latitude, garden.longitude)
+    if forecast is None:
+        return {'error': 'Could not fetch forecast. Check your internet connection.'}
+    return {
+        'garden': garden.name,
+        'location': f'{garden.city}, {garden.state}' if garden.city else 'see garden settings',
+        'forecast': forecast,
+    }
+
+
+def _tool_get_watering_history(input_data: dict, garden) -> dict:
+    if not garden:
+        return {'error': 'No garden selected.'}
+
+    _, _, _, _, _, _, _ = _get_models()  # ensure models importable
+    from apps.api.app.db.models import WeatherLog
+
+    days_back = int(input_data.get('days_back') or 14)
+    cutoff    = date.today() - timedelta(days=days_back)
+
+    logs = (WeatherLog.query
+            .filter_by(garden_id=garden.id)
+            .filter(WeatherLog.date >= cutoff)
+            .order_by(WeatherLog.date.desc())
+            .all())
+
+    rainfall_events = [
+        {
+            'date':        lg.date.isoformat(),
+            'rainfall_in': lg.rainfall_in,
+            'rainfall_mm': round((lg.rainfall_in or 0) * 25.4, 1),
+        }
+        for lg in logs if (lg.rainfall_in or 0) > 0
+    ]
+
+    # Per-bed last watered
+    bed_status = []
+    for bed in garden.beds:
+        most_recent = None
+        for bp in bed.bed_plants:
+            if bp.last_watered:
+                if most_recent is None or bp.last_watered > most_recent:
+                    most_recent = bp.last_watered
+        dsw = (date.today() - most_recent).days if most_recent else None
+        bed_status.append({
+            'bed':                 bed.name,
+            'last_watered':        most_recent.isoformat() if most_recent else 'never',
+            'days_since_watered':  dsw,
+        })
+
+    total_rain_mm = round(sum(lg.rainfall_in or 0 for lg in logs) * 25.4, 1)
+
+    return {
+        'rainfall_events':  rainfall_events,
+        'total_rain_mm':    total_rain_mm,
+        'period_days':      days_back,
+        'has_weather_data': len(logs) > 0,
+        'bed_watering_status': bed_status,
+    }
+
+
+def _tool_get_watering_recommendation(input_data: dict, garden) -> dict:
+    if not garden:
+        return {'error': 'No garden selected.'}
+
+    from apps.api.app.db.models import WeatherLog
+    from apps.ml_service.app.watering_engine import (
+        fetch_forecast_today, get_watering_recommendations,
+    )
+
+    cutoff = date.today() - timedelta(days=14)
+    weather_logs = (WeatherLog.query
+                    .filter_by(garden_id=garden.id)
+                    .filter(WeatherLog.date >= cutoff)
+                    .all())
+
+    forecast_today = None
+    if garden.latitude and garden.longitude:
+        forecast_today = fetch_forecast_today(garden.latitude, garden.longitude)
+
+    beds = get_watering_recommendations(garden, weather_logs, forecast_today)
+
+    if not beds:
+        return {
+            'message': 'No beds with plants found in this garden.',
+            'beds': [],
+        }
+
+    urgent = [b for b in beds if b['label'] in ('urgent', 'water_today')]
+    ok     = [b for b in beds if b['label'] == 'ok']
+
+    summary = (
+        f'{len(urgent)} bed(s) need watering today, {len(ok)} bed(s) are fine.'
+        if urgent else
+        'All beds have adequate moisture.'
+    )
+
+    return {
+        'summary':        summary,
+        'forecast_today': forecast_today,
+        'beds':           beds,
+        'weather_data_available': len(weather_logs) > 0,
+        'tip': (
+            'Run "Fetch Weather History" from the garden detail page to improve '
+            'accuracy with recent rainfall data.'
+            if not weather_logs else None
+        ),
+    }
+
+
 # ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 def execute_tool(name: str, input_data: dict, garden) -> dict:
@@ -578,6 +729,9 @@ def execute_tool(name: str, input_data: dict, garden) -> dict:
         'add_plant_to_garden':        lambda: _tool_add_plant_to_garden(input_data, garden),
         'create_task':                lambda: _tool_create_task(input_data, garden),
         'list_upcoming_tasks':        lambda: _tool_list_upcoming_tasks(input_data, garden),
+        'get_weather_forecast':          lambda: _tool_get_weather_forecast(input_data, garden),
+        'get_watering_history':          lambda: _tool_get_watering_history(input_data, garden),
+        'get_watering_recommendation':   lambda: _tool_get_watering_recommendation(input_data, garden),
     }
     handler = handlers.get(name)
     if handler is None:

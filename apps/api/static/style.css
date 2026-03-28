@@ -1329,6 +1329,45 @@ details[open] .faq-q::after { content: '▾'; }
   40%           { opacity: 1;   transform: scale(1.25); }
 }
 
+/* ── Watering status card ─────────────────────────────────────────────────── */
+.watering-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #eef0ec;
+  font-size: 0.84rem;
+}
+.watering-row:last-of-type { border-bottom: none; }
+
+.watering-icon { font-size: 1rem; flex-shrink: 0; }
+
+.watering-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+.watering-bed    { font-weight: 600; color: #2d3a2d; }
+.watering-detail { font-size: 0.78rem; color: #7a9a77; }
+
+.watering-score {
+  font-size: 0.8rem;
+  font-weight: 700;
+  min-width: 2rem;
+  text-align: right;
+  color: #5a7a57;
+}
+
+.watering-urgent .watering-score  { color: #c0392b; }
+.watering-today  .watering-score  { color: #d4851a; }
+.watering-ok     .watering-score  { color: #27ae60; }
+
+.watering-tip {
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+}
+
 /* Context badge in chat header */
 .chat-context-badge {
   display: inline-block;

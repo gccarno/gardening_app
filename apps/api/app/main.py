@@ -688,6 +688,40 @@ def create_app():
         rainfall_7d = _rainfall_summary(garden_id, 7)
         return jsonify({'ok': True, 'days_saved': created, 'rainfall_7d': rainfall_7d})
 
+    @app.route('/api/gardens/<int:garden_id>/watering-status')
+    def api_watering_status(garden_id):
+        import sys as _sys
+        from pathlib import Path as _Path
+        _root = str(_Path(app.root_path).parents[2])
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from apps.ml_service.app.watering_engine import (
+            fetch_forecast_today, get_watering_recommendations,
+        )
+
+        garden = Garden.query.get_or_404(garden_id)
+
+        # Load weather logs for the last 14 days
+        cutoff = date.today() - timedelta(days=14)
+        weather_logs = (WeatherLog.query
+                        .filter(WeatherLog.garden_id == garden_id,
+                                WeatherLog.date >= cutoff)
+                        .all())
+
+        # Today's forecast (best-effort; skip if no coordinates)
+        forecast_today = None
+        if garden.latitude and garden.longitude:
+            forecast_today = fetch_forecast_today(garden.latitude, garden.longitude)
+
+        beds = get_watering_recommendations(garden, weather_logs, forecast_today)
+        return jsonify({
+            'garden_id':       garden_id,
+            'date':            date.today().isoformat(),
+            'has_weather_data': len(weather_logs) > 0,
+            'forecast_today':  forecast_today,
+            'beds':            beds,
+        })
+
     @app.route('/planner')
     def planner_index():
         first = Garden.query.order_by(Garden.name).first()

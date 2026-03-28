@@ -130,6 +130,16 @@
   </div>
 </div>
 
+{# ── Watering status (async) ───────────────────────────────────────────────── #}
+{% if selected and selected.id %}
+<div class="info-card" id="watering-card">
+  <div class="info-card__header">💧 Watering Status</div>
+  <div id="watering-content" class="info-card__body watering-loading">
+    <span class="muted" style="font-size:0.85rem;">Loading…</span>
+  </div>
+</div>
+{% endif %}
+
 {# ── Three-column content ──────────────────────────────────────────────────── #}
 <div class="dash-columns dash-columns--3">
   <section class="dash-col">
@@ -269,6 +279,56 @@
   } catch {
     document.getElementById('weather-content').innerHTML = '<span class="muted" style="font-size:0.82rem;">Weather unavailable</span>';
     document.getElementById('weather-content').className = 'info-card__body';
+  }
+})();
+{% endif %}
+
+// ── Watering status ───────────────────────────────────────────────────────────
+{% if selected and selected.id %}
+(async () => {
+  const URGENCY_LABEL = {
+    urgent:     { icon: '🔴', text: 'Urgent',       cls: 'watering-urgent' },
+    water_today:{ icon: '🟡', text: 'Water today',  cls: 'watering-today' },
+    consider:   { icon: '🟢', text: 'Check soil',   cls: 'watering-consider' },
+    ok:         { icon: '✅', text: 'OK',            cls: 'watering-ok' },
+  };
+  try {
+    const res  = await fetch('/api/gardens/{{ selected.id }}/watering-status', {signal: AbortSignal.timeout(8000)});
+    const data = await res.json();
+    const el   = document.getElementById('watering-content');
+    if (!data.beds || data.beds.length === 0) {
+      el.innerHTML = '<span class="muted" style="font-size:0.85rem;">Add plants to beds to see watering status.</span>';
+      el.className = 'info-card__body';
+      return;
+    }
+    const rows = data.beds.map(b => {
+      const u = URGENCY_LABEL[b.label] || URGENCY_LABEL.ok;
+      const dsw = b.days_since_watered >= 99 ? 'Never' : `${b.days_since_watered}d ago`;
+      return `<div class="watering-row ${u.cls}">
+        <span class="watering-icon">${u.icon}</span>
+        <div class="watering-info">
+          <span class="watering-bed">${b.bed_name}</span>
+          <span class="watering-detail">${u.text} · Last watered: ${dsw}</span>
+        </div>
+        <span class="watering-score">${b.urgency_score}</span>
+      </div>`;
+    }).join('');
+
+    let tip = '';
+    if (!data.has_weather_data) {
+      tip = '<p class="watering-tip muted">Tip: fetch weather history on the garden page to improve accuracy.</p>';
+    } else if (data.forecast_today && data.forecast_today.precip_prob > 60) {
+      tip = `<p class="watering-tip muted">🌧 ${data.forecast_today.precip_prob}% chance of rain today.</p>`;
+    }
+
+    el.innerHTML = rows + tip;
+    el.className = 'info-card__body';
+  } catch {
+    const el = document.getElementById('watering-content');
+    if (el) {
+      el.innerHTML = '<span class="muted" style="font-size:0.82rem;">Watering status unavailable</span>';
+      el.className = 'info-card__body';
+    }
   }
 })();
 {% endif %}
