@@ -1,42 +1,354 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — Garden Planner{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
 
-<section>
-  <h2>Upcoming Tasks</h2>
-  {% if upcoming_tasks %}
-  <ul class="card-list">
-    {% for task in upcoming_tasks %}
-    <li class="card">
-      <span class="task-title">{{ task.title }}</span>
-      {% if task.task_type and task.task_type != 'other' %}<span class="muted">[{{ task.task_type }}]</span>{% endif %}
-      {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
-      {% if task.plant %}<span class="muted">— {{ task.plant.name }}</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted">No upcoming tasks.</p>
+{# ── Garden selector bar ───────────────────────────────────────────────────── #}
+{% if all_gardens %}
+<div class="garden-selector-bar">
+  <span class="garden-selector-label">Viewing:</span>
+  <form method="post" action="{{ url_for('set_default_garden') }}" id="garden-selector-form">
+    <select name="garden_id" class="garden-selector-select"
+            onchange="document.getElementById('garden-selector-form').submit()">
+      {% for g in all_gardens %}
+      <option value="{{ g.id }}" {% if selected and selected.id == g.id %}selected{% endif %}>
+        {{ g.name }}{% if g.city %} · {{ g.city }}{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn--sm btn--ghost">Set as Default</button>
+  </form>
+  {% if selected and selected.usda_zone %}
+  <span class="garden-selector-meta">Zone {{ selected.usda_zone }}</span>
   {% endif %}
-  <a href="{{ url_for('tasks') }}">View all tasks →</a>
-</section>
+  {% if selected and selected.last_frost_date %}
+  <span class="garden-selector-meta">Last frost {{ selected.last_frost_date.strftime('%b %d') }}</span>
+  {% endif %}
+</div>
+{% endif %}
 
-<section>
-  <h2>Recently Added Plants</h2>
-  {% if recent_plants %}
-  <ul class="card-list">
-    {% for plant in recent_plants %}
-    <li class="card">
-      <a href="{{ url_for('plant_detail', plant_id=plant.id) }}">{{ plant.name }}</a>
-      {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
-      {% if plant.bed %}<span class="muted">in {{ plant.bed.name }}</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted">No plants added yet.</p>
+{# ── Getting started (no gardens yet) ─────────────────────────────────────── #}
+{% if not all_gardens %}
+<div class="getting-started">
+  <div class="getting-started__icon">🌱</div>
+  <h2>Welcome to Garden Planner</h2>
+  <p>Create your first garden to get started tracking beds, plants, and tasks.</p>
+  <a href="{{ url_for('gardens') }}" class="btn">→ Create Your First Garden</a>
+</div>
+{% else %}
+
+{# ── Nav tiles ─────────────────────────────────────────────────────────────── #}
+<nav class="nav-tiles" aria-label="Quick navigation">
+  <a href="{{ url_for('gardens') }}" class="nav-tile">
+    <span class="nav-tile__icon">🏡</span>
+    <span class="nav-tile__label">Gardens</span>
+    <span class="nav-tile__desc">Manage your spaces</span>
+  </a>
+  <a href="{{ url_for('planner_index') }}" class="nav-tile">
+    <span class="nav-tile__icon">🗺</span>
+    <span class="nav-tile__label">Planner</span>
+    <span class="nav-tile__desc">2D drag-and-drop layout</span>
+  </a>
+  <a href="{{ url_for('beds') }}" class="nav-tile">
+    <span class="nav-tile__icon">🛏</span>
+    <span class="nav-tile__label">Beds</span>
+    <span class="nav-tile__desc">Raised beds &amp; plots</span>
+  </a>
+  <a href="{{ url_for('plants') }}" class="nav-tile">
+    <span class="nav-tile__icon">🌿</span>
+    <span class="nav-tile__label">Plants</span>
+    <span class="nav-tile__desc">Track what you're growing</span>
+  </a>
+  <a href="{{ url_for('tasks') }}" class="nav-tile">
+    <span class="nav-tile__icon">✅</span>
+    <span class="nav-tile__label">Tasks</span>
+    <span class="nav-tile__desc">Watering, fertilizing &amp; more</span>
+  </a>
+  <a href="{{ url_for('library') }}" class="nav-tile">
+    <span class="nav-tile__icon">📚</span>
+    <span class="nav-tile__label">Library</span>
+    <span class="nav-tile__desc">Plant references</span>
+  </a>
+</nav>
+
+{# ── Metrics row ───────────────────────────────────────────────────────────── #}
+<div class="metric-row">
+  <a href="{{ url_for('beds') }}" class="metric-card">
+    <span class="metric-card__num">{{ metrics.bed_count }}</span>
+    <span class="metric-card__label">Beds</span>
+  </a>
+  <a href="{{ url_for('plants') }}" class="metric-card">
+    <span class="metric-card__num">{{ metrics.plant_count }}</span>
+    <span class="metric-card__label">Plants</span>
+  </a>
+  <a href="{{ url_for('plants') }}" class="metric-card">
+    <span class="metric-card__num">{{ metrics.plants_active }}</span>
+    <span class="metric-card__label">Active</span>
+  </a>
+  <a href="{{ url_for('tasks') }}" class="metric-card">
+    <span class="metric-card__num">{{ metrics.task_count }}</span>
+    <span class="metric-card__label">Open Tasks</span>
+  </a>
+  <a href="{{ url_for('tasks') }}"
+     class="metric-card{% if metrics.overdue_tasks > 0 %} metric-card--alert{% endif %}">
+    <span class="metric-card__num">{{ metrics.overdue_tasks }}</span>
+    <span class="metric-card__label">Overdue</span>
+  </a>
+</div>
+
+{# ── Quick actions ─────────────────────────────────────────────────────────── #}
+<div class="quick-actions">
+  <a href="{{ url_for('tasks') }}" class="btn btn--ghost">+ Add Task</a>
+  <a href="{{ url_for('plants') }}" class="btn btn--ghost">+ Add Plant</a>
+  <a href="{{ url_for('beds') }}" class="btn btn--ghost">+ Add Bed</a>
+  {% if selected %}
+  <a href="{{ url_for('planner', garden_id=selected.id) }}" class="btn btn--ghost">Open Planner</a>
   {% endif %}
-  <a href="{{ url_for('plants') }}">View all plants →</a>
-</section>
+</div>
+
+{# ── Info row: weather + season ────────────────────────────────────────────── #}
+<div class="info-row">
+  {# Weather card — loaded async via JS if garden has coordinates #}
+  {% if selected and selected.latitude and selected.longitude %}
+  <div class="info-card" id="weather-card">
+    <div class="info-card__header">🌤 Current Weather</div>
+    <div id="weather-content" class="info-card__body weather-loading">
+      <span class="muted" style="font-size:0.85rem;">Loading…</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Season + planting hints card #}
+  <div class="info-card season-card">
+    <div class="info-card__header">{{ season_icon }} {{ season }} · {{ hint_action }}</div>
+    <div class="info-card__body">
+      <p style="margin-bottom:0.4rem;">{{ hint_text }}</p>
+      <p style="font-size:0.8rem;color:#5a7a57;"><strong>Good to plant:</strong> {{ hint_crops }}</p>
+      {% if frost_context %}
+      <p style="font-size:0.78rem;color:#7a9a77;margin-top:0.3rem;">🌡 {{ frost_context }}</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Three-column content ──────────────────────────────────────────────────── #}
+<div class="dash-columns dash-columns--3">
+  <section class="dash-col">
+    <h2>Upcoming Tasks</h2>
+    {% if upcoming_tasks %}
+    <ul class="card-list">
+      {% for task in upcoming_tasks %}
+      <li class="card">
+        <span class="task-title">{{ task.title }}</span>
+        {% if task.task_type and task.task_type != 'other' %}
+        <span class="muted">[{{ task.task_type }}]</span>
+        {% endif %}
+        {% if task.due_date %}
+        <span class="muted">Due {{ task.due_date }}</span>
+        {% endif %}
+        {% if task.plant %}<span class="muted">— {{ task.plant.name }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No upcoming tasks. <a href="{{ url_for('tasks') }}">Add one →</a></p>
+    {% endif %}
+    <a href="{{ url_for('tasks') }}" style="font-size:0.85rem;">View all tasks →</a>
+  </section>
+
+  <section class="dash-col">
+    <h2>Recently Added Plants</h2>
+    {% if recent_plants %}
+    <ul class="card-list">
+      {% for plant in recent_plants %}
+      <li class="card">
+        <a href="{{ url_for('plant_detail', plant_id=plant.id) }}">{{ plant.name }}</a>
+        {% if plant.type %}<span class="muted">({{ plant.type }})</span>{% endif %}
+        {% if plant.status and plant.status != 'planning' %}
+        <span class="status-badge status--{{ plant.status }}">{{ plant.status }}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No plants added yet. <a href="{{ url_for('plants') }}">Add one →</a></p>
+    {% endif %}
+    <a href="{{ url_for('plants') }}" style="font-size:0.85rem;">View all plants →</a>
+  </section>
+
+  <section class="dash-col">
+    <h2>Recent Activity</h2>
+    {% if recent_activity %}
+    <ul class="activity-list">
+      {% for task in recent_activity %}
+      <li class="activity-item">
+        <span class="activity-icon">✅</span>
+        <span class="activity-text">
+          {{ task.title }}
+          {% if task.completed_date %}
+          <span class="muted activity-date">{{ task.completed_date.strftime('%b %d') }}</span>
+          {% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No completed tasks in the last 14 days.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% endif %}{# /all_gardens #}
+
+{# ── AI Chat ────────────────────────────────────────────────────────────────── #}
+<div class="chat-widget" id="chat-widget">
+  <div class="chat-widget__header" onclick="toggleChat()">
+    <span class="chat-widget__icon">🤖</span>
+    <div>
+      <strong>Garden Assistant</strong>
+      {% if selected %}
+      <span class="chat-context-badge">{{ selected.name }}{% if selected.usda_zone %} · Zone {{ selected.usda_zone }}{% endif %}</span>
+      {% endif %}
+    </div>
+    <button class="chat-widget__toggle" aria-label="Toggle chat">▾</button>
+  </div>
+  <div class="chat-widget__body" id="chat-body">
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-msg chat-msg--bot">
+        <span>Hi! I'm your garden assistant. Ask me about planting, pests,
+        companions, schedules — or say "add [plant] to my garden"!</span>
+      </div>
+    </div>
+    <div class="chat-prompt-chips" id="chat-chips">
+      <button class="chat-prompt-chip" onclick="sendChat('What should I plant this month?')">What to plant now?</button>
+      <button class="chat-prompt-chip" onclick="sendChat('Check companion planting for my beds')">Companion check</button>
+      <button class="chat-prompt-chip" onclick="sendChat('What tasks are coming up?')">Upcoming tasks</button>
+      <button class="chat-prompt-chip" onclick="sendChat('What is ready to harvest?')">Ready to harvest?</button>
+    </div>
+    <div class="chat-input-row">
+      <input type="text" id="chat-input" class="chat-input"
+             placeholder="Ask about planting, companions, tasks…"
+             onkeydown="if(event.key==='Enter') sendChat()">
+      <button class="btn btn--sm" onclick="sendChat()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Weather fetch (OpenMeteo — free, no API key) ──────────────────────────────
+{% if selected and selected.latitude and selected.longitude %}
+(async () => {
+  const WMO = {
+    0:'Clear sky ☀️', 1:'Mainly clear 🌤', 2:'Partly cloudy ⛅', 3:'Overcast ☁️',
+    45:'Fog 🌫', 48:'Icy fog 🌫',
+    51:'Light drizzle 🌦', 53:'Drizzle 🌦', 55:'Heavy drizzle 🌧',
+    61:'Light rain 🌧', 63:'Rain 🌧', 65:'Heavy rain 🌧',
+    71:'Light snow ❄️', 73:'Snow ❄️', 75:'Heavy snow ❄️',
+    80:'Rain showers 🌦', 81:'Rain showers 🌧', 82:'Heavy showers 🌧',
+    85:'Snow showers 🌨', 86:'Heavy snow showers 🌨',
+    95:'Thunderstorm ⛈', 96:'Thunderstorm ⛈', 99:'Thunderstorm ⛈',
+  };
+  const lat = {{ selected.latitude }};
+  const lon = {{ selected.longitude }};
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,apparent_temperature,precipitation,weathercode,windspeed_10m` +
+      `&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto`;
+    const res  = await fetch(url, {signal: AbortSignal.timeout(6000)});
+    const data = await res.json();
+    const c    = data.current || {};
+    const desc = WMO[c.weathercode] || 'Unknown';
+    const temp = c.temperature_2m != null ? Math.round(c.temperature_2m) + '°F' : '—';
+    const feel = c.apparent_temperature != null ? Math.round(c.apparent_temperature) + '°F' : null;
+    const wind = c.windspeed_10m != null ? Math.round(c.windspeed_10m) + ' mph' : null;
+    const prec = c.precipitation != null ? c.precipitation + ' in' : null;
+    let html = `<div class="weather-main"><span class="weather-temp">${temp}</span><span class="weather-desc">${desc}</span></div>`;
+    const details = [feel ? `Feels like ${feel}` : null, wind ? `Wind ${wind}` : null, prec ? `Precip ${prec}` : null].filter(Boolean);
+    if (details.length) html += `<div class="weather-details">${details.join(' · ')}</div>`;
+    document.getElementById('weather-content').innerHTML = html;
+    document.getElementById('weather-content').className = 'info-card__body';
+  } catch {
+    document.getElementById('weather-content').innerHTML = '<span class="muted" style="font-size:0.82rem;">Weather unavailable</span>';
+    document.getElementById('weather-content').className = 'info-card__body';
+  }
+})();
+{% endif %}
+
+function toggleChat() {
+  const body = document.getElementById('chat-body');
+  const btn  = document.querySelector('.chat-widget__toggle');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'flex';
+  btn.textContent = open ? '▸' : '▾';
+}
+
+const GARDEN_ID = {{ selected.id if selected else 'null' }};
+let conversationHistory = [];
+
+async function sendChat(msgOverride) {
+  const input = document.getElementById('chat-input');
+  const msg   = msgOverride || input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  // Hide prompt chips after first message
+  const chips = document.getElementById('chat-chips');
+  if (chips) chips.style.display = 'none';
+
+  appendMsg(msg, 'user');
+  conversationHistory.push({ role: 'user', content: msg });
+  const typingId = appendTyping();
+
+  try {
+    const res  = await fetch('/api/chat', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        message: msg,
+        garden_id: GARDEN_ID,
+        conversation_history: conversationHistory.slice(0, -1),
+      }),
+    });
+    const data = await res.json();
+    removeMsg(typingId);
+    const reply = data.reply || 'No response.';
+    appendMsg(reply, 'bot');
+    // Server returns history up to (but not including) the assistant reply
+    if (data.conversation_history) {
+      conversationHistory = data.conversation_history;
+    }
+    conversationHistory.push({ role: 'assistant', content: reply });
+  } catch (err) {
+    removeMsg(typingId);
+    appendMsg('Could not reach the assistant. Check your connection and try again.', 'bot');
+    // Roll back the user message from history on error
+    conversationHistory.pop();
+  }
+}
+
+function appendTyping() {
+  const id  = 'msg-' + (++_msgId);
+  const div = document.createElement('div');
+  div.className = 'chat-msg chat-msg--bot chat-msg--typing';
+  div.id = id;
+  div.innerHTML = '<span></span><span></span><span></span>';
+  const box = document.getElementById('chat-messages');
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return id;
+}
+
+let _msgId = 0;
+function appendMsg(text, who) {
+  const id  = 'msg-' + (++_msgId);
+  const div = document.createElement('div');
+  div.className = `chat-msg chat-msg--${who}`;
+  div.id = id;
+  div.innerHTML = `<span>${text}</span>`;
+  const box = document.getElementById('chat-messages');
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return id;
+}
+function removeMsg(id) { document.getElementById(id)?.remove(); }
+</script>
 {% endblock %}

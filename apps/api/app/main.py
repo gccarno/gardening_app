@@ -1,3 +1,4 @@
+import hashlib
 import os
 from collections import defaultdict
 from datetime import date, timedelta
@@ -5,7 +6,7 @@ import requests as http
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from werkzeug.utils import secure_filename
-from .db.models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, WeatherLog, CanvasPlant
+from .db.models import db, Garden, GardenBed, Plant, Task, BedPlant, PlantLibrary, PlantLibraryImage, WeatherLog, CanvasPlant, AppSetting
 
 load_dotenv()
 
@@ -141,8 +142,8 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        _seed_library()
         # Add columns if they don't exist yet (no migrations setup)
+        # IMPORTANT: plant_library migrations must run before _seed_library()
         with db.engine.connect() as conn:
             cols = [row[1] for row in conn.execute(db.text("PRAGMA table_info(garden)"))]
             if 'background_image' not in cols:
@@ -165,20 +166,187 @@ def create_app():
             if 'stage' not in bp_cols:
                 conn.execute(db.text("ALTER TABLE bed_plant ADD COLUMN stage VARCHAR(20)"))
                 conn.commit()
+            lib_cols = [row[1] for row in conn.execute(db.text("PRAGMA table_info(plant_library)"))]
+            for col, ddl in [
+                ('openfarm_id',             'ALTER TABLE plant_library ADD COLUMN openfarm_id VARCHAR(30)'),
+                ('openfarm_slug',           'ALTER TABLE plant_library ADD COLUMN openfarm_slug VARCHAR(100)'),
+                ('trefle_id',               'ALTER TABLE plant_library ADD COLUMN trefle_id INTEGER'),
+                ('trefle_slug',             'ALTER TABLE plant_library ADD COLUMN trefle_slug VARCHAR(100)'),
+                ('toxicity',                'ALTER TABLE plant_library ADD COLUMN toxicity VARCHAR(20)'),
+                ('duration',                'ALTER TABLE plant_library ADD COLUMN duration VARCHAR(50)'),
+                ('ligneous_type',           'ALTER TABLE plant_library ADD COLUMN ligneous_type VARCHAR(50)'),
+                ('growth_habit',            'ALTER TABLE plant_library ADD COLUMN growth_habit VARCHAR(100)'),
+                ('growth_form',             'ALTER TABLE plant_library ADD COLUMN growth_form VARCHAR(100)'),
+                ('growth_rate',             'ALTER TABLE plant_library ADD COLUMN growth_rate VARCHAR(50)'),
+                ('nitrogen_fixation',       'ALTER TABLE plant_library ADD COLUMN nitrogen_fixation VARCHAR(30)'),
+                ('vegetable',               'ALTER TABLE plant_library ADD COLUMN vegetable BOOLEAN'),
+                ('observations',            'ALTER TABLE plant_library ADD COLUMN observations TEXT'),
+                ('average_height_cm',       'ALTER TABLE plant_library ADD COLUMN average_height_cm INTEGER'),
+                ('maximum_height_cm',       'ALTER TABLE plant_library ADD COLUMN maximum_height_cm INTEGER'),
+                ('spread_cm',               'ALTER TABLE plant_library ADD COLUMN spread_cm INTEGER'),
+                ('row_spacing_cm',          'ALTER TABLE plant_library ADD COLUMN row_spacing_cm INTEGER'),
+                ('minimum_root_depth_cm',   'ALTER TABLE plant_library ADD COLUMN minimum_root_depth_cm INTEGER'),
+                ('soil_nutriments',         'ALTER TABLE plant_library ADD COLUMN soil_nutriments INTEGER'),
+                ('soil_salinity',           'ALTER TABLE plant_library ADD COLUMN soil_salinity INTEGER'),
+                ('atmospheric_humidity',    'ALTER TABLE plant_library ADD COLUMN atmospheric_humidity INTEGER'),
+                ('precipitation_min_mm',    'ALTER TABLE plant_library ADD COLUMN precipitation_min_mm INTEGER'),
+                ('precipitation_max_mm',    'ALTER TABLE plant_library ADD COLUMN precipitation_max_mm INTEGER'),
+                ('bloom_months',            'ALTER TABLE plant_library ADD COLUMN bloom_months TEXT'),
+                ('fruit_months',            'ALTER TABLE plant_library ADD COLUMN fruit_months TEXT'),
+                ('growth_months',           'ALTER TABLE plant_library ADD COLUMN growth_months TEXT'),
+                ('flower_color',            'ALTER TABLE plant_library ADD COLUMN flower_color VARCHAR(100)'),
+                ('flower_conspicuous',      'ALTER TABLE plant_library ADD COLUMN flower_conspicuous BOOLEAN'),
+                ('foliage_color',           'ALTER TABLE plant_library ADD COLUMN foliage_color VARCHAR(100)'),
+                ('foliage_texture',         'ALTER TABLE plant_library ADD COLUMN foliage_texture VARCHAR(30)'),
+                ('leaf_retention',          'ALTER TABLE plant_library ADD COLUMN leaf_retention BOOLEAN'),
+                ('fruit_color',             'ALTER TABLE plant_library ADD COLUMN fruit_color VARCHAR(100)'),
+                ('fruit_conspicuous',       'ALTER TABLE plant_library ADD COLUMN fruit_conspicuous BOOLEAN'),
+                ('fruit_shape',             'ALTER TABLE plant_library ADD COLUMN fruit_shape VARCHAR(100)'),
+                ('seed_persistence',        'ALTER TABLE plant_library ADD COLUMN seed_persistence BOOLEAN'),
+            ]:
+                if col not in lib_cols:
+                    conn.execute(db.text(ddl))
+                    conn.commit()
+        _seed_library()
+
+        # Backfill existing image_filename values into PlantLibraryImage
+        _img_dir = os.path.join(app.static_folder, 'plant_images')
+        for entry in PlantLibrary.query.filter(PlantLibrary.image_filename.isnot(None)).all():
+            if entry.images:
+                continue
+            fn = entry.image_filename
+            fpath = os.path.join(_img_dir, fn)
+            if not os.path.exists(fpath):
+                continue
+            with open(fpath, 'rb') as _f:
+                fhash = hashlib.sha256(_f.read()).hexdigest()
+            if PlantLibraryImage.query.filter_by(file_hash=fhash).first():
+                continue
+            source = 'perenual' if fn.split('.')[0].isdigit() else 'manual'
+            db.session.add(PlantLibraryImage(
+                plant_library_id=entry.id,
+                filename=fn,
+                source=source,
+                file_hash=fhash,
+                is_primary=True,
+            ))
+        db.session.commit()
 
     # --- Dashboard ---
 
+    # Planting hints by month (Northern Hemisphere)
+    _PLANTING_HINTS = {
+        1:  ('Plan & Order',    'Order seeds and sketch your layout for the coming season.',
+             'Onions, celery, peppers — start indoors late month'),
+        2:  ('Start Indoors',   'Begin slow-growing crops under lights.',
+             'Tomatoes, peppers, eggplant'),
+        3:  ('Sow Cool Crops',  'Direct-sow cold-tolerant crops when soil is workable.',
+             'Peas, spinach, lettuce, kale, carrots'),
+        4:  ('Harden & Plant',  'Harden off starts; transplant cold-hardy crops.',
+             'Broccoli, cabbage, onion sets, lettuce'),
+        5:  ('Peak Planting',   'Last frost passes for most zones — time for warm-season crops.',
+             'Tomatoes, basil, beans, squash, cucumbers'),
+        6:  ('Direct Sow',      'Sow warm-season crops; succession-plant salad greens.',
+             'Beans, cucumbers, squash, corn, herbs'),
+        7:  ('Maintain',        'Harvest regularly; start fall brassica seeds indoors.',
+             'Broccoli, kale, chard — start for fall'),
+        8:  ('Fall Prep',       'Sow fast-maturing crops for a fall harvest.',
+             'Carrots, radishes, arugula, spinach'),
+        9:  ('Fall Planting',   'Plant garlic and overwintering crops before first frost.',
+             'Garlic, spinach, kale, cover crops'),
+        10: ('Wrap Up',         'Plant spring bulbs and cover crops to protect soil.',
+             'Garlic, cover crops, spring bulbs'),
+        11: ('Rest & Compost',  'Mulch beds, add compost, and plan for next year.',
+             'Cover crops, soil amendments'),
+        12: ('Plan Ahead',      'Review the season and browse seed catalogs.',
+             'Start planning and ordering seeds'),
+    }
+
+    def _get_season(today):
+        m, d = today.month, today.day
+        if (m == 12 and d >= 21) or m in (1, 2) or (m == 3 and d < 20):
+            return 'Winter', '❄️'
+        if (m == 3 and d >= 20) or m in (4, 5) or (m == 6 and d < 21):
+            return 'Spring', '🌸'
+        if (m == 6 and d >= 21) or m in (7, 8) or (m == 9 and d < 22):
+            return 'Summer', '☀️'
+        return 'Fall', '🍂'
+
     @app.route('/')
     def index():
-        upcoming_tasks = (
-            Task.query
-            .filter_by(completed=False)
-            .order_by(Task.due_date.asc().nullslast())
-            .limit(5)
-            .all()
+        all_gardens = Garden.query.order_by(Garden.name).all()
+        # Resolve selected/default garden
+        setting = AppSetting.query.get('default_garden_id')
+        default_gid = int(setting.value) if setting and setting.value else None
+        selected = (Garden.query.get(default_gid) if default_gid
+                    else (all_gardens[0] if all_gardens else None))
+
+        # Base queries — scoped to selected garden
+        q_beds   = GardenBed.query
+        q_plants = Plant.query
+        q_tasks  = Task.query.filter_by(completed=False)
+        if selected:
+            q_beds   = q_beds.filter_by(garden_id=selected.id)
+            q_plants = q_plants.filter_by(garden_id=selected.id)
+            q_tasks  = q_tasks.filter_by(garden_id=selected.id)
+
+        metrics = {
+            'bed_count':     q_beds.count(),
+            'plant_count':   q_plants.count(),
+            'task_count':    q_tasks.count(),
+            'plants_active': q_plants.filter_by(status='active').count(),
+            'overdue_tasks': q_tasks.filter(Task.due_date < date.today()).count(),
+        }
+
+        upcoming_tasks = (q_tasks
+                          .order_by(Task.due_date.asc().nullslast())
+                          .limit(5).all())
+        recent_plants = q_plants.order_by(Plant.id.desc()).limit(5).all()
+
+        # Recent activity — completed tasks in the last 14 days
+        activity_cutoff = date.today() - timedelta(days=14)
+        q_done = Task.query.filter(
+            Task.completed == True,
+            Task.completed_date >= activity_cutoff,
         )
-        recent_plants = Plant.query.order_by(Plant.id.desc()).limit(5).all()
-        return render_template('index.html', upcoming_tasks=upcoming_tasks, recent_plants=recent_plants)
+        if selected:
+            q_done = q_done.filter_by(garden_id=selected.id)
+        recent_activity = q_done.order_by(Task.completed_date.desc()).limit(8).all()
+
+        # Season + planting hints
+        today_dt = date.today()
+        season, season_icon = _get_season(today_dt)
+        hint_action, hint_text, hint_crops = _PLANTING_HINTS[today_dt.month]
+
+        # Frost date context
+        frost_context = None
+        if selected and selected.last_frost_date:
+            days = (selected.last_frost_date - today_dt).days
+            if days > 0:
+                frost_context = f'Last frost in {days} day{"s" if days != 1 else ""} ({selected.last_frost_date.strftime("%b %d")})'
+            elif days >= -30:
+                frost_context = f'Last frost passed {-days} day{"s" if days != -1 else ""} ago'
+
+        return render_template('index.html',
+            all_gardens=all_gardens, selected=selected,
+            metrics=metrics, upcoming_tasks=upcoming_tasks, recent_plants=recent_plants,
+            recent_activity=recent_activity,
+            season=season, season_icon=season_icon,
+            hint_action=hint_action, hint_text=hint_text, hint_crops=hint_crops,
+            frost_context=frost_context,
+            today=today_dt)
+
+    @app.route('/settings/default-garden', methods=['POST'])
+    def set_default_garden():
+        gid = request.form.get('garden_id', '').strip()
+        setting = AppSetting.query.get('default_garden_id')
+        if setting is None:
+            setting = AppSetting(key='default_garden_id', value=gid or None)
+            db.session.add(setting)
+        else:
+            setting.value = gid or None
+        db.session.commit()
+        return redirect(url_for('index'))
 
     # --- Gardens ---
 
@@ -953,6 +1121,21 @@ def create_app():
         faqs           = _parse(entry.faqs)
         nutrition      = _parse(entry.nutrition)
 
+        _MONTH_NAMES = {
+            'jan':'January','feb':'February','mar':'March','apr':'April',
+            'may':'May','jun':'June','jul':'July','aug':'August',
+            'sep':'September','oct':'October','nov':'November','dec':'December'
+        }
+        def _months(col):
+            raw = _parse(col)
+            if not raw:
+                return None
+            return ', '.join(_MONTH_NAMES.get(str(m).lower(), str(m)) for m in raw)
+
+        bloom_months  = _months(entry.bloom_months)
+        fruit_months  = _months(entry.fruit_months)
+        growth_months = _months(entry.growth_months)
+
         # Planting calendar: compute month labels for every zone using frost dates
         calendar_rows = []
         if entry.sow_indoor_weeks is not None or entry.direct_sow_offset is not None or entry.transplant_offset is not None:
@@ -1006,6 +1189,9 @@ def create_app():
             calendar_rows=calendar_rows,
             selected_zone=selected_zone,
             all_gardens=all_gardens,
+            bloom_months=bloom_months,
+            fruit_months=fruit_months,
+            growth_months=growth_months,
         )
 
     @app.route('/library/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -1068,10 +1254,50 @@ def create_app():
         db.session.commit()
         return redirect(url_for('plants', tab='planning', garden_id=garden_id))
 
+    def _ext_from_content_type(content_type):
+        if 'png' in content_type:
+            return '.png'
+        if 'webp' in content_type:
+            return '.webp'
+        return '.jpg'
+
+    def _save_plant_image(entry, img_bytes, source, ext='.jpg',
+                          source_url=None, attribution=None, make_primary=False):
+        """Hash-check img_bytes, save to plant_images/, insert PlantLibraryImage row.
+        Returns (PlantLibraryImage row, was_duplicate).  Caller must commit."""
+        fhash = hashlib.sha256(img_bytes).hexdigest()
+        existing = PlantLibraryImage.query.filter_by(file_hash=fhash).first()
+        if existing:
+            return existing, True
+        count = PlantLibraryImage.query.filter_by(
+            plant_library_id=entry.id, source=source
+        ).count()
+        filename = f'{entry.id}_{source}_{count + 1}{ext}'
+        dest = os.path.join(app.static_folder, 'plant_images', filename)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, 'wb') as f:
+            f.write(img_bytes)
+        has_primary = PlantLibraryImage.query.filter_by(
+            plant_library_id=entry.id, is_primary=True
+        ).first() is not None
+        is_primary = make_primary or not has_primary
+        img_row = PlantLibraryImage(
+            plant_library_id=entry.id,
+            filename=filename,
+            source=source,
+            source_url=source_url,
+            attribution=attribution,
+            file_hash=fhash,
+            is_primary=is_primary,
+        )
+        db.session.add(img_row)
+        if is_primary:
+            entry.image_filename = filename
+        return img_row, False
+
     def _download_plant_image(perenual_id, image_url):
-        """Download image from URL, save to static/plant_images/<perenual_id>.jpg.
-        Returns filename on success, None on failure."""
-        import re
+        """Legacy helper: download from URL, save as <perenual_id>.jpg.
+        Returns filename on success, None on failure. Does NOT insert PlantLibraryImage row."""
         filename = f'{perenual_id}.jpg'
         dest = os.path.join(app.static_folder, 'plant_images', filename)
         if os.path.exists(dest):
@@ -1080,11 +1306,7 @@ def create_app():
             r = http.get(image_url, timeout=10, stream=True)
             r.raise_for_status()
             content_type = r.headers.get('content-type', '')
-            ext = '.jpg'
-            if 'png' in content_type:
-                ext = '.png'
-            elif 'webp' in content_type:
-                ext = '.webp'
+            ext = _ext_from_content_type(content_type)
             filename = f'{perenual_id}{ext}'
             dest = os.path.join(app.static_folder, 'plant_images', filename)
             with open(dest, 'wb') as f:
@@ -1165,12 +1387,16 @@ def create_app():
         url = img.get('small_url') or img.get('thumbnail')
         if not url or 'Upgrade Plans' in str(url):
             return jsonify({'error': 'no_image', 'message': 'No image available.'}), 404
-        filename = _download_plant_image(entry.perenual_id, url)
-        if not filename:
+        try:
+            r = http.get(url, timeout=10)
+            r.raise_for_status()
+            ext = _ext_from_content_type(r.headers.get('content-type', ''))
+            img_row, _ = _save_plant_image(entry, r.content, 'perenual',
+                                           ext=ext, source_url=url)
+            db.session.commit()
+        except Exception:
             return jsonify({'error': 'download', 'message': 'Failed to download image.'}), 502
-        entry.image_filename = filename
-        db.session.commit()
-        return jsonify({'ok': True, 'filename': filename})
+        return jsonify({'ok': True, 'filename': img_row.filename})
 
     @app.route('/api/perenual/save', methods=['POST'])
     def api_perenual_save():
@@ -1188,19 +1414,25 @@ def create_app():
         if sunlight and 'Upgrade Plans' in sunlight:
             sunlight = None
         perenual_id = data.get('perenual_id') or None
-        image_filename = None
-        if perenual_id and data.get('image'):
-            image_filename = _download_plant_image(perenual_id, data['image'])
         entry = PlantLibrary(
             name=data['name'],
             scientific_name=data.get('scientific_name') or None,
             perenual_id=perenual_id,
-            image_filename=image_filename,
             type=data.get('cycle') or None,
             sunlight=sunlight,
             water=water,
         )
         db.session.add(entry)
+        db.session.flush()  # get entry.id before downloading image
+        if perenual_id and data.get('image'):
+            try:
+                r = http.get(data['image'], timeout=10)
+                r.raise_for_status()
+                ext = _ext_from_content_type(r.headers.get('content-type', ''))
+                _save_plant_image(entry, r.content, 'perenual',
+                                  ext=ext, source_url=data['image'])
+            except Exception:
+                pass  # image fetch failure is non-fatal
         db.session.commit()
         return jsonify({'ok': True, 'id': entry.id, 'existing': False})
 
@@ -1654,17 +1886,105 @@ def create_app():
         if not cp.custom_image or not cp.library_id:
             return jsonify({'error': 'No custom image or library entry'}), 400
         lib = PlantLibrary.query.get_or_404(cp.library_id)
-        import shutil
         src = os.path.join(app.static_folder, 'canvas_plant_images', cp.custom_image)
         if not os.path.exists(src):
             return jsonify({'error': 'Image file not found'}), 404
         ext = os.path.splitext(cp.custom_image)[1]
-        dest_filename = f'{lib.id}_custom{ext}'
-        dest = os.path.join(app.static_folder, 'plant_images', dest_filename)
-        shutil.copy2(src, dest)
-        lib.image_filename = dest_filename
+        with open(src, 'rb') as f:
+            img_bytes = f.read()
+        img_row, was_dup = _save_plant_image(lib, img_bytes, 'manual',
+                                             ext=ext, make_primary=True)
         db.session.commit()
-        return jsonify({'ok': True, 'library_image': dest_filename})
+        return jsonify({'ok': True, 'library_image': img_row.filename})
+
+    # --- Library image management ---
+
+    @app.route('/api/library/<int:entry_id>/images', methods=['GET'])
+    def api_library_images_list(entry_id):
+        entry = PlantLibrary.query.get_or_404(entry_id)
+        return jsonify([{
+            'id': img.id,
+            'filename': img.filename,
+            'source': img.source,
+            'attribution': img.attribution,
+            'is_primary': img.is_primary,
+            'created_at': img.created_at.isoformat(),
+        } for img in entry.images])
+
+    @app.route('/api/library/<int:entry_id>/images', methods=['POST'])
+    def api_library_images_add(entry_id):
+        entry = PlantLibrary.query.get_or_404(entry_id)
+        # Accept file upload or JSON {url, source, attribution}
+        if request.files.get('file'):
+            f = request.files['file']
+            ext = os.path.splitext(secure_filename(f.filename))[1].lower() or '.jpg'
+            img_bytes = f.read()
+            source = request.form.get('source', 'manual')
+            attribution = request.form.get('attribution') or None
+            source_url = None
+        else:
+            data = request.get_json(force=True) or {}
+            url = data.get('url', '').strip()
+            if not url:
+                return jsonify({'error': 'url or file required'}), 400
+            source = data.get('source', 'manual')
+            attribution = data.get('attribution') or None
+            try:
+                r = http.get(url, timeout=15)
+                r.raise_for_status()
+                ext = _ext_from_content_type(r.headers.get('content-type', ''))
+                img_bytes = r.content
+            except Exception as e:
+                return jsonify({'error': 'download', 'message': str(e)}), 502
+            source_url = url
+        img_row, was_dup = _save_plant_image(entry, img_bytes, source, ext=ext,
+                                             source_url=source_url, attribution=attribution)
+        db.session.commit()
+        return jsonify({
+            'ok': True,
+            'image_id': img_row.id,
+            'filename': img_row.filename,
+            'was_duplicate': was_dup,
+        })
+
+    @app.route('/api/library/images/<int:image_id>/set-primary', methods=['POST'])
+    def api_library_image_set_primary(image_id):
+        img = PlantLibraryImage.query.get_or_404(image_id)
+        PlantLibraryImage.query.filter_by(
+            plant_library_id=img.plant_library_id, is_primary=True
+        ).update({'is_primary': False})
+        img.is_primary = True
+        entry = PlantLibrary.query.get(img.plant_library_id)
+        entry.image_filename = img.filename
+        db.session.commit()
+        return jsonify({'ok': True, 'filename': img.filename})
+
+    @app.route('/api/library/images/<int:image_id>/delete', methods=['POST'])
+    def api_library_image_delete(image_id):
+        img = PlantLibraryImage.query.get_or_404(image_id)
+        was_primary = img.is_primary
+        plant_library_id = img.plant_library_id
+        filename = img.filename
+        db.session.delete(img)
+        db.session.flush()
+        # Delete file from disk if no other row references it
+        remaining = PlantLibraryImage.query.filter_by(filename=filename).count()
+        if remaining == 0:
+            fpath = os.path.join(app.static_folder, 'plant_images', filename)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+        new_primary_filename = None
+        if was_primary:
+            next_img = PlantLibraryImage.query.filter_by(
+                plant_library_id=plant_library_id
+            ).order_by(PlantLibraryImage.created_at).first()
+            if next_img:
+                next_img.is_primary = True
+                new_primary_filename = next_img.filename
+            entry = PlantLibrary.query.get(plant_library_id)
+            entry.image_filename = new_primary_filename
+        db.session.commit()
+        return jsonify({'ok': True, 'new_primary_filename': new_primary_filename})
 
     @app.route('/api/library/<int:entry_id>/quick-edit', methods=['POST'])
     def api_library_quick_edit(entry_id):
@@ -1687,6 +2007,179 @@ def create_app():
         db.session.delete(cp)
         db.session.commit()
         return jsonify({'ok': True})
+
+    # ── Plant Recommendations ─────────────────────────────────────────────────
+
+    @app.route('/api/recommendations')
+    def api_recommendations():
+        import sys as _sys
+        from pathlib import Path as _Path
+        _root = str(_Path(app.root_path).parents[2])
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from apps.ml_service.app.recommender import recommend
+
+        garden_id = request.args.get('garden_id', type=int)
+        top_n     = request.args.get('top_n', 5, type=int)
+
+        garden = Garden.query.get(garden_id) if garden_id else None
+
+        # Build context from garden data
+        zone_str = (garden.usda_zone or '') if garden else ''
+        zone_num_str = ''.join(c for c in zone_str if c.isdigit())
+        zone_int = int(zone_num_str) if zone_num_str else None
+
+        phs = [b.soil_ph for b in garden.beds if b.soil_ph] if garden else []
+        avg_ph = sum(phs) / len(phs) if phs else None
+
+        current_plant_names = []
+        if garden:
+            for p in garden.plants:
+                if p.library_entry:
+                    current_plant_names.append(p.library_entry.name)
+
+        context = {
+            'zone':                zone_int,
+            'sunlight_hours':      6,           # default; no garden-level field yet
+            'current_month':       date.today().month,
+            'soil_ph':             avg_ph,
+            'preferred_types':     ['vegetable', 'herb'],
+            'current_plant_names': current_plant_names,
+        }
+
+        # Serialise PlantLibrary rows, excluding plants already in this garden
+        existing_names = set(current_plant_names)
+        all_lib = PlantLibrary.query.order_by(PlantLibrary.name).all()
+        plants_data = []
+        for p in all_lib:
+            if p.name in existing_names:
+                continue
+            primary_img = next((img for img in p.images if img.is_primary), None)
+            if not primary_img and p.images:
+                primary_img = p.images[0]
+            plants_data.append({
+                'id':              p.id,
+                'name':            p.name,
+                'type':            p.type,
+                'min_zone':        p.min_zone,
+                'max_zone':        p.max_zone,
+                'sunlight':        p.sunlight,
+                'soil_ph_min':     p.soil_ph_min,
+                'soil_ph_max':     p.soil_ph_max,
+                'good_neighbors':  p.good_neighbors,
+                'difficulty':      p.difficulty,
+                'days_to_harvest': p.days_to_harvest,
+                'fruit_months':    p.fruit_months,
+                'bloom_months':    p.bloom_months,
+                'growth_months':   p.growth_months,
+                'image_filename':  primary_img.filename if primary_img else p.image_filename,
+            })
+
+        results = recommend(plants_data, context, top_n)
+
+        # Attach image URLs
+        for rec in results:
+            fn = rec.get('image_filename')
+            rec['image_url'] = (
+                url_for('static', filename=f'plant_images/{fn}') if fn else None
+            )
+
+        return jsonify({'recommendations': results, 'context': {
+            'zone': zone_int, 'month': context['current_month'],
+        }})
+
+    # ── AI Chat ───────────────────────────────────────────────────────────────
+
+    @app.route('/api/chat', methods=['POST'])
+    def api_chat():
+        import sys as _sys
+        from pathlib import Path as _Path
+        _root = str(_Path(app.root_path).parents[2])
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from apps.ml_service.app.recommender import recommend
+
+        data                 = request.get_json(force=True)
+        user_msg             = (data.get('message') or '').strip()
+        garden_id            = data.get('garden_id')
+        conversation_history = data.get('conversation_history') or []
+
+        if not user_msg:
+            return jsonify({'reply': 'Please type a message first.'}), 400
+
+        # Build garden context for the system prompt
+        garden = Garden.query.get(garden_id) if garden_id else None
+        today  = date.today()
+        season, _ = _get_season(today)
+
+        zone_str     = (garden.usda_zone or 'unknown') if garden else 'unknown'
+        zone_num_str = ''.join(c for c in zone_str if c.isdigit())
+        zone_int     = int(zone_num_str) if zone_num_str else None
+
+        garden_name    = garden.name if garden else 'your garden'
+        current_plants: list[str] = []
+        if garden:
+            for p in garden.plants:
+                current_plants.append(p.library_entry.name if p.library_entry else p.name)
+
+        # Get top 3 recommendations to give the assistant context
+        rec_names: list[str] = []
+        try:
+            phs    = [b.soil_ph for b in garden.beds if b.soil_ph] if garden else []
+            avg_ph = sum(phs) / len(phs) if phs else None
+            existing = set(current_plants)
+            all_lib = PlantLibrary.query.all()
+            plants_data = []
+            for p in all_lib:
+                if p.name in existing:
+                    continue
+                plants_data.append({
+                    'id': p.id, 'name': p.name, 'type': p.type,
+                    'min_zone': p.min_zone, 'max_zone': p.max_zone,
+                    'sunlight': p.sunlight,
+                    'soil_ph_min': p.soil_ph_min, 'soil_ph_max': p.soil_ph_max,
+                    'good_neighbors': p.good_neighbors, 'difficulty': p.difficulty,
+                    'days_to_harvest': p.days_to_harvest,
+                    'fruit_months': p.fruit_months,
+                    'bloom_months': p.bloom_months,
+                    'growth_months': p.growth_months,
+                })
+            ctx = {
+                'zone': zone_int, 'sunlight_hours': 6,
+                'current_month': today.month, 'soil_ph': avg_ph,
+                'preferred_types': ['vegetable', 'herb'],
+                'current_plant_names': current_plants,
+            }
+            recs = recommend(plants_data, ctx, top_n=3)
+            rec_names = [r['name'] for r in recs]
+        except Exception:
+            pass
+
+        system_prompt = (
+            f"You are a knowledgeable, friendly garden assistant helping a home gardener. "
+            f"Today is {today.strftime('%B %d, %Y')} — {season} in the Northern Hemisphere.\n\n"
+            f"Garden: {garden_name}\n"
+            f"USDA Hardiness Zone: {zone_str}\n"
+            f"Current plants: {', '.join(current_plants) if current_plants else 'none yet'}\n"
+            f"Top recommendations right now: {', '.join(rec_names) if rec_names else 'see library'}\n\n"
+            "Give practical, concise advice tailored to this specific garden and zone. "
+            "Use the available tools to look up real data before answering when relevant. "
+            "If asked what to plant, prioritise the recommended plants above. "
+            "Keep responses under 200 words unless the question genuinely needs more detail."
+        )
+
+        # Build full message list: conversation history + new user message
+        messages = list(conversation_history) + [{'role': 'user', 'content': user_msg}]
+
+        try:
+            from apps.ml_service.app.chat_tools import run_agentic_loop
+            reply = run_agentic_loop(system_prompt, messages, garden)
+        except RuntimeError as exc:
+            return jsonify({'reply': str(exc), 'conversation_history': messages})
+        except Exception as exc:
+            reply = f'Sorry, the assistant ran into an error: {exc}'
+
+        return jsonify({'reply': reply, 'conversation_history': messages})
 
     return app
 
