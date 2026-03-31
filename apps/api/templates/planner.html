@@ -295,6 +295,23 @@
   <!-- Right Info Panel -->
   <aside class="planner-right-panel" id="planner-right-panel">
 
+    <!-- Recommendations (shown when nothing is selected) -->
+    <div class="rp-section" id="rp-recommendations-section">
+      <details open>
+        <summary class="sidebar-label sidebar-label--collapsible">
+          Plant Recommendations
+          <button id="rp-recs-refresh" class="toolbar-btn"
+                  style="font-size:0.72rem;padding:0.1rem 0.45rem;margin-left:auto;"
+                  title="Refresh recommendations" onclick="event.stopPropagation();loadRecommendations()">↻</button>
+        </summary>
+        <div id="rp-recs-list"></div>
+        <p id="rp-recs-empty" class="rp-muted" style="display:none;padding:0.4rem 0;">
+          Add a location (zip code) to your garden for personalised recommendations.
+        </p>
+        <p id="rp-recs-loading" class="rp-muted" style="padding:0.4rem 0;">Loading…</p>
+      </details>
+    </div>
+
     <!-- Plant Care (shown when a plant is selected) -->
     <div class="rp-section" id="rp-plant-care-section" style="display:none">
       <div class="rp-plant-care-header">
@@ -661,6 +678,118 @@ const CANVAS_PLANTS_DATA = {{ canvas_plants_json | safe }};
 
   makeResizable(leftHandle, leftSidebar, 'left');
   makeResizable(rightHandle, rightPanel, 'right');
+})();
+</script>
+
+<script>
+// ── Plant Recommendations Panel ────────────────────────────────────────────
+(function () {
+  const GARDEN_ID  = {{ garden.id }};
+  const recsSection = document.getElementById('rp-recommendations-section');
+  const recsList    = document.getElementById('rp-recs-list');
+  const recsEmpty   = document.getElementById('rp-recs-empty');
+  const recsLoading = document.getElementById('rp-recs-loading');
+
+  async function loadRecommendations() {
+    if (!recsList) return;
+    recsList.innerHTML = '';
+    if (recsEmpty)   recsEmpty.style.display   = 'none';
+    if (recsLoading) recsLoading.style.display  = 'block';
+
+    try {
+      const res  = await fetch(`/api/recommendations?garden_id=${GARDEN_ID}&top_n=5`);
+      const data = await res.json();
+      if (recsLoading) recsLoading.style.display = 'none';
+
+      const recs = data.recommendations || [];
+      if (!recs.length) {
+        if (recsEmpty) recsEmpty.style.display = 'block';
+        return;
+      }
+      recs.forEach(rec => {
+        const card = document.createElement('div');
+        card.className = 'rp-rec-card';
+
+        const imgHtml = rec.image_url
+          ? `<img src="${rec.image_url}" class="rp-rec-img" alt="${rec.name}" loading="lazy">`
+          : `<div class="rp-rec-img rp-rec-img--placeholder"></div>`;
+
+        const scorePct = Math.round(Math.min(rec.score * 100, 100));
+        card.innerHTML = `
+          ${imgHtml}
+          <div class="rp-rec-body">
+            <div class="rp-rec-name">${rec.name}</div>
+            <div class="rp-rec-reason">${rec.reason}</div>
+            <div class="rp-rec-score-wrap">
+              <div class="rp-rec-score-bar" style="width:${scorePct}%"></div>
+            </div>
+          </div>
+          <button class="rp-rec-add-btn toolbar-btn"
+                  data-library-id="${rec.plant_id}"
+                  title="Add ${rec.name} to this garden">+</button>
+        `;
+        recsList.appendChild(card);
+      });
+
+      // "Add to Garden" — POST /library/<id>/add with garden_id
+      recsList.querySelectorAll('.rp-rec-add-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const libId = btn.dataset.libraryId;
+          const form  = new FormData();
+          form.append('garden_id', GARDEN_ID);
+          btn.disabled = true;
+          btn.textContent = '✓';
+          try {
+            await fetch(`/library/${libId}/add`, { method: 'POST', body: form });
+          } catch (_) {
+            btn.disabled = false;
+            btn.textContent = '+';
+          }
+        });
+      });
+    } catch (err) {
+      if (recsLoading) recsLoading.style.display = 'none';
+      if (recsEmpty) {
+        recsEmpty.textContent = 'Could not load recommendations.';
+        recsEmpty.style.display = 'block';
+      }
+    }
+  }
+
+  // Load on page open
+  loadRecommendations();
+
+  // Expose to the refresh button
+  window.loadRecommendations = loadRecommendations;
+
+  // Hide recommendations when care panel opens, restore when closed
+  const careClose = document.getElementById('rp-care-close');
+  const bulkClose = document.getElementById('rp-bulk-close');
+
+  function hideRecs() {
+    if (recsSection) recsSection.style.display = 'none';
+  }
+  function showRecs() {
+    if (recsSection) recsSection.style.display = '';
+  }
+
+  // Observe the care section visibility to toggle recs
+  const careSection = document.getElementById('rp-plant-care-section');
+  const bulkSection = document.getElementById('rp-bulk-care-section');
+
+  if (careSection && bulkSection) {
+    new MutationObserver(() => {
+      const careOpen = careSection.style.display !== 'none';
+      const bulkOpen = bulkSection.style.display !== 'none';
+      if (careOpen || bulkOpen) hideRecs(); else showRecs();
+    }).observe(careSection, { attributes: true, attributeFilter: ['style'] });
+
+    new MutationObserver(() => {
+      const careOpen = careSection.style.display !== 'none';
+      const bulkOpen = bulkSection.style.display !== 'none';
+      if (careOpen || bulkOpen) hideRecs(); else showRecs();
+    }).observe(bulkSection, { attributes: true, attributeFilter: ['style'] });
+  }
 })();
 </script>
 {% endblock %}

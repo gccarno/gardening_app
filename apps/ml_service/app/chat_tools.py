@@ -210,6 +210,20 @@ TOOL_SCHEMAS = [
     },
 ]
 
+# Ollama / OpenAI-style tool schemas (converted from TOOL_SCHEMAS at import time)
+# Ollama 0.3+ accepts `tools` in this format for models that support tool calling (llama3.1+).
+_OLLAMA_TOOL_SCHEMAS = [
+    {
+        'type': 'function',
+        'function': {
+            'name':        t['name'],
+            'description': t['description'],
+            'parameters':  t['input_schema'],
+        },
+    }
+    for t in TOOL_SCHEMAS
+]
+
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -381,6 +395,13 @@ def _tool_check_planting_calendar(input_data: dict, garden) -> dict:
 
     if entry.days_to_harvest:
         result['days_to_harvest'] = entry.days_to_harvest
+
+    has_timing = any(k in result for k in ('start_indoors', 'transplant', 'direct_sow'))
+    if not has_timing:
+        result['note'] = (
+            'No planting timing data is available for this plant in the database. '
+            'Use general knowledge to advise based on plant type and zone.'
+        )
 
     return result
 
@@ -744,6 +765,47 @@ def execute_tool(name: str, input_data: dict, garden) -> dict:
 
 # ── Agentic loop ──────────────────────────────────────────────────────────────
 
+def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5) -> str:
+    """
+    Agentic loop for Ollama (llama3.1+) using the OpenAI-compatible tool-calling API.
+    Passes the full conversation history and supports multi-round tool use.
+    """
+    import requests
+    base  = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+    model = os.environ.get('LLM_MODEL') or 'llama3.1'
+
+    working = [{'role': 'system', 'content': system}] + list(messages)
+
+    for _ in range(max_rounds):
+        resp = requests.post(
+            f'{base}/api/chat',
+            json={
+                'model':    model,
+                'messages': working,
+                'tools':    _OLLAMA_TOOL_SCHEMAS,
+                'stream':   False,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        msg = resp.json()['message']   # {'role': 'assistant', 'content': ..., 'tool_calls': [...]}
+        working.append(msg)
+
+        tool_calls = msg.get('tool_calls') or []
+        if not tool_calls:
+            return (msg.get('content') or '').strip() or 'Done.'
+
+        for tc in tool_calls:
+            fn   = tc['function']
+            args = fn.get('arguments', {})
+            if isinstance(args, str):
+                args = json.loads(args)
+            result = execute_tool(fn['name'], args, garden)
+            working.append({'role': 'tool', 'content': json.dumps(result)})
+
+    return 'I ran into a loop. Please try rephrasing your question.'
+
+
 def run_agentic_loop(
     system: str,
     messages: list,
@@ -758,8 +820,11 @@ def run_agentic_loop(
     """
     from apps.ml_service.app.llm_provider import PROVIDER, complete as _llm_complete
 
+    if PROVIDER == 'ollama':
+        return _run_ollama_loop(system, messages, garden, max_tool_rounds)
+
     if PROVIDER != 'anthropic':
-        # Non-Anthropic providers: pass the last user message only
+        # Other non-Anthropic providers: pass the last user message only (no tool support)
         last_user = next(
             (m['content'] for m in reversed(messages) if m['role'] == 'user'), ''
         )

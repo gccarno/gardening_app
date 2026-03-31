@@ -21,5 +21,17 @@
   <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
+  <footer class="app-footer">
+    <div class="app-footer__inner">
+      <span class="app-footer__brand">🌱 Garden Planner</span>
+      <nav class="app-footer__links">
+        <a href="{{ url_for('library') }}">Plant Library</a>
+        <a href="{{ url_for('gardens') }}">My Gardens</a>
+        <a href="https://en.wikipedia.org/wiki/Hardiness_zone" target="_blank" rel="noopener">USDA Zones ↗</a>
+        <a href="https://www.almanac.com/gardening/planting-calendar" target="_blank" rel="noopener">Planting Calendar ↗</a>
+        <a href="https://open-meteo.com" target="_blank" rel="noopener">Weather via Open-Meteo ↗</a>
+      </nav>
+    </div>
+  </footer>
 </body>
 </html>

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
@@ -127,9 +129,82 @@ class PlantLibrary(db.Model):
     family                  = db.Column(db.String(100), nullable=True)
     layer                   = db.Column(db.String(100), nullable=True)
     edible_parts            = db.Column(db.String(200), nullable=True)
+    # OpenFarm (CC0 — archived via Wayback Machine)
+    openfarm_id             = db.Column(db.String(30), nullable=True)
+    openfarm_slug           = db.Column(db.String(100), nullable=True)
+    # Trefle (https://trefle.io)
+    trefle_id             = db.Column(db.Integer, nullable=True)
+    trefle_slug           = db.Column(db.String(100), nullable=True)
+    toxicity              = db.Column(db.String(20), nullable=True)    # none/low/medium/high
+    duration              = db.Column(db.String(50), nullable=True)    # Annual/Biennial/Perennial
+    ligneous_type         = db.Column(db.String(50), nullable=True)    # liana/subshrub/shrub/tree/parasite
+    growth_habit          = db.Column(db.String(100), nullable=True)
+    growth_form           = db.Column(db.String(100), nullable=True)
+    growth_rate           = db.Column(db.String(50), nullable=True)    # slow/moderate/fast
+    nitrogen_fixation     = db.Column(db.String(30), nullable=True)
+    vegetable             = db.Column(db.Boolean, nullable=True)
+    observations          = db.Column(db.Text, nullable=True)
+    average_height_cm     = db.Column(db.Integer, nullable=True)
+    maximum_height_cm     = db.Column(db.Integer, nullable=True)
+    spread_cm             = db.Column(db.Integer, nullable=True)
+    row_spacing_cm        = db.Column(db.Integer, nullable=True)
+    minimum_root_depth_cm = db.Column(db.Integer, nullable=True)
+    soil_nutriments       = db.Column(db.Integer, nullable=True)       # 0–10 (oligotrophic→hypereutrophic)
+    soil_salinity         = db.Column(db.Integer, nullable=True)       # 0–10 (untolerant→hyperhaline)
+    atmospheric_humidity  = db.Column(db.Integer, nullable=True)       # 0–10 (≤10%→≥90%)
+    precipitation_min_mm  = db.Column(db.Integer, nullable=True)
+    precipitation_max_mm  = db.Column(db.Integer, nullable=True)
+    bloom_months          = db.Column(db.Text, nullable=True)          # JSON array e.g. [5,6,7]
+    fruit_months          = db.Column(db.Text, nullable=True)          # JSON array
+    growth_months         = db.Column(db.Text, nullable=True)          # JSON array
+    flower_color          = db.Column(db.String(100), nullable=True)
+    flower_conspicuous    = db.Column(db.Boolean, nullable=True)
+    foliage_color         = db.Column(db.String(100), nullable=True)
+    foliage_texture       = db.Column(db.String(30), nullable=True)    # fine/medium/coarse
+    leaf_retention        = db.Column(db.Boolean, nullable=True)       # True=evergreen
+    fruit_color           = db.Column(db.String(100), nullable=True)
+    fruit_conspicuous     = db.Column(db.Boolean, nullable=True)
+    fruit_shape           = db.Column(db.String(100), nullable=True)
+    seed_persistence      = db.Column(db.Boolean, nullable=True)
+    # Perenual (https://perenual.com)
+    poisonous_to_pets    = db.Column(db.Boolean, nullable=True)
+    poisonous_to_humans  = db.Column(db.Boolean, nullable=True)
+    drought_tolerant     = db.Column(db.Boolean, nullable=True)
+    salt_tolerant        = db.Column(db.Boolean, nullable=True)
+    thorny               = db.Column(db.Boolean, nullable=True)
+    invasive             = db.Column(db.Boolean, nullable=True)
+    rare                 = db.Column(db.Boolean, nullable=True)
+    tropical             = db.Column(db.Boolean, nullable=True)
+    indoor               = db.Column(db.Boolean, nullable=True)
+    cuisine              = db.Column(db.Boolean, nullable=True)
+    medicinal            = db.Column(db.Boolean, nullable=True)
+    attracts             = db.Column(db.Text, nullable=True)       # JSON array e.g. ["bees","butterflies"]
+    propagation_methods  = db.Column(db.Text, nullable=True)       # JSON array e.g. ["Seed","Division"]
+    harvest_season       = db.Column(db.String(50), nullable=True) # Spring/Summer/Fall/Winter
+    harvest_method       = db.Column(db.String(100), nullable=True)
+    fruiting_season      = db.Column(db.String(50), nullable=True)
+    pruning_months       = db.Column(db.Text, nullable=True)       # JSON array of month names
+    images = db.relationship('PlantLibraryImage', backref='library_entry',
+                             lazy=True, cascade='all, delete-orphan',
+                             order_by='PlantLibraryImage.created_at')
 
     def __repr__(self):
         return f'<PlantLibrary {self.name}>'
+
+
+class PlantLibraryImage(db.Model):
+    id               = db.Column(db.Integer, primary_key=True)
+    plant_library_id = db.Column(db.Integer, db.ForeignKey('plant_library.id'), nullable=False)
+    filename         = db.Column(db.String(200), nullable=False)
+    source           = db.Column(db.String(30), nullable=False)  # manual, perenual, wikimedia, inaturalist, openverse, pexels
+    source_url       = db.Column(db.Text, nullable=True)
+    attribution      = db.Column(db.Text, nullable=True)         # e.g. "Author / CC-BY-SA 4.0"
+    file_hash        = db.Column(db.String(64), unique=True, nullable=False)  # SHA-256 hex
+    is_primary       = db.Column(db.Boolean, nullable=False, default=False)
+    created_at       = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<PlantLibraryImage plant={self.plant_library_id} {self.filename}>'
 
 
 class CanvasPlant(db.Model):
@@ -151,6 +226,15 @@ class CanvasPlant(db.Model):
 
     def __repr__(self):
         return f'<CanvasPlant id={self.id}>'
+
+
+class AppSetting(db.Model):
+    """Single-user app settings stored as key/value pairs."""
+    key   = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.Text, nullable=True)
+
+    def __repr__(self):
+        return f'<AppSetting {self.key}={self.value}>'
 
 
 class Task(db.Model):

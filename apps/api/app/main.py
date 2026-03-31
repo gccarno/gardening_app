@@ -1031,8 +1031,90 @@ def create_app():
 
     @app.route('/plants/<int:plant_id>')
     def plant_detail(plant_id):
+        import json as _json
         plant = Plant.query.get_or_404(plant_id)
-        return render_template('plant_detail.html', plant=plant)
+        entry = plant.library_entry
+        tab = request.args.get('tab', 'my-plant')
+
+        good_neighbors = bad_neighbors = how_to_grow = faqs = nutrition = None
+        calendar_rows = []
+        selected_zone = None
+        bloom_months = fruit_months = growth_months = None
+
+        if entry:
+            def _parse(col):
+                try:
+                    return _json.loads(col) if col else None
+                except Exception:
+                    return None
+
+            good_neighbors = _parse(entry.good_neighbors)
+            bad_neighbors  = _parse(entry.bad_neighbors)
+            how_to_grow    = _parse(entry.how_to_grow)
+            faqs           = _parse(entry.faqs)
+            nutrition      = _parse(entry.nutrition)
+
+            _MONTH_NAMES = {
+                'jan':'January','feb':'February','mar':'March','apr':'April',
+                'may':'May','jun':'June','jul':'July','aug':'August',
+                'sep':'September','oct':'October','nov':'November','dec':'December'
+            }
+            def _months(col):
+                raw = _parse(col)
+                if not raw:
+                    return None
+                return ', '.join(_MONTH_NAMES.get(str(m).lower(), str(m)) for m in raw)
+
+            bloom_months  = _months(entry.bloom_months)
+            fruit_months  = _months(entry.fruit_months)
+            growth_months = _months(entry.growth_months)
+
+            if entry.sow_indoor_weeks is not None or entry.direct_sow_offset is not None or entry.transplant_offset is not None:
+                from datetime import datetime, timedelta
+                def _frost_date(s):
+                    if s in ('none', 'rare', 'unknown'):
+                        return None
+                    try:
+                        return datetime.strptime(f'{s} 2024', '%b %d %Y')
+                    except Exception:
+                        return None
+
+                for zone_num in range(1, 14):
+                    last_spring, first_fall = _FROST_DATES.get(str(zone_num), ('unknown', 'unknown'))
+                    frost = _frost_date(last_spring)
+                    if not frost:
+                        continue
+                    row = {'zone': zone_num}
+                    if entry.sow_indoor_weeks is not None:
+                        row['start_indoors'] = (frost - timedelta(weeks=entry.sow_indoor_weeks)).strftime('%b %d')
+                    if entry.direct_sow_offset is not None:
+                        row['direct_sow'] = (frost + timedelta(weeks=entry.direct_sow_offset)).strftime('%b %d')
+                    if entry.transplant_offset is not None:
+                        row['transplant'] = (frost + timedelta(weeks=entry.transplant_offset)).strftime('%b %d')
+                    row['last_frost'] = last_spring
+                    row['first_fall_frost'] = first_fall
+                    calendar_rows.append(row)
+
+            g = Garden.query.filter(Garden.usda_zone.isnot(None)).first()
+            if g and g.usda_zone:
+                z = ''.join(filter(str.isdigit, g.usda_zone))
+                selected_zone = int(z) if z else None
+
+        return render_template('plant_detail.html',
+            plant=plant,
+            entry=entry,
+            tab=tab,
+            good_neighbors=good_neighbors,
+            bad_neighbors=bad_neighbors,
+            how_to_grow=how_to_grow,
+            faqs=faqs,
+            nutrition=nutrition,
+            calendar_rows=calendar_rows,
+            selected_zone=selected_zone,
+            bloom_months=bloom_months,
+            fruit_months=fruit_months,
+            growth_months=growth_months,
+        )
 
     @app.route('/plants/<int:plant_id>/edit', methods=['POST'])
     def edit_plant(plant_id):

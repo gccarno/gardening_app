@@ -7,10 +7,15 @@ dependencies = [
     "flask-sqlalchemy",
     "python-dotenv",
     "requests",
+    "anthropic",
+    "scikit-learn",
+    "numpy",
+    "pandas",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+eda = ["matplotlib", "seaborn", "jupyter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,7 +9,7 @@
 
 <form method="post" style="max-width:760px;">
 
-  {# ── Basic Info ──────────────────────────────────────────── #}
+  {# -- Basic Info -- #}
   <fieldset class="edit-section">
     <legend>Basic Info</legend>
     <div class="edit-grid">
@@ -53,7 +53,7 @@
     </div>
   </fieldset>
 
-  {# ── Growing Conditions ──────────────────────────────────── #}
+  {# -- Growing Conditions -- #}
   <fieldset class="edit-section">
     <legend>Growing Conditions</legend>
     <div class="edit-grid">
@@ -80,7 +80,7 @@
     </div>
   </fieldset>
 
-  {# ── Temperature & Zones ─────────────────────────────────── #}
+  {# -- Temperature & Zones -- #}
   <fieldset class="edit-section">
     <legend>Temperature &amp; Hardiness Zones</legend>
     <div class="edit-grid">
@@ -103,7 +103,7 @@
     </div>
   </fieldset>
 
-  {# ── Soil ────────────────────────────────────────────────── #}
+  {# -- Soil -- #}
   <fieldset class="edit-section">
     <legend>Soil</legend>
     <div class="edit-grid">
@@ -122,7 +122,7 @@
     </div>
   </fieldset>
 
-  {# ── Planting Calendar Offsets ───────────────────────────── #}
+  {# -- Planting Calendar Offsets -- #}
   <fieldset class="edit-section">
     <legend>Planting Calendar Offsets <span style="font-weight:normal;font-size:0.8rem;">(weeks relative to last spring frost)</span></legend>
     <div class="edit-grid">
@@ -146,7 +146,7 @@
     </div>
   </fieldset>
 
-  {# ── Notes ───────────────────────────────────────────────── #}
+  {# -- Notes -- #}
   <fieldset class="edit-section">
     <legend>Notes</legend>
     <label style="display:block;margin-bottom:0.75rem;">
@@ -159,35 +159,200 @@
     </label>
   </fieldset>
 
-  {# ── Advanced (JSON) ─────────────────────────────────────── #}
-  <details class="edit-section" style="border:1px solid #d8e8d6;border-radius:6px;padding:1rem;">
-    <summary style="font-weight:600;cursor:pointer;color:#3a5c37;">Advanced (JSON fields)</summary>
-    <p style="font-size:0.8rem;color:#7a907a;margin:0.5rem 0 1rem;">
-      These fields store structured data as JSON. Invalid JSON will be ignored and the existing value kept.
-    </p>
-    <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem;">
-      {% for field, label, hint in [
-          ('good_neighbors',  'Good Neighbors',  '["Basil", "Carrots"]'),
-          ('bad_neighbors',   'Bad Neighbors',   '["Fennel"]'),
-          ('how_to_grow',     'How to Grow',     '{"starting":"…","seedling":"…","vegetative":"…","flowering":"…","harvest":"…"}'),
-          ('faqs',            'FAQs',            '[{"q":"Why are leaves yellow?","a":"…"}]'),
-          ('nutrition',       'Nutrition',       '{"serving_size":"100g","calories":25,"protein_g":2,"carbs_g":5,"fiber_g":2,"fat_g":0.3,"vitamins":["Vitamin C: 89mg"]}'),
+  {# -- Companion Planting -- #}
+  <fieldset class="edit-section">
+    <legend>Companion Planting</legend>
+    <div class="edit-grid">
+      <label style="grid-column:1/-1;">
+        <span style="color:#3a6b35;font-weight:600;">👍 Good Neighbors</span>
+        <span class="field-hint">One plant per line</span>
+        <textarea id="good_neighbors_lines" rows="5" style="width:100%;margin-top:0.3rem;"></textarea>
+      </label>
+      <label style="grid-column:1/-1;">
+        <span style="color:#c0392b;font-weight:600;">👎 Bad Neighbors</span>
+        <span class="field-hint">One plant per line</span>
+        <textarea id="bad_neighbors_lines" rows="5" style="width:100%;margin-top:0.3rem;"></textarea>
+      </label>
+    </div>
+    <input type="hidden" name="good_neighbors" id="good_neighbors">
+    <input type="hidden" name="bad_neighbors" id="bad_neighbors">
+  </fieldset>
+
+  {# -- How to Grow -- #}
+  <fieldset class="edit-section">
+    <legend>How to Grow</legend>
+    <div style="display:flex;flex-direction:column;gap:0.75rem;margin-top:0.25rem;">
+      {% for key, icon, lbl in [
+        ('starting',   '🪴', 'Starting'),
+        ('seedling',   '🌱', 'Seedling Stage'),
+        ('vegetative', '🌿', 'Vegetative Stage'),
+        ('flowering',  '🌸', 'Flowering Stage'),
+        ('harvest',    '🌽', 'Harvest Stage'),
       ] %}
-      <label>
-        {{ label }}
-        <span style="font-size:0.75rem;color:#9aaa9a;font-weight:normal;">— e.g. <code>{{ hint }}</code></span>
-        <textarea name="{{ field }}" rows="3"
-                  style="width:100%;margin-top:0.25rem;font-family:monospace;font-size:0.8rem;">{{ entry|attr(field) or '' }}</textarea>
+      <label class="htg-label">
+        {{ icon }} {{ lbl }}
+        <textarea id="htg_{{ key }}" rows="3"></textarea>
       </label>
       {% endfor %}
     </div>
-  </details>
+    <input type="hidden" name="how_to_grow" id="how_to_grow">
+  </fieldset>
+
+  {# -- FAQs -- #}
+  <fieldset class="edit-section">
+    <legend>FAQs</legend>
+    <div id="faq-list" style="display:flex;flex-direction:column;gap:1rem;margin-top:0.25rem;"></div>
+    <button type="button" id="add-faq-btn" class="btn-add">+ Add FAQ</button>
+    <input type="hidden" name="faqs" id="faqs">
+  </fieldset>
+
+  {# -- Nutrition -- #}
+  <fieldset class="edit-section">
+    <legend>Nutrition <span style="font-weight:normal;font-size:0.8rem;">(per serving)</span></legend>
+    <div class="edit-grid">
+      <label style="grid-column:1/-1;">
+        Serving Size
+        <input type="text" id="nut_serving_size" placeholder="e.g. 100g">
+      </label>
+      <label>Calories <input type="number" id="nut_calories" min="0"></label>
+      <label>Protein (g) <input type="number" id="nut_protein_g" min="0" step="0.1"></label>
+      <label>Carbohydrates (g) <input type="number" id="nut_carbs_g" min="0" step="0.1"></label>
+      <label>Dietary Fiber (g) <input type="number" id="nut_fiber_g" min="0" step="0.1"></label>
+      <label>Total Fat (g) <input type="number" id="nut_fat_g" min="0" step="0.1"></label>
+      <label style="grid-column:1/-1;">
+        Vitamins &amp; Minerals
+        <span class="field-hint">One per line — e.g. "Vitamin C: 89mg"</span>
+        <textarea id="nut_vitamins" rows="4" style="width:100%;margin-top:0.3rem;"></textarea>
+      </label>
+      <label style="grid-column:1/-1;">
+        Health Benefits / Notes
+        <textarea id="nut_notes" rows="3" style="width:100%;margin-top:0.3rem;"></textarea>
+      </label>
+    </div>
+    <input type="hidden" name="nutrition" id="nutrition">
+  </fieldset>
 
   <div style="margin-top:1.5rem;display:flex;gap:0.75rem;">
     <button type="submit" class="btn-primary">Save Changes</button>
     <a href="{{ url_for('library_detail', entry_id=entry.id) }}" class="btn-secondary">Cancel</a>
   </div>
 </form>
+
+<script>
+// Existing JSON values from the database
+const _HTG  = JSON.parse({{ entry.how_to_grow    | tojson }});
+const _GOOD = JSON.parse({{ entry.good_neighbors  | tojson }});
+const _BAD  = JSON.parse({{ entry.bad_neighbors   | tojson }});
+const _FAQS = JSON.parse({{ entry.faqs            | tojson }});
+const _NUT  = JSON.parse({{ entry.nutrition       | tojson }});
+
+// -- How to Grow: pre-populate textareas --
+if (_HTG) {
+  ['starting','seedling','vegetative','flowering','harvest'].forEach(function(k) {
+    var el = document.getElementById('htg_' + k);
+    if (el && _HTG[k]) el.value = _HTG[k];
+  });
+}
+
+// -- Companion Planting: pre-populate line textareas --
+if (_GOOD) document.getElementById('good_neighbors_lines').value = _GOOD.join('\n');
+if (_BAD)  document.getElementById('bad_neighbors_lines').value  = _BAD.join('\n');
+
+// -- FAQs: dynamic add/remove --
+var faqData = (_FAQS && Array.isArray(_FAQS)) ? _FAQS.map(function(f) { return {q: f.q||'', a: f.a||''}; }) : [];
+
+function escAttr(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderFaqs() {
+  var list = document.getElementById('faq-list');
+  list.innerHTML = '';
+  faqData.forEach(function(item, i) {
+    var div = document.createElement('div');
+    div.className = 'faq-edit-item';
+    div.innerHTML =
+      '<div class="faq-edit-header">' +
+        '<span class="faq-edit-num">FAQ #' + (i+1) + '</span>' +
+        '<button type="button" class="faq-remove-btn" data-idx="' + i + '">✕ Remove</button>' +
+      '</div>' +
+      '<label class="faq-field-label">Question' +
+        '<input type="text" class="faq-q-input" data-idx="' + i + '" value="' + escAttr(item.q) + '">' +
+      '</label>' +
+      '<label class="faq-field-label">Answer' +
+        '<textarea class="faq-a-input" data-idx="' + i + '" rows="2">' + escAttr(item.a) + '</textarea>' +
+      '</label>';
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.faq-remove-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      faqData.splice(parseInt(this.dataset.idx), 1);
+      renderFaqs();
+    });
+  });
+  list.querySelectorAll('.faq-q-input').forEach(function(inp) {
+    inp.addEventListener('input', function() { faqData[parseInt(this.dataset.idx)].q = this.value; });
+  });
+  list.querySelectorAll('.faq-a-input').forEach(function(ta) {
+    ta.addEventListener('input', function() { faqData[parseInt(this.dataset.idx)].a = this.value; });
+  });
+}
+
+document.getElementById('add-faq-btn').addEventListener('click', function() {
+  faqData.push({q:'', a:''});
+  renderFaqs();
+});
+renderFaqs();
+
+// -- Nutrition: pre-populate fields --
+if (_NUT) {
+  var nutFields = ['serving_size','calories','protein_g','carbs_g','fiber_g','fat_g'];
+  nutFields.forEach(function(k) {
+    var el = document.getElementById('nut_' + k);
+    if (el && _NUT[k] !== undefined && _NUT[k] !== null) el.value = _NUT[k];
+  });
+  if (_NUT.vitamins && Array.isArray(_NUT.vitamins))
+    document.getElementById('nut_vitamins').value = _NUT.vitamins.join('\n');
+  if (_NUT.notes)
+    document.getElementById('nut_notes').value = _NUT.notes;
+}
+
+// -- On submit: serialize structured fields into hidden JSON inputs --
+document.querySelector('form').addEventListener('submit', function() {
+  // How to Grow
+  var htg = {};
+  ['starting','seedling','vegetative','flowering','harvest'].forEach(function(k) {
+    var v = document.getElementById('htg_' + k).value.trim();
+    if (v) htg[k] = v;
+  });
+  document.getElementById('how_to_grow').value = Object.keys(htg).length ? JSON.stringify(htg) : '';
+
+  // Neighbors
+  var goodLines = document.getElementById('good_neighbors_lines').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  document.getElementById('good_neighbors').value = goodLines.length ? JSON.stringify(goodLines) : '';
+  var badLines  = document.getElementById('bad_neighbors_lines').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  document.getElementById('bad_neighbors').value  = badLines.length  ? JSON.stringify(badLines)  : '';
+
+  // FAQs
+  var validFaqs = faqData.filter(function(f){ return f.q.trim() || f.a.trim(); });
+  document.getElementById('faqs').value = validFaqs.length ? JSON.stringify(validFaqs) : '';
+
+  // Nutrition
+  var nut = {};
+  var ss = document.getElementById('nut_serving_size').value.trim();
+  if (ss) nut.serving_size = ss;
+  ['calories','protein_g','carbs_g','fiber_g','fat_g'].forEach(function(k) {
+    var v = document.getElementById('nut_' + k).value;
+    if (v !== '') nut[k] = Number(v);
+  });
+  var vitLines = document.getElementById('nut_vitamins').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  if (vitLines.length) nut.vitamins = vitLines;
+  var nutNotes = document.getElementById('nut_notes').value.trim();
+  if (nutNotes) nut.notes = nutNotes;
+  document.getElementById('nutrition').value = Object.keys(nut).length ? JSON.stringify(nut) : '';
+});
+</script>
 
 <style>
 .edit-section {
@@ -206,7 +371,7 @@
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.75rem;
 }
-.edit-grid label {
+.edit-grid label, .edit-grid > label {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -214,7 +379,8 @@
   color: #4a5e4a;
 }
 .edit-grid input, .edit-grid select,
-.edit-section textarea {
+.edit-section textarea, .edit-section input[type="text"],
+.edit-section input[type="number"] {
   font: inherit;
   padding: 0.38rem 0.5rem;
   border: 1px solid #c0d4be;
@@ -223,10 +389,94 @@
   color: #2d3a2d;
 }
 .edit-grid input:focus, .edit-grid select:focus,
-.edit-section textarea:focus {
+.edit-section textarea:focus, .edit-section input:focus {
   outline: 2px solid #7ab87a;
   border-color: #7ab87a;
 }
+.field-hint {
+  font-size: 0.75rem;
+  color: #9aaa9a;
+  font-weight: normal;
+  display: block;
+  margin-top: 0.1rem;
+}
+.htg-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  color: #4a5e4a;
+  font-weight: 600;
+}
+.htg-label textarea {
+  font: inherit;
+  padding: 0.38rem 0.5rem;
+  border: 1px solid #c0d4be;
+  border-radius: 4px;
+  background: #fbfefb;
+  color: #2d3a2d;
+  font-weight: normal;
+  width: 100%;
+}
+.htg-label textarea:focus { outline: 2px solid #7ab87a; border-color: #7ab87a; }
+
+.faq-edit-item {
+  border: 1px solid #e0ead0;
+  border-radius: 5px;
+  padding: 0.75rem;
+  background: #fafdf8;
+}
+.faq-edit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.faq-edit-num { font-size: 0.8rem; font-weight: 700; color: #5a7a57; }
+.faq-remove-btn {
+  font-size: 0.75rem;
+  color: #c0392b;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.faq-remove-btn:hover { text-decoration: underline; }
+.faq-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.875rem;
+  color: #4a5e4a;
+  margin-bottom: 0.4rem;
+}
+.faq-field-label input, .faq-field-label textarea {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #c0d4be;
+  border-radius: 4px;
+  background: #fbfefb;
+  color: #2d3a2d;
+  width: 100%;
+}
+.faq-field-label input:focus, .faq-field-label textarea:focus {
+  outline: 2px solid #7ab87a;
+  border-color: #7ab87a;
+}
+
+.btn-add {
+  margin-top: 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.75rem;
+  background: #f0f5ef;
+  border: 1px solid #c0d4be;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #3a5c37;
+}
+.btn-add:hover { background: #e0eedf; }
+
 .req { color: #c0392b; }
 .btn-primary {
   background: #3a6b35;

@@ -1604,3 +1604,44 @@ details[open] .faq-q::after { content: '▾'; }
 }
 
 .app-footer__links a:hover { color: #3a5c37; text-decoration: underline; }
+
+/* ── Gantt / Timeline chart ──────────────────────────────────────────────── */
+.gantt-legend { display:flex; align-items:center; gap:1rem; font-size:0.82rem; color:#5a7a57; margin-bottom:1rem; flex-wrap:wrap; }
+.gantt-swatch { display:inline-block; width:14px; height:14px; border-radius:3px; vertical-align:middle; margin-right:0.3rem; }
+.gantt-swatch--indoor  { background:#a8d5c2; }
+.gantt-swatch--germ    { background:#5fb8a0; }
+.gantt-swatch--grow    { background:#5a9e54; }
+.gantt-swatch--harvest { background:#d4a84b; border-radius:50%; width:12px; height:12px; }
+.gantt-swatch--today   { background:#b84040; width:3px; border-radius:0; height:14px; }
+
+.gantt-chart { overflow-x:auto; border:1px solid #d8e8d6; border-radius:6px; background:white; }
+.gantt-inner { min-width:700px; padding:0 0.75rem 0.75rem; }
+
+.gantt-header         { display:flex; align-items:stretch; position:sticky; top:0; z-index:10; background:#f0f7ef; border-bottom:2px solid #b8d4b6; border-radius:6px 6px 0 0; }
+.gantt-header__spacer { width:140px; min-width:140px; flex-shrink:0; }
+.gantt-header__months { flex:1; position:relative; height:28px; }
+.gantt-header__month-label { position:absolute; font-size:0.72rem; font-weight:700; color:#3a5c37; white-space:nowrap; top:50%; transform:translate(-50%,-50%); pointer-events:none; }
+
+.gantt-row { display:flex; align-items:center; min-height:36px; border-bottom:1px solid #eef4ee; }
+.gantt-row:last-child { border-bottom:none; }
+.gantt-row:nth-child(even) { background:#f6f9f4; }
+.gantt-row--planning .gantt-label { color:#7a907a; }
+
+.gantt-label { width:140px; min-width:140px; padding:0 0.75rem 0 0; font-size:0.85rem; font-weight:600; color:#2d3a2d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gantt-label a { color:inherit; text-decoration:none; }
+.gantt-label a:hover { color:#3a6b35; text-decoration:underline; }
+
+.gantt-bar-area  { flex:1; position:relative; height:28px; margin:4px 0; }
+.gantt-grid-line { position:absolute; top:0; bottom:0; width:1px; background:#e0ece0; z-index:0; pointer-events:none; }
+.gantt-bar { position:absolute; height:100%; border-radius:3px; top:0; min-width:2px; z-index:1; }
+.gantt-bar--indoor           { background:#a8d5c2; }
+.gantt-bar--germ             { background:#5fb8a0; }
+.gantt-bar--growing          { background:#5a9e54; }
+.gantt-bar--growing-planning { background:#5a9e54; opacity:0.4; }
+
+.gantt-harvest-marker { position:absolute; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; background:#d4a84b; border-radius:50%; z-index:2; }
+.gantt-today-line { position:absolute; top:-4px; bottom:-4px; width:2px; background:#b84040; z-index:3; pointer-events:none; }
+
+/* .gantt-axis and .gantt-axis-label retained for compatibility; replaced by .gantt-header */
+.gantt-axis { position:relative; height:24px; margin-left:140px; border-top:1px solid #d8e8d6; font-size:0.72rem; color:#7a907a; }
+.gantt-axis-label { position:absolute; transform:translateX(-50%); white-space:nowrap; padding-top:4px; }

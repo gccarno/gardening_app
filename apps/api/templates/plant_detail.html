@@ -1,52 +1,425 @@
 {% extends "base.html" %}
 {% block title %}{{ plant.name }} — Garden Planner{% endblock %}
 {% block content %}
-<h1>{{ plant.name }}</h1>
 
-<h2>Edit Plant</h2>
-<form method="post" action="{{ url_for('edit_plant', plant_id=plant.id) }}" class="form">
-  <label>Name <input type="text" name="name" value="{{ plant.name }}" required></label>
-  <label>Type <input type="text" name="type" value="{{ plant.type or '' }}"></label>
-  <label>Planted Date <input type="date" name="planted_date" value="{{ plant.planted_date or '' }}"></label>
-  <label>Expected Harvest <input type="date" name="expected_harvest" value="{{ plant.expected_harvest or '' }}"></label>
-  <label>Notes <textarea name="notes" rows="3">{{ plant.notes or '' }}</textarea></label>
-  <button type="submit">Save Changes</button>
-</form>
-
-<h2>Beds</h2>
-{% if plant.bed_plants %}
-<ul class="card-list">
-  {% for bp in plant.bed_plants %}
-  <li class="card">
-    <a href="{{ url_for('bed_detail', bed_id=bp.bed.id) }}">{{ bp.bed.name }}</a>
-    {% if bp.bed.garden %}<span class="muted">in {{ bp.bed.garden.name }}</span>{% endif %}
-  </li>
-  {% endfor %}
-</ul>
-{% else %}
-<p class="muted">Not assigned to any bed. Use the Planner to assign.</p>
-{% endif %}
-
-<h2>Tasks</h2>
-{% if plant.tasks %}
-<ul class="card-list">
-  {% for task in plant.tasks %}
-  <li class="card {% if task.completed %}completed{% endif %}">
-    {{ task.title }}
-    {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
-    {% if task.completed %}<span class="badge">Done</span>{% endif %}
-  </li>
-  {% endfor %}
-</ul>
-{% else %}
-<p class="muted">No tasks for this plant.</p>
-{% endif %}
-
-<div class="actions">
-  <form method="post" action="{{ url_for('delete_plant', plant_id=plant.id) }}" onsubmit="return confirm('Delete {{ plant.name }}?')">
-    <button type="submit" class="btn-danger">Delete Plant</button>
-  </form>
+{# ── Header ──────────────────────────────────────────────────────────────── #}
+<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+  <h1 style="margin:0;">{{ plant.name }}</h1>
+  {% if plant.type %}<span class="lib-badge lib-badge--{{ plant.type }}">{{ plant.type }}</span>{% endif %}
+  <span class="lib-badge" style="background:#e8f5e3;color:#3a6b35;">{{ plant.status or 'planning' }}</span>
+  {% if entry %}
+  <a href="{{ url_for('library_detail', entry_id=entry.id) }}"
+     style="font-size:0.8rem;padding:0.2rem 0.65rem;background:#f0f5ef;border:1px solid #c0d4be;border-radius:4px;color:#3a5c37;text-decoration:none;">Library Entry →</a>
+  {% endif %}
 </div>
 
-<p><a href="{{ url_for('plants') }}">← Back to Plants</a></p>
+{% if entry %}
+{% if entry.scientific_name %}
+<p style="color:#7a907a;font-style:italic;margin:0 0 0.6rem;">{{ entry.scientific_name }}</p>
+{% endif %}
+<div class="plant-hero-stats" style="margin-bottom:1rem;">
+  {% if entry.sunlight %}<span class="hero-stat">☀️ {{ entry.sunlight }}</span>{% endif %}
+  {% if entry.water %}<span class="hero-stat">💧 {{ entry.water }} water</span>{% endif %}
+  {% if entry.spacing_in %}<span class="hero-stat">↔ {{ entry.spacing_in }}" spacing</span>{% endif %}
+  {% if entry.days_to_harvest %}<span class="hero-stat">🗓 {{ entry.days_to_harvest }} days to harvest</span>{% endif %}
+  {% if entry.min_zone and entry.max_zone %}<span class="hero-stat">🌍 Zones {{ entry.min_zone }}–{{ entry.max_zone }}</span>{% endif %}
+  {% if entry.temp_min_f and entry.temp_max_f %}<span class="hero-stat">🌡 {{ entry.temp_min_f }}–{{ entry.temp_max_f }}°F</span>{% endif %}
+</div>
+{% endif %}
+
+{# ── Tab bar ──────────────────────────────────────────────────────────────── #}
+<div class="plant-tabs" style="margin-top:0.5rem;">
+  <a href="?tab=my-plant"   class="plant-tab{% if tab=='my-plant' %} active{% endif %}">My Plant</a>
+  {% if entry %}
+  <a href="?tab=overview"   class="plant-tab{% if tab=='overview' %} active{% endif %}">Overview</a>
+  <a href="?tab=calendar"   class="plant-tab{% if tab=='calendar' %} active{% endif %}">Planting Calendar</a>
+  <a href="?tab=how-to"     class="plant-tab{% if tab=='how-to' %} active{% endif %}">How to Grow</a>
+  <a href="?tab=companions" class="plant-tab{% if tab=='companions' %} active{% endif %}">Companions</a>
+  <a href="?tab=soil"       class="plant-tab{% if tab=='soil' %} active{% endif %}">Soil & Care</a>
+  {% if nutrition %}
+  <a href="?tab=nutrition"  class="plant-tab{% if tab=='nutrition' %} active{% endif %}">Nutrition</a>
+  {% endif %}
+  {% if faqs %}
+  <a href="?tab=faqs"       class="plant-tab{% if tab=='faqs' %} active{% endif %}">FAQs</a>
+  {% endif %}
+  {% endif %}
+</div>
+
+{# ══ My Plant ══════════════════════════════════════════════════════════════ #}
+{% if tab == 'my-plant' %}
+<section style="margin-top:1.25rem;">
+  <h2>Edit Plant</h2>
+  <form method="post" action="{{ url_for('edit_plant', plant_id=plant.id) }}" class="form">
+    <label>Name <input type="text" name="name" value="{{ plant.name }}" required></label>
+    <label>Type <input type="text" name="type" value="{{ plant.type or '' }}"></label>
+    <label>Planted Date <input type="date" name="planted_date" value="{{ plant.planted_date or '' }}"></label>
+    <label>Expected Harvest <input type="date" name="expected_harvest" value="{{ plant.expected_harvest or '' }}"></label>
+    <label>Notes <textarea name="notes" rows="3">{{ plant.notes or '' }}</textarea></label>
+    <button type="submit">Save Changes</button>
+  </form>
+
+  <h2>Beds</h2>
+  {% if plant.bed_plants %}
+  <ul class="card-list">
+    {% for bp in plant.bed_plants %}
+    <li class="card">
+      <a href="{{ url_for('bed_detail', bed_id=bp.bed.id) }}">{{ bp.bed.name }}</a>
+      {% if bp.bed.garden %}<span class="muted">in {{ bp.bed.garden.name }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Not assigned to any bed. Use the Planner to assign.</p>
+  {% endif %}
+
+  <h2>Tasks</h2>
+  {% if plant.tasks %}
+  <ul class="card-list">
+    {% for task in plant.tasks %}
+    <li class="card {% if task.completed %}completed{% endif %}">
+      {{ task.title }}
+      {% if task.due_date %}<span class="muted">Due {{ task.due_date }}</span>{% endif %}
+      {% if task.completed %}<span class="badge">Done</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No tasks for this plant.</p>
+  {% endif %}
+
+  <div class="actions" style="margin-top:1.5rem;">
+    <form method="post" action="{{ url_for('delete_plant', plant_id=plant.id) }}" onsubmit="return confirm('Delete {{ plant.name }}?')">
+      <button type="submit" class="btn-danger">Delete Plant</button>
+    </form>
+  </div>
+</section>
+
+{# ══ Overview ══════════════════════════════════════════════════════════════ #}
+{% elif tab == 'overview' and entry %}
+<section style="margin-top:1.25rem;">
+  <dl class="details">
+    {% if entry.scientific_name %}<dt>Scientific Name</dt><dd><em>{{ entry.scientific_name }}</em></dd>{% endif %}
+    {% if entry.sunlight %}<dt>Sunlight</dt><dd>{{ entry.sunlight }}</dd>{% endif %}
+    {% if entry.water %}<dt>Watering</dt><dd>{{ entry.water }}</dd>{% endif %}
+    {% if entry.spacing_in %}<dt>Spacing</dt><dd>{{ entry.spacing_in }} inches apart</dd>{% endif %}
+    {% if entry.days_to_germination %}<dt>Germination</dt><dd>{{ entry.days_to_germination }} days</dd>{% endif %}
+    {% if entry.days_to_harvest %}<dt>Days to Harvest</dt><dd>{{ entry.days_to_harvest }} days</dd>{% endif %}
+    {% if entry.min_zone and entry.max_zone %}
+    <dt>Hardiness Zones</dt><dd>USDA Zones {{ entry.min_zone }}–{{ entry.max_zone }}</dd>
+    {% endif %}
+    {% if entry.temp_min_f and entry.temp_max_f %}
+    <dt>Temperature Range</dt><dd>{{ entry.temp_min_f }}–{{ entry.temp_max_f }}°F</dd>
+    {% endif %}
+    {% if entry.soil_ph_min and entry.soil_ph_max %}
+    <dt>Soil pH</dt><dd>{{ entry.soil_ph_min }}–{{ entry.soil_ph_max }}</dd>
+    {% endif %}
+    {% if entry.soil_type %}<dt>Soil Type</dt><dd>{{ entry.soil_type }}</dd>{% endif %}
+    {% if entry.notes %}<dt>Growing Notes</dt><dd>{{ entry.notes }}</dd>{% endif %}
+    {% if entry.family %}<dt>Plant Family</dt><dd>{{ entry.family }}</dd>{% endif %}
+    {% if entry.layer %}<dt>Garden Layer</dt><dd>{{ entry.layer }}</dd>{% endif %}
+    {% if entry.edible_parts %}<dt>Edible Parts</dt><dd>{{ entry.edible_parts }}</dd>{% endif %}
+    {% if entry.permapeople_description %}<dt>Description</dt><dd>{{ entry.permapeople_description }}</dd>{% endif %}
+  </dl>
+  {% if entry.permapeople_link %}
+  <p style="margin-top:1rem;font-size:0.8rem;color:#7a907a;">
+    Plant data sourced from <a href="{{ entry.permapeople_link }}" target="_blank" rel="noopener" style="color:#3a6b35;">Permapeople.org</a> — licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener" style="color:#3a6b35;">CC BY-SA 4.0</a>
+  </p>
+  {% endif %}
+
+  {% if entry.observations or entry.vegetable is not none or entry.toxicity or entry.duration or entry.growth_habit or entry.growth_form or entry.growth_rate or entry.ligneous_type or entry.nitrogen_fixation or entry.average_height_cm or entry.spread_cm %}
+  <h3 style="margin:1.5rem 0 0.5rem;font-size:1rem;color:#3a5c37;border-top:1px solid #e0ead0;padding-top:1rem;">Growth &amp; Classification</h3>
+  <dl class="details">
+    {% if entry.observations %}<dt>Native Range</dt><dd>{{ entry.observations }}</dd>{% endif %}
+    {% if entry.vegetable is not none %}<dt>Vegetable</dt><dd>{{ 'Yes' if entry.vegetable else 'No' }}</dd>{% endif %}
+    {% if entry.toxicity and entry.toxicity != 'none' %}<dt>Toxicity</dt><dd>{{ entry.toxicity | capitalize }}</dd>{% endif %}
+    {% if entry.duration %}<dt>Life Cycle</dt><dd>{{ entry.duration }}</dd>{% endif %}
+    {% if entry.growth_habit %}<dt>Growth Habit</dt><dd>{{ entry.growth_habit }}</dd>{% endif %}
+    {% if entry.growth_form %}<dt>Growth Form</dt><dd>{{ entry.growth_form }}</dd>{% endif %}
+    {% if entry.growth_rate %}<dt>Growth Rate</dt><dd>{{ entry.growth_rate | capitalize }}</dd>{% endif %}
+    {% if entry.ligneous_type %}<dt>Plant Structure</dt><dd>{{ entry.ligneous_type | capitalize }}</dd>{% endif %}
+    {% if entry.nitrogen_fixation %}<dt>Nitrogen Fixation</dt><dd>{{ entry.nitrogen_fixation }}</dd>{% endif %}
+    {% if entry.average_height_cm %}
+    <dt>Height</dt>
+    <dd>{{ entry.average_height_cm }} cm avg{% if entry.maximum_height_cm %} / {{ entry.maximum_height_cm }} cm max{% endif %}</dd>
+    {% endif %}
+    {% if entry.spread_cm %}<dt>Spread</dt><dd>{{ entry.spread_cm }} cm</dd>{% endif %}
+  </dl>
+  {% endif %}
+
+  {% if bloom_months or fruit_months or growth_months or entry.flower_color or entry.foliage_color or entry.foliage_texture or entry.leaf_retention is not none or entry.fruit_color or entry.fruit_shape %}
+  <h3 style="margin:1.5rem 0 0.5rem;font-size:1rem;color:#3a5c37;border-top:1px solid #e0ead0;padding-top:1rem;">Seasonal Activity &amp; Appearance</h3>
+  <dl class="details">
+    {% if bloom_months %}<dt>Bloom Months</dt><dd>{{ bloom_months }}</dd>{% endif %}
+    {% if fruit_months %}<dt>Fruit Months</dt><dd>{{ fruit_months }}</dd>{% endif %}
+    {% if growth_months %}<dt>Active Growth</dt><dd>{{ growth_months }}</dd>{% endif %}
+    {% if entry.flower_color %}
+    <dt>Flower Color</dt>
+    <dd>{{ entry.flower_color | capitalize }}{% if entry.flower_conspicuous %} <span style="color:#7a907a;font-size:0.85em;">(showy)</span>{% endif %}</dd>
+    {% endif %}
+    {% if entry.foliage_color %}<dt>Foliage Color</dt><dd>{{ entry.foliage_color | capitalize }}</dd>{% endif %}
+    {% if entry.foliage_texture %}<dt>Foliage Texture</dt><dd>{{ entry.foliage_texture | capitalize }}</dd>{% endif %}
+    {% if entry.leaf_retention is not none %}<dt>Leaf Retention</dt><dd>{{ 'Evergreen' if entry.leaf_retention else 'Deciduous' }}</dd>{% endif %}
+    {% if entry.fruit_color %}
+    <dt>Fruit Color</dt>
+    <dd>{{ entry.fruit_color | capitalize }}{% if entry.fruit_conspicuous %} <span style="color:#7a907a;font-size:0.85em;">(showy)</span>{% endif %}</dd>
+    {% endif %}
+    {% if entry.fruit_shape %}<dt>Fruit Shape</dt><dd>{{ entry.fruit_shape | capitalize }}</dd>{% endif %}
+  </dl>
+  {% endif %}
+</section>
+
+{# ══ Planting Calendar ═════════════════════════════════════════════════════ #}
+{% elif tab == 'calendar' and entry %}
+<section style="margin-top:1.25rem;">
+  {% if calendar_rows %}
+  <p class="muted" style="margin-bottom:1rem;">
+    Dates are calculated from your region's average last spring frost.
+    {% if selected_zone %}<strong>Your garden is in Zone {{ selected_zone }}.</strong>{% endif %}
+  </p>
+
+  {% set my_row = calendar_rows | selectattr('zone', 'equalto', selected_zone or 6) | first | default(None) %}
+  {% if my_row %}
+  <div class="cal-highlight">
+    <h3 style="margin:0 0 0.75rem;font-size:1rem;">Zone {{ my_row.zone }} — Your Schedule</h3>
+    <div class="cal-steps">
+      {% if my_row.start_indoors is defined %}
+      <div class="cal-step cal-step--indoor">
+        <span class="cal-step-icon">🪴</span>
+        <strong>Start Indoors</strong>
+        <span>{{ my_row.start_indoors }}</span>
+      </div>
+      {% endif %}
+      {% if my_row.direct_sow is defined %}
+      <div class="cal-step cal-step--sow">
+        <span class="cal-step-icon">🌱</span>
+        <strong>Direct Sow</strong>
+        <span>{{ my_row.direct_sow }}</span>
+      </div>
+      {% endif %}
+      {% if my_row.transplant is defined %}
+      <div class="cal-step cal-step--transplant">
+        <span class="cal-step-icon">🌿</span>
+        <strong>Transplant Out</strong>
+        <span>{{ my_row.transplant }}</span>
+      </div>
+      {% endif %}
+      <div class="cal-step cal-step--frost">
+        <span class="cal-step-icon">❄️</span>
+        <strong>Last Frost</strong>
+        <span>{{ my_row.last_frost }}</span>
+      </div>
+      <div class="cal-step cal-step--harvest">
+        <span class="cal-step-icon">🌽</span>
+        <strong>First Fall Frost</strong>
+        <span>{{ my_row.first_fall_frost }}</span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <h3 style="margin:1.5rem 0 0.75rem;font-size:1rem;">All Zones Reference</h3>
+  <div style="overflow-x:auto;">
+    <table class="lib-table">
+      <thead>
+        <tr>
+          <th>Zone</th>
+          <th>Last Spring Frost</th>
+          {% if calendar_rows[0].start_indoors is defined %}<th>🪴 Start Indoors</th>{% endif %}
+          {% if calendar_rows[0].direct_sow is defined %}<th>🌱 Direct Sow</th>{% endif %}
+          {% if calendar_rows[0].transplant is defined %}<th>🌿 Transplant Out</th>{% endif %}
+          <th>First Fall Frost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in calendar_rows %}
+        <tr{% if row.zone == selected_zone %} style="background:#f0f7ef;font-weight:600;"{% endif %}>
+          <td>Zone {{ row.zone }}</td>
+          <td>{{ row.last_frost }}</td>
+          {% if row.start_indoors is defined %}<td>{{ row.start_indoors }}</td>{% endif %}
+          {% if row.direct_sow is defined %}<td>{{ row.direct_sow }}</td>{% endif %}
+          {% if row.transplant is defined %}<td>{{ row.transplant }}</td>{% endif %}
+          <td>{{ row.first_fall_frost }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Planting calendar data not yet available for this plant.</p>
+  {% endif %}
+</section>
+
+{# ══ How to Grow ══════════════════════════════════════════════════════════ #}
+{% elif tab == 'how-to' and entry %}
+<section style="margin-top:1.25rem;">
+  {% if how_to_grow %}
+  <div class="howto-stages">
+    {% set stages = [
+      ('starting',   '🪴', 'Starting'),
+      ('seedling',   '🌱', 'Seedling Stage'),
+      ('vegetative', '🌿', 'Vegetative Stage'),
+      ('flowering',  '🌸', 'Flowering Stage'),
+      ('harvest',    '🌽', 'Harvest Stage'),
+    ] %}
+    {% for key, icon, label in stages %}
+    {% if how_to_grow[key] is defined %}
+    <div class="howto-stage">
+      <div class="howto-stage-icon">{{ icon }}</div>
+      <div class="howto-stage-body">
+        <h3 class="howto-stage-title">{{ label }}</h3>
+        <p>{{ how_to_grow[key] }}</p>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">Growing guide not yet available for this plant.</p>
+  {% endif %}
+</section>
+
+{# ══ Companions ════════════════════════════════════════════════════════════ #}
+{% elif tab == 'companions' and entry %}
+<section style="margin-top:1.25rem;">
+  <div class="companions-grid">
+    <div class="companions-col companions-col--good">
+      <h3>👍 Good Neighbors</h3>
+      {% if good_neighbors %}
+      <ul class="companion-list">
+        {% for n in good_neighbors %}<li>{{ n }}</li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No data available.</p>
+      {% endif %}
+    </div>
+    <div class="companions-col companions-col--bad">
+      <h3>👎 Bad Neighbors</h3>
+      {% if bad_neighbors %}
+      <ul class="companion-list">
+        {% for n in bad_neighbors %}<li>{{ n }}</li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No data available.</p>
+      {% endif %}
+    </div>
+  </div>
+  <p class="muted" style="margin-top:1rem;font-size:0.85rem;">
+    Companion planting improves growth, deters pests, and maximizes space. Keep bad neighbors at least 3–4 ft apart when possible.
+  </p>
+</section>
+
+{# ══ Soil & Care ══════════════════════════════════════════════════════════ #}
+{% elif tab == 'soil' and entry %}
+<section style="margin-top:1.25rem;">
+  {% if entry.soil_ph_min or entry.soil_type or entry.temp_min_f or entry.soil_nutriments is not none or entry.soil_salinity is not none or entry.atmospheric_humidity is not none or entry.precipitation_min_mm or entry.row_spacing_cm or entry.minimum_root_depth_cm %}
+  <dl class="details">
+    {% if entry.soil_ph_min and entry.soil_ph_max %}
+    <dt>Soil pH</dt>
+    <dd>
+      {{ entry.soil_ph_min }}–{{ entry.soil_ph_max }}
+      <div class="ph-bar-wrap">
+        <div class="ph-bar">
+          {% for i in range(1, 15) %}
+          <div class="ph-seg{% if (i/2 + 3.5) >= entry.soil_ph_min and (i/2 + 3.5) <= entry.soil_ph_max %} ph-seg--active{% endif %}"
+               title="pH {{ (i/2 + 3.5)|round(1) }}"></div>
+          {% endfor %}
+        </div>
+        <div class="ph-labels"><span>Acidic (4.0)</span><span>Neutral (7.0)</span><span>Alkaline (10.0)</span></div>
+      </div>
+    </dd>
+    {% endif %}
+    {% if entry.soil_type %}<dt>Soil Type</dt><dd>{{ entry.soil_type }}</dd>{% endif %}
+    {% if entry.soil_nutriments is not none %}
+    <dt>Soil Nutriments</dt>
+    <dd>{{ entry.soil_nutriments }}/10 <span style="color:#7a907a;font-size:0.85em;">(0=oligotrophic, 10=hypereutrophic)</span></dd>
+    {% endif %}
+    {% if entry.soil_salinity is not none %}
+    <dt>Salinity Tolerance</dt>
+    <dd>{{ entry.soil_salinity }}/10 <span style="color:#7a907a;font-size:0.85em;">(0=intolerant, 10=hyperhaline)</span></dd>
+    {% endif %}
+    {% if entry.atmospheric_humidity is not none %}
+    <dt>Atmospheric Humidity</dt>
+    <dd>{{ entry.atmospheric_humidity }}/10 <span style="color:#7a907a;font-size:0.85em;">(0=≤10%, 10=≥90%)</span></dd>
+    {% endif %}
+    {% if entry.precipitation_min_mm and entry.precipitation_max_mm %}
+    <dt>Precipitation</dt><dd>{{ entry.precipitation_min_mm }}–{{ entry.precipitation_max_mm }} mm/year</dd>
+    {% endif %}
+    {% if entry.temp_min_f and entry.temp_max_f %}
+    <dt>Growing Temp</dt><dd>{{ entry.temp_min_f }}–{{ entry.temp_max_f }}°F</dd>
+    {% endif %}
+    {% if entry.min_zone and entry.max_zone %}
+    <dt>Hardiness Zones</dt><dd>USDA Zones {{ entry.min_zone }}–{{ entry.max_zone }}</dd>
+    {% endif %}
+    {% if entry.sunlight %}<dt>Sunlight</dt><dd>{{ entry.sunlight }}</dd>{% endif %}
+    {% if entry.water %}<dt>Watering</dt><dd>{{ entry.water }}</dd>{% endif %}
+    {% if entry.spacing_in %}<dt>Spacing</dt><dd>{{ entry.spacing_in }} inches</dd>{% endif %}
+    {% if entry.row_spacing_cm %}<dt>Row Spacing</dt><dd>{{ entry.row_spacing_cm }} cm</dd>{% endif %}
+    {% if entry.minimum_root_depth_cm %}<dt>Min Root Depth</dt><dd>{{ entry.minimum_root_depth_cm }} cm</dd>{% endif %}
+    {% if entry.notes %}<dt>Growing Notes</dt><dd>{{ entry.notes }}</dd>{% endif %}
+  </dl>
+  {% else %}
+  <p class="muted">Soil and care data not yet available for this plant.</p>
+  {% endif %}
+</section>
+
+{# ══ Nutrition ════════════════════════════════════════════════════════════ #}
+{% elif tab == 'nutrition' and entry %}
+<section style="margin-top:1.25rem;">
+  {% if nutrition %}
+  <p class="muted" style="margin-bottom:1rem;">Per serving: <strong>{{ nutrition.serving_size }}</strong></p>
+  <div class="nutrition-panel">
+    <div class="nutrition-facts">
+      <div class="nf-header">Nutrition Facts</div>
+      <div class="nf-serving">Serving size: {{ nutrition.serving_size }}</div>
+      <div class="nf-calories-row">
+        <span>Calories</span>
+        <span class="nf-calories-val">{{ nutrition.calories }}</span>
+      </div>
+      <div class="nf-divider"></div>
+      <div class="nf-row"><span>Protein</span><span>{{ nutrition.protein_g }}g</span></div>
+      <div class="nf-row"><span>Carbohydrates</span><span>{{ nutrition.carbs_g }}g</span></div>
+      <div class="nf-row nf-indent"><span>Dietary Fiber</span><span>{{ nutrition.fiber_g }}g</span></div>
+      <div class="nf-row"><span>Total Fat</span><span>{{ nutrition.fat_g }}g</span></div>
+      {% if nutrition.vitamins %}
+      <div class="nf-divider"></div>
+      <div class="nf-vitamins-label">Vitamins &amp; Minerals</div>
+      {% for v in nutrition.vitamins %}
+      <div class="nf-row nf-vitamin">
+        <span>{{ v.split(':')[0] }}</span>
+        <span>{{ v.split(':')[1] if ':' in v else v }}</span>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+    {% if nutrition.notes %}
+    <div class="nutrition-notes">
+      <h3 style="font-size:1rem;color:#3a5c37;margin-bottom:0.5rem;">Health Benefits</h3>
+      <p>{{ nutrition.notes }}</p>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="muted">Nutrition data not available for this plant.</p>
+  {% endif %}
+</section>
+
+{# ══ FAQs ════════════════════════════════════════════════════════════════ #}
+{% elif tab == 'faqs' and entry %}
+<section style="margin-top:1.25rem;">
+  {% if faqs %}
+  <div class="faq-list">
+    {% for item in faqs %}
+    <details class="faq-item" {% if loop.first %}open{% endif %}>
+      <summary class="faq-q">{{ item.q }}</summary>
+      <p class="faq-a">{{ item.a }}</p>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No FAQs available for this plant yet.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<p style="margin-top:2rem;"><a href="{{ url_for('plants') }}">← Back to Plants</a></p>
 {% endblock %}

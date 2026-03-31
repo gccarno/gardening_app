@@ -58,15 +58,55 @@
     </form>
   </div>
 
-  {% if entry.image_filename %}
-  <img src="{{ url_for('static', filename='plant_images/' ~ entry.image_filename) }}"
-       alt="{{ entry.name }}" class="plant-hero-img">
-  {% elif entry.perenual_id %}
-  <div id="plant-image-wrap">
-    <img id="plant-image" src="" alt="{{ entry.name }}" class="plant-hero-img" style="display:none;">
-    <div id="plant-image-placeholder" class="plant-hero-img plant-hero-img--loading">Loading image…</div>
+  <div class="plant-gallery" id="plant-gallery">
+    <div class="plant-gallery__primary">
+      {% if entry.image_filename %}
+      <img id="plant-hero-img"
+           src="{{ url_for('static', filename='plant_images/' ~ entry.image_filename) }}"
+           alt="{{ entry.name }}" class="plant-hero-img">
+      {% elif entry.perenual_id %}
+      <img id="plant-hero-img" src="" alt="{{ entry.name }}" class="plant-hero-img" style="display:none;">
+      <div id="plant-image-placeholder" class="plant-hero-img plant-hero-img--loading">Loading image…</div>
+      {% else %}
+      <div class="plant-hero-img plant-hero-img--loading" style="justify-content:center;color:#9ab49a;">No image</div>
+      {% endif %}
+      <p id="plant-img-attribution" class="img-attribution"></p>
+    </div>
+    <div class="plant-gallery__aside">
+      <div class="plant-gallery__thumbs" id="plant-img-thumbs"></div>
+      <button id="add-image-btn" class="btn btn--sm" style="margin-top:0.5rem;">+ Add Image</button>
+      <div id="add-image-form" style="display:none;margin-top:0.6rem;">
+        <div style="display:flex;gap:0.4rem;margin-bottom:0.4rem;">
+          <label style="font-size:0.8rem;font-weight:600;display:flex;align-items:center;gap:0.3rem;">
+            <input type="radio" name="img-mode" value="upload" checked> Upload file
+          </label>
+          <label style="font-size:0.8rem;font-weight:600;display:flex;align-items:center;gap:0.3rem;">
+            <input type="radio" name="img-mode" value="url"> From URL
+          </label>
+        </div>
+        <div id="img-upload-section">
+          <input type="file" id="img-file-input" accept="image/*" style="font-size:0.8rem;width:100%;">
+        </div>
+        <div id="img-url-section" style="display:none;">
+          <input type="text" id="img-url-input" placeholder="https://…" style="width:100%;font:inherit;padding:0.3rem;border:1px solid #c0d4be;border-radius:4px;">
+        </div>
+        <select id="img-source-select" style="margin-top:0.4rem;width:100%;font:inherit;padding:0.3rem;border:1px solid #c0d4be;border-radius:4px;">
+          <option value="manual">Manual / unknown</option>
+          <option value="wikimedia">Wikimedia Commons</option>
+          <option value="inaturalist">iNaturalist</option>
+          <option value="openverse">OpenVerse</option>
+          <option value="pexels">Pexels</option>
+        </select>
+        <input type="text" id="img-attribution-input" placeholder="Attribution (optional)"
+               style="margin-top:0.4rem;width:100%;font:inherit;padding:0.3rem;border:1px solid #c0d4be;border-radius:4px;">
+        <div style="display:flex;gap:0.4rem;margin-top:0.5rem;">
+          <button id="img-submit-btn" class="btn btn--sm">Save</button>
+          <button id="img-cancel-btn" class="btn btn--sm btn--ghost">Cancel</button>
+        </div>
+        <p id="img-form-msg" style="font-size:0.8rem;margin:0.3rem 0 0;"></p>
+      </div>
+    </div>
   </div>
-  {% endif %}
 </div>
 
 {# ── Sub-tabs ────────────────────────────────────────────────────────────── #}
@@ -114,6 +154,49 @@
   <p style="margin-top:1rem;font-size:0.8rem;color:#7a907a;">
     Plant data sourced from <a href="{{ entry.permapeople_link }}" target="_blank" rel="noopener" style="color:#3a6b35;">Permapeople.org</a> — licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener" style="color:#3a6b35;">CC BY-SA 4.0</a>
   </p>
+  {% endif %}
+
+  {# ── Growth & Classification (Trefle) ──────────────────────────────────── #}
+  {% if entry.observations or entry.vegetable is not none or entry.toxicity or entry.duration or entry.growth_habit or entry.growth_form or entry.growth_rate or entry.ligneous_type or entry.nitrogen_fixation or entry.average_height_cm or entry.spread_cm %}
+  <h3 style="margin:1.5rem 0 0.5rem;font-size:1rem;color:#3a5c37;border-top:1px solid #e0ead0;padding-top:1rem;">Growth &amp; Classification</h3>
+  <dl class="details">
+    {% if entry.observations %}<dt>Native Range</dt><dd>{{ entry.observations }}</dd>{% endif %}
+    {% if entry.vegetable is not none %}<dt>Vegetable</dt><dd>{{ 'Yes' if entry.vegetable else 'No' }}</dd>{% endif %}
+    {% if entry.toxicity and entry.toxicity != 'none' %}<dt>Toxicity</dt><dd>{{ entry.toxicity | capitalize }}</dd>{% endif %}
+    {% if entry.duration %}<dt>Life Cycle</dt><dd>{{ entry.duration }}</dd>{% endif %}
+    {% if entry.growth_habit %}<dt>Growth Habit</dt><dd>{{ entry.growth_habit }}</dd>{% endif %}
+    {% if entry.growth_form %}<dt>Growth Form</dt><dd>{{ entry.growth_form }}</dd>{% endif %}
+    {% if entry.growth_rate %}<dt>Growth Rate</dt><dd>{{ entry.growth_rate | capitalize }}</dd>{% endif %}
+    {% if entry.ligneous_type %}<dt>Plant Structure</dt><dd>{{ entry.ligneous_type | capitalize }}</dd>{% endif %}
+    {% if entry.nitrogen_fixation %}<dt>Nitrogen Fixation</dt><dd>{{ entry.nitrogen_fixation }}</dd>{% endif %}
+    {% if entry.average_height_cm %}
+    <dt>Height</dt>
+    <dd>{{ entry.average_height_cm }} cm avg{% if entry.maximum_height_cm %} / {{ entry.maximum_height_cm }} cm max{% endif %}</dd>
+    {% endif %}
+    {% if entry.spread_cm %}<dt>Spread</dt><dd>{{ entry.spread_cm }} cm</dd>{% endif %}
+  </dl>
+  {% endif %}
+
+  {# ── Seasonal Activity (Trefle) ─────────────────────────────────────────── #}
+  {% if bloom_months or fruit_months or growth_months or entry.flower_color or entry.foliage_color or entry.foliage_texture or entry.leaf_retention is not none or entry.fruit_color or entry.fruit_shape %}
+  <h3 style="margin:1.5rem 0 0.5rem;font-size:1rem;color:#3a5c37;border-top:1px solid #e0ead0;padding-top:1rem;">Seasonal Activity &amp; Appearance</h3>
+  <dl class="details">
+    {% if bloom_months %}<dt>Bloom Months</dt><dd>{{ bloom_months }}</dd>{% endif %}
+    {% if fruit_months %}<dt>Fruit Months</dt><dd>{{ fruit_months }}</dd>{% endif %}
+    {% if growth_months %}<dt>Active Growth</dt><dd>{{ growth_months }}</dd>{% endif %}
+    {% if entry.flower_color %}
+    <dt>Flower Color</dt>
+    <dd>{{ entry.flower_color | capitalize }}{% if entry.flower_conspicuous %} <span style="color:#7a907a;font-size:0.85em;">(showy)</span>{% endif %}</dd>
+    {% endif %}
+    {% if entry.foliage_color %}<dt>Foliage Color</dt><dd>{{ entry.foliage_color | capitalize }}</dd>{% endif %}
+    {% if entry.foliage_texture %}<dt>Foliage Texture</dt><dd>{{ entry.foliage_texture | capitalize }}</dd>{% endif %}
+    {% if entry.leaf_retention is not none %}<dt>Leaf Retention</dt><dd>{{ 'Evergreen' if entry.leaf_retention else 'Deciduous' }}</dd>{% endif %}
+    {% if entry.fruit_color %}
+    <dt>Fruit Color</dt>
+    <dd>{{ entry.fruit_color | capitalize }}{% if entry.fruit_conspicuous %} <span style="color:#7a907a;font-size:0.85em;">(showy)</span>{% endif %}</dd>
+    {% endif %}
+    {% if entry.fruit_shape %}<dt>Fruit Shape</dt><dd>{{ entry.fruit_shape | capitalize }}</dd>{% endif %}
+  </dl>
   {% endif %}
 </section>
 
@@ -265,7 +348,7 @@
 {# ══ Soil & Care ═══════════════════════════════════════════════════════════ #}
 {% elif tab == 'soil' %}
 <section style="margin-top:1.25rem;">
-  {% if entry.soil_ph_min or entry.soil_type or entry.temp_min_f %}
+  {% if entry.soil_ph_min or entry.soil_type or entry.temp_min_f or entry.soil_nutriments is not none or entry.soil_salinity is not none or entry.atmospheric_humidity is not none or entry.precipitation_min_mm or entry.row_spacing_cm or entry.minimum_root_depth_cm %}
   <dl class="details">
     {% if entry.soil_ph_min and entry.soil_ph_max %}
     <dt>Soil pH</dt>
@@ -283,6 +366,21 @@
     </dd>
     {% endif %}
     {% if entry.soil_type %}<dt>Soil Type</dt><dd>{{ entry.soil_type }}</dd>{% endif %}
+    {% if entry.soil_nutriments is not none %}
+    <dt>Soil Nutriments</dt>
+    <dd>{{ entry.soil_nutriments }}/10 <span style="color:#7a907a;font-size:0.85em;">(0=oligotrophic, 10=hypereutrophic)</span></dd>
+    {% endif %}
+    {% if entry.soil_salinity is not none %}
+    <dt>Salinity Tolerance</dt>
+    <dd>{{ entry.soil_salinity }}/10 <span style="color:#7a907a;font-size:0.85em;">(0=intolerant, 10=hyperhaline)</span></dd>
+    {% endif %}
+    {% if entry.atmospheric_humidity is not none %}
+    <dt>Atmospheric Humidity</dt>
+    <dd>{{ entry.atmospheric_humidity }}/10 <span style="color:#7a907a;font-size:0.85em;">(0=≤10%, 10=≥90%)</span></dd>
+    {% endif %}
+    {% if entry.precipitation_min_mm and entry.precipitation_max_mm %}
+    <dt>Precipitation</dt><dd>{{ entry.precipitation_min_mm }}–{{ entry.precipitation_max_mm }} mm/year</dd>
+    {% endif %}
     {% if entry.temp_min_f and entry.temp_max_f %}
     <dt>Growing Temp</dt><dd>{{ entry.temp_min_f }}–{{ entry.temp_max_f }}°F</dd>
     {% endif %}
@@ -292,6 +390,8 @@
     {% if entry.sunlight %}<dt>Sunlight</dt><dd>{{ entry.sunlight }}</dd>{% endif %}
     {% if entry.water %}<dt>Watering</dt><dd>{{ entry.water }}</dd>{% endif %}
     {% if entry.spacing_in %}<dt>Spacing</dt><dd>{{ entry.spacing_in }} inches</dd>{% endif %}
+    {% if entry.row_spacing_cm %}<dt>Row Spacing</dt><dd>{{ entry.row_spacing_cm }} cm</dd>{% endif %}
+    {% if entry.minimum_root_depth_cm %}<dt>Min Root Depth</dt><dd>{{ entry.minimum_root_depth_cm }} cm</dd>{% endif %}
     {% if entry.notes %}<dt>Growing Notes</dt><dd>{{ entry.notes }}</dd>{% endif %}
   </dl>
   {% else %}
@@ -360,26 +460,160 @@
 
 <p style="margin-top:2rem;"><a href="{{ url_for('library') }}">← Back to Library</a></p>
 
-{% if entry.perenual_id and not entry.image_filename %}
 <script>
-(async () => {
-  const img = document.getElementById('plant-image');
+const ENTRY_ID = {{ entry.id }};
+const HAS_PERENUAL = {{ 'true' if entry.perenual_id and not entry.image_filename else 'false' }};
+
+// ── Gallery state ─────────────────────────────────────────────────────────────
+let galleryImages = [];
+
+function renderThumb(img) {
+  const btn = document.createElement('button');
+  btn.className = 'gallery-thumb' + (img.is_primary ? ' thumb--primary' : '');
+  btn.dataset.id = img.id;
+  btn.title = img.attribution || img.source;
+  btn.innerHTML = `<img src="/static/plant_images/${img.filename}" alt="">`;
+  btn.addEventListener('click', () => previewThumb(img));
+  // Long-press / right-click context menu (set primary / delete)
+  const menu = document.createElement('div');
+  menu.className = 'thumb-menu';
+  menu.innerHTML = `
+    <button class="thumb-menu-btn" data-action="primary">Set primary</button>
+    <button class="thumb-menu-btn thumb-menu-btn--danger" data-action="delete">Delete</button>`;
+  btn.appendChild(menu);
+  menu.addEventListener('click', e => {
+    e.stopPropagation();
+    const action = e.target.dataset.action;
+    if (action === 'primary') setPrimary(img.id);
+    if (action === 'delete') deleteImage(img.id);
+  });
+  return btn;
+}
+
+function refreshGallery(images) {
+  galleryImages = images;
+  const strip = document.getElementById('plant-img-thumbs');
+  strip.innerHTML = '';
+  images.forEach(img => strip.appendChild(renderThumb(img)));
+  const primary = images.find(i => i.is_primary);
+  if (primary) setHeroImage(primary);
+}
+
+function setHeroImage(img) {
+  const hero = document.getElementById('plant-hero-img');
+  const attr = document.getElementById('plant-img-attribution');
   const placeholder = document.getElementById('plant-image-placeholder');
-  if (!img) return;
+  if (hero) {
+    hero.src = '/static/plant_images/' + img.filename;
+    hero.style.display = 'block';
+  }
+  if (placeholder) placeholder.style.display = 'none';
+  if (attr) attr.textContent = img.attribution || '';
+}
+
+function previewThumb(img) {
+  const hero = document.getElementById('plant-hero-img');
+  const attr = document.getElementById('plant-img-attribution');
+  if (hero) { hero.src = '/static/plant_images/' + img.filename; hero.style.display = 'block'; }
+  if (attr) attr.textContent = img.attribution || '';
+  document.querySelectorAll('.gallery-thumb').forEach(el =>
+    el.classList.toggle('thumb--primary', el.dataset.id == img.id));
+  document.getElementById('plant-image-placeholder')?.remove();
+}
+
+async function setPrimary(imageId) {
+  const res = await fetch(`/api/library/images/${imageId}/set-primary`, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) loadGallery();
+}
+
+async function deleteImage(imageId) {
+  if (!confirm('Delete this image?')) return;
+  const res = await fetch(`/api/library/images/${imageId}/delete`, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) loadGallery();
+}
+
+async function loadGallery() {
+  const res = await fetch(`/api/library/${ENTRY_ID}/images`);
+  const images = await res.json();
+  refreshGallery(images);
+}
+
+// ── Perenual auto-fetch ────────────────────────────────────────────────────────
+if (HAS_PERENUAL) {
+  (async () => {
+    try {
+      const res = await fetch(`/api/perenual/fetch-image/${ENTRY_ID}`, {method:'POST'});
+      const data = await res.json();
+      if (data.ok) loadGallery();
+      else {
+        const ph = document.getElementById('plant-image-placeholder');
+        if (ph) ph.style.display = 'none';
+      }
+    } catch {
+      const ph = document.getElementById('plant-image-placeholder');
+      if (ph) ph.style.display = 'none';
+    }
+  })();
+}
+
+// ── Add image form ────────────────────────────────────────────────────────────
+document.getElementById('add-image-btn').addEventListener('click', () => {
+  document.getElementById('add-image-form').style.display = 'block';
+  document.getElementById('add-image-btn').style.display = 'none';
+});
+document.getElementById('img-cancel-btn').addEventListener('click', () => {
+  document.getElementById('add-image-form').style.display = 'none';
+  document.getElementById('add-image-btn').style.display = 'block';
+  document.getElementById('img-form-msg').textContent = '';
+});
+document.querySelectorAll('input[name="img-mode"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    const isUrl = radio.value === 'url';
+    document.getElementById('img-url-section').style.display = isUrl ? 'block' : 'none';
+    document.getElementById('img-upload-section').style.display = isUrl ? 'none' : 'block';
+  });
+});
+
+document.getElementById('img-submit-btn').addEventListener('click', async () => {
+  const msg = document.getElementById('img-form-msg');
+  const mode = document.querySelector('input[name="img-mode"]:checked').value;
+  const source = document.getElementById('img-source-select').value;
+  const attribution = document.getElementById('img-attribution-input').value.trim() || null;
+  msg.textContent = 'Saving…';
   try {
-    const res = await fetch('/api/perenual/fetch-image/{{ entry.id }}', {method: 'POST'});
+    let res;
+    if (mode === 'upload') {
+      const file = document.getElementById('img-file-input').files[0];
+      if (!file) { msg.textContent = 'Please choose a file.'; return; }
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('source', source);
+      if (attribution) fd.append('attribution', attribution);
+      res = await fetch(`/api/library/${ENTRY_ID}/images`, {method:'POST', body: fd});
+    } else {
+      const url = document.getElementById('img-url-input').value.trim();
+      if (!url) { msg.textContent = 'Please enter a URL.'; return; }
+      res = await fetch(`/api/library/${ENTRY_ID}/images`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url, source, attribution}),
+      });
+    }
     const data = await res.json();
     if (data.ok) {
-      img.src = '/static/plant_images/' + data.filename;
-      img.style.display = 'block';
-      placeholder.style.display = 'none';
+      msg.textContent = data.was_duplicate ? 'Duplicate — image already exists.' : 'Saved!';
+      loadGallery();
     } else {
-      placeholder.style.display = 'none';
+      msg.textContent = data.message || data.error || 'Error saving image.';
     }
-  } catch {
-    placeholder.style.display = 'none';
+  } catch(e) {
+    msg.textContent = 'Network error: ' + e.message;
   }
-})();
+});
+
+// Load gallery on page load
+loadGallery();
 </script>
-{% endif %}
 {% endblock %}

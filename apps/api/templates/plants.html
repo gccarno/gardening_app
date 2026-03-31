@@ -43,6 +43,10 @@
     {% set urgent = reminders|selectattr('urgent')|list %}
     {% if reminders or tasks %}<span class="tab-count{% if urgent %} tab-count--urgent{% endif %}">{{ reminders|length + tasks|length }}</span>{% endif %}
   </a>
+  <a href="{{ url_for('plants', tab='timeline', garden_id=garden_id or '') }}"
+     class="plant-tab{% if tab == 'timeline' %} active{% endif %}">
+    Timeline
+  </a>
 </div>
 
 {# ══ Planning Tab ══════════════════════════════════════════════════════════ #}
@@ -72,6 +76,12 @@
         </span>
         {% endif %}
         {% if plant.notes %}<span class="muted" style="font-size:0.8rem;">{{ plant.notes }}</span>{% endif %}
+        {% if plant.library_id %}
+        <span style="font-size:0.8rem;">
+          <a href="{{ url_for('library_detail', entry_id=plant.library_id) }}"
+             style="font-size:0.78rem;padding:0.15rem 0.5rem;background:#f0f5ef;border:1px solid #c0d4be;border-radius:4px;color:#3a5c37;text-decoration:none;">📖 Library</a>
+        </span>
+        {% endif %}
       </div>
       <div style="margin-left:auto;display:flex;gap:0.4rem;align-items:center;">
         <form method="post" action="{{ url_for('set_plant_status', plant_id=plant.id) }}">
@@ -144,6 +154,12 @@
         {% if plant.bed_plants %}
         <span class="muted" style="font-size:0.8rem;">
           Bed: {% for bp in plant.bed_plants %}{{ bp.bed.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </span>
+        {% endif %}
+        {% if plant.library_id %}
+        <span style="font-size:0.8rem;">
+          <a href="{{ url_for('library_detail', entry_id=plant.library_id) }}"
+             style="font-size:0.78rem;padding:0.15rem 0.5rem;background:#f0f5ef;border:1px solid #c0d4be;border-radius:4px;color:#3a5c37;text-decoration:none;">📖 Library</a>
         </span>
         {% endif %}
       </div>
@@ -250,6 +266,197 @@
       <button type="submit">Add Task</button>
     </form>
   </details>
+</section>
+{% elif tab == 'timeline' %}
+{# ══ Timeline / Gantt Tab ══════════════════════════════════════════════════ #}
+{% set ns = namespace(tl=[]) %}
+{% for p in planning_plants + growing_plants %}
+  {% if p.planted_date %}{% set ns.tl = ns.tl + [p] %}{% endif %}
+{% endfor %}
+
+<section>
+  <p class="muted" style="margin-bottom:1rem;">
+    Compare your plants side-by-side across the growing season.
+  </p>
+
+  {% if ns.tl %}
+  <script>
+  const GANTT_PLANTS = [
+    {% for p in ns.tl %}
+    {
+      id: {{ p.id }},
+      name: {{ p.name | tojson }},
+      status: {{ p.status | tojson }},
+      planted: {{ p.planted_date.isoformat() | tojson }},
+      harvest: {{ p.expected_harvest.isoformat() | tojson if p.expected_harvest else 'null' }},
+      transplant: {{ p.transplant_date.isoformat() | tojson if p.transplant_date else 'null' }},
+      germDays: {{ p.library_entry.days_to_germination | tojson if p.library_entry and p.library_entry.days_to_germination else 'null' }}
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+  const TODAY_STR = {{ today.isoformat() | tojson }};
+  </script>
+
+  <div class="gantt-legend">
+    <span class="gantt-swatch gantt-swatch--indoor"></span> Start Indoors
+    <span class="gantt-swatch gantt-swatch--germ"></span> Germination / Sow
+    <span class="gantt-swatch gantt-swatch--grow"></span> Growing
+    <span class="gantt-swatch gantt-swatch--harvest"></span> Harvest
+    <span class="gantt-swatch gantt-swatch--today"></span> Today
+  </div>
+  <div class="gantt-chart">
+    <div class="gantt-inner">
+      <div id="gantt-header" class="gantt-header">
+        <div class="gantt-header__spacer"></div>
+        <div id="gantt-months" class="gantt-header__months"></div>
+      </div>
+      <div id="gantt-inner-rows"></div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    const plants = GANTT_PLANTS;
+    const today = new Date(TODAY_STR + 'T00:00:00');
+
+    function parseDate(s) { return s ? new Date(s + 'T00:00:00') : null; }
+    function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+    function fmtDate(d) { return d.toLocaleDateString('en-US', {month:'short', day:'numeric'}); }
+
+    // Compute overall date range
+    let minDate = null, maxDate = null;
+    plants.forEach(function (p) {
+      const planted    = parseDate(p.planted);
+      const harvest    = parseDate(p.harvest);
+      const transplant = parseDate(p.transplant);
+      if (planted    && (!minDate || planted < minDate))       minDate = planted;
+      if (harvest    && (!maxDate || harvest > maxDate))       maxDate = harvest;
+      if (transplant && (!maxDate || transplant > maxDate))    maxDate = transplant;
+    });
+    if (!minDate) minDate = today;
+    if (!maxDate || today > maxDate) maxDate = today;
+    if (maxDate <= minDate) maxDate = addDays(minDate, 60);
+
+    // Snap to clean month boundaries
+    const viewMin = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    const viewMax = new Date(maxDate.getFullYear(), maxDate.getMonth() + 1, 1);
+    const span = viewMax - viewMin;
+
+    function pct(d) { return clamp((d - viewMin) / span * 100, 0, 100); }
+
+    // Collect month boundaries
+    const months = [];
+    const cur = new Date(viewMin);
+    while (cur < viewMax) {
+      months.push({ date: new Date(cur), label: cur.toLocaleDateString('en-US', {month:'short', year:'2-digit'}), p: pct(cur) });
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    // Populate header month labels
+    const monthsEl = document.getElementById('gantt-months');
+    months.forEach(function (m) {
+      const lbl = document.createElement('div');
+      lbl.className = 'gantt-header__month-label';
+      lbl.style.left = m.p + '%';
+      lbl.textContent = m.label;
+      monthsEl.appendChild(lbl);
+    });
+
+    // Build rows
+    const container = document.getElementById('gantt-inner-rows');
+    const todayPct = pct(today);
+
+    plants.forEach(function (p) {
+      const planted    = parseDate(p.planted);
+      const harvest    = parseDate(p.harvest);
+      const transplant = parseDate(p.transplant);
+
+      const row = document.createElement('div');
+      row.className = 'gantt-row gantt-row--' + p.status;
+
+      // Label
+      const label = document.createElement('div');
+      label.className = 'gantt-label';
+      const a = document.createElement('a');
+      a.href = '/plants/' + p.id;
+      a.textContent = p.name;
+      label.appendChild(a);
+      row.appendChild(label);
+
+      // Bar area
+      const area = document.createElement('div');
+      area.className = 'gantt-bar-area';
+
+      // Grid lines at each month boundary
+      months.forEach(function (m) {
+        const gl = document.createElement('div');
+        gl.className = 'gantt-grid-line';
+        gl.style.left = m.p + '%';
+        area.appendChild(gl);
+      });
+
+      // Phase logic:
+      // CASE A — transplant_date exists: indoor bar (planted→transplant) + growing bar (transplant→harvest)
+      // CASE B — germDays but no transplant: germ bar (planted→planted+germDays) + growing bar
+      // CASE C — neither: growing bar only (planted→harvest)
+      let growStart = planted;
+      const planSuffix = p.status === 'planning' ? '-planning' : '';
+
+      if (transplant) {
+        const bar = document.createElement('div');
+        bar.className = 'gantt-bar gantt-bar--indoor';
+        bar.style.left  = pct(planted) + '%';
+        bar.style.width = Math.max(pct(transplant) - pct(planted), 0.5) + '%';
+        bar.title = 'Start Indoors: ' + fmtDate(planted) + ' → ' + fmtDate(transplant);
+        area.appendChild(bar);
+        growStart = transplant;
+      } else if (p.germDays && planted) {
+        const germEnd = addDays(planted, p.germDays);
+        const bar = document.createElement('div');
+        bar.className = 'gantt-bar gantt-bar--germ';
+        bar.style.left  = pct(planted) + '%';
+        bar.style.width = Math.max(pct(germEnd) - pct(planted), 0.5) + '%';
+        bar.title = 'Germination (' + p.germDays + ' days)';
+        area.appendChild(bar);
+        growStart = germEnd;
+      }
+
+      // Growing bar
+      const growEnd = harvest || today;
+      const growBar = document.createElement('div');
+      growBar.className = 'gantt-bar gantt-bar--growing' + planSuffix;
+      growBar.style.left  = pct(growStart) + '%';
+      growBar.style.width = Math.max(pct(growEnd) - pct(growStart), 0.5) + '%';
+      growBar.title = harvest ? 'Growing' : 'Growing (no harvest date set)';
+      area.appendChild(growBar);
+
+      // Harvest marker
+      if (harvest) {
+        const hm = document.createElement('div');
+        hm.className = 'gantt-harvest-marker';
+        hm.style.left = pct(harvest) + '%';
+        hm.title = 'Harvest: ' + fmtDate(harvest);
+        area.appendChild(hm);
+      }
+
+      // Today line
+      if (todayPct > 0 && todayPct < 100) {
+        const tl = document.createElement('div');
+        tl.className = 'gantt-today-line';
+        tl.style.left = todayPct + '%';
+        area.appendChild(tl);
+      }
+
+      row.appendChild(area);
+      container.appendChild(row);
+    });
+  })();
+  </script>
+
+  {% else %}
+  <p class="muted">No plants with a planted date yet. Move a plant to <em>Growing</em> or add a planted date to see the timeline.</p>
+  {% endif %}
 </section>
 {% endif %}
 
