@@ -11,6 +11,9 @@ dependencies = [
     "scikit-learn",
     "numpy",
     "pandas",
+    "beautifulsoup4",
+    "pdfplumber",
+    "chromadb",
 ]
 
 [project.optional-dependencies]

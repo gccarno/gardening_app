@@ -1615,12 +1615,13 @@ details[open] .faq-q::after { content: '▾'; }
 .gantt-swatch--today   { background:#b84040; width:3px; border-radius:0; height:14px; }
 
 .gantt-chart { overflow-x:auto; border:1px solid #d8e8d6; border-radius:6px; background:white; }
-.gantt-inner { min-width:700px; padding:0 0.75rem 0.75rem; }
+.gantt-inner { min-width:1200px; padding:0 0.75rem 0.75rem; }
 
 .gantt-header         { display:flex; align-items:stretch; position:sticky; top:0; z-index:10; background:#f0f7ef; border-bottom:2px solid #b8d4b6; border-radius:6px 6px 0 0; }
 .gantt-header__spacer { width:140px; min-width:140px; flex-shrink:0; }
 .gantt-header__months { flex:1; position:relative; height:28px; }
 .gantt-header__month-label { position:absolute; font-size:0.72rem; font-weight:700; color:#3a5c37; white-space:nowrap; top:50%; transform:translate(-50%,-50%); pointer-events:none; }
+.gantt-header__day-label  { position:absolute; font-size:0.62rem; font-weight:500; color:#7a9a77; white-space:nowrap; top:50%; transform:translate(-50%,-50%); pointer-events:none; }
 
 .gantt-row { display:flex; align-items:center; min-height:36px; border-bottom:1px solid #eef4ee; }
 .gantt-row:last-child { border-bottom:none; }
@@ -1633,6 +1634,7 @@ details[open] .faq-q::after { content: '▾'; }
 
 .gantt-bar-area  { flex:1; position:relative; height:28px; margin:4px 0; }
 .gantt-grid-line { position:absolute; top:0; bottom:0; width:1px; background:#e0ece0; z-index:0; pointer-events:none; }
+.gantt-grid-line--minor { background:#eff6ef; }
 .gantt-bar { position:absolute; height:100%; border-radius:3px; top:0; min-width:2px; z-index:1; }
 .gantt-bar--indoor           { background:#a8d5c2; }
 .gantt-bar--germ             { background:#5fb8a0; }

@@ -953,7 +953,15 @@ def create_app():
 
         base_q = Plant.query
         if garden_id:
-            base_q = base_q.filter_by(garden_id=garden_id)
+            in_bed_ids = (
+                db.session.query(BedPlant.plant_id)
+                .join(GardenBed, BedPlant.bed_id == GardenBed.id)
+                .filter(GardenBed.garden_id == garden_id)
+                .distinct()
+            )
+            base_q = Plant.query.filter(
+                db.or_(Plant.garden_id == garden_id, Plant.id.in_(in_bed_ids))
+            )
 
         planning_plants = base_q.filter_by(status='planning').order_by(Plant.name).all()
         growing_plants  = base_q.filter_by(status='growing').order_by(Plant.name).all()

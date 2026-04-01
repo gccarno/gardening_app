@@ -122,6 +122,7 @@ class PlantLibrary(db.Model):
     how_to_grow = db.Column(db.Text)          # JSON {starting,seedling,vegetative,flowering,harvest}
     faqs = db.Column(db.Text)                 # JSON [{q,a}]
     nutrition = db.Column(db.Text)            # JSON nutrition data
+    usda_fdc_id = db.Column(db.Integer, nullable=True)  # USDA FoodData Central ID
     # Permapeople (CC BY-SA 4.0 — https://permapeople.org)
     permapeople_id          = db.Column(db.Integer, nullable=True)
     permapeople_link        = db.Column(db.String(200), nullable=True)

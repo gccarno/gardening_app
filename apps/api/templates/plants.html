@@ -324,42 +324,29 @@
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
     function fmtDate(d) { return d.toLocaleDateString('en-US', {month:'short', day:'numeric'}); }
 
-    // Compute overall date range
-    let minDate = null, maxDate = null;
-    plants.forEach(function (p) {
-      const planted    = parseDate(p.planted);
-      const harvest    = parseDate(p.harvest);
-      const transplant = parseDate(p.transplant);
-      if (planted    && (!minDate || planted < minDate))       minDate = planted;
-      if (harvest    && (!maxDate || harvest > maxDate))       maxDate = harvest;
-      if (transplant && (!maxDate || transplant > maxDate))    maxDate = transplant;
-    });
-    if (!minDate) minDate = today;
-    if (!maxDate || today > maxDate) maxDate = today;
-    if (maxDate <= minDate) maxDate = addDays(minDate, 60);
-
-    // Snap to clean month boundaries
-    const viewMin = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
-    const viewMax = new Date(maxDate.getFullYear(), maxDate.getMonth() + 1, 1);
+    // Fixed full-year range: Jan 1 – Dec 31 of current year
+    const year = today.getFullYear();
+    const viewMin = new Date(year, 0, 1);
+    const viewMax = new Date(year + 1, 0, 1);
     const span = viewMax - viewMin;
 
     function pct(d) { return clamp((d - viewMin) / span * 100, 0, 100); }
 
-    // Collect month boundaries
-    const months = [];
-    const cur = new Date(viewMin);
-    while (cur < viewMax) {
-      months.push({ date: new Date(cur), label: cur.toLocaleDateString('en-US', {month:'short', year:'2-digit'}), p: pct(cur) });
-      cur.setMonth(cur.getMonth() + 1);
+    // Build markers at 1st and 15th of each month
+    const markers = [];
+    for (let m = 0; m < 12; m++) {
+      markers.push({ date: new Date(year, m, 1),  label: new Date(year, m, 1).toLocaleDateString('en-US', {month:'short'}), major: true });
+      markers.push({ date: new Date(year, m, 15), label: '15', major: false });
     }
+    markers.forEach(function (mk) { mk.p = pct(mk.date); });
 
-    // Populate header month labels
+    // Populate header labels
     const monthsEl = document.getElementById('gantt-months');
-    months.forEach(function (m) {
+    markers.forEach(function (mk) {
       const lbl = document.createElement('div');
-      lbl.className = 'gantt-header__month-label';
-      lbl.style.left = m.p + '%';
-      lbl.textContent = m.label;
+      lbl.className = mk.major ? 'gantt-header__month-label' : 'gantt-header__day-label';
+      lbl.style.left = mk.p + '%';
+      lbl.textContent = mk.label;
       monthsEl.appendChild(lbl);
     });
 
@@ -388,11 +375,11 @@
       const area = document.createElement('div');
       area.className = 'gantt-bar-area';
 
-      // Grid lines at each month boundary
-      months.forEach(function (m) {
+      // Grid lines at each 15-day marker
+      markers.forEach(function (mk) {
         const gl = document.createElement('div');
-        gl.className = 'gantt-grid-line';
-        gl.style.left = m.p + '%';
+        gl.className = mk.major ? 'gantt-grid-line' : 'gantt-grid-line gantt-grid-line--minor';
+        gl.style.left = mk.p + '%';
         area.appendChild(gl);
       });
 

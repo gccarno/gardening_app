@@ -208,6 +208,29 @@ TOOL_SCHEMAS = [
         ),
         'input_schema': {'type': 'object', 'properties': {}, 'required': []},
     },
+    {
+        'name': 'search_growing_guides',
+        'description': (
+            'Search authoritative gardening guides and books for detailed plant care information. '
+            'Sources include Texas A&M University vegetable guides and Black & Decker regional '
+            'gardening books. Use for questions about pests, diseases, fertilizing, planting '
+            'techniques, soil prep, or any topic not covered by other tools.'
+        ),
+        'input_schema': {
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'description': 'Search query (e.g. "tomato blossom end rot", "pepper fertilizer schedule")',
+                },
+                'plant_name': {
+                    'type': 'string',
+                    'description': 'Optional: plant name to filter results (e.g. "Tomato")',
+                },
+            },
+            'required': ['query'],
+        },
+    },
 ]
 
 # Ollama / OpenAI-style tool schemas (converted from TOOL_SCHEMAS at import time)
@@ -737,6 +760,82 @@ def _tool_get_watering_recommendation(input_data: dict, garden) -> dict:
     }
 
 
+def _tool_search_growing_guides(input_data: dict, garden) -> dict:
+    """Search the RAG database of gardening guides and books."""
+    import sys
+    import os
+
+    # Add scripts directory to path so we can import build_rag.search_guides
+    _scripts_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+        'scripts',
+    )
+    if _scripts_dir not in sys.path:
+        sys.path.insert(0, _scripts_dir)
+
+    query      = input_data.get('query', '')
+    plant_name = input_data.get('plant_name', '')
+
+    if not query:
+        return {'error': 'query is required'}
+
+    try:
+        from build_rag import search_guides
+    except ImportError:
+        return {
+            'error': 'RAG database not built yet. Run: python scripts/build_rag.py',
+            'results': [],
+        }
+
+    # Optionally filter by the garden's region
+    region_filter = None
+    if garden and hasattr(garden, 'state') and garden.state:
+        # Rough state → region mapping for B&D books
+        _STATE_REGION = {
+            'TX': 'Lower South', 'OK': 'Lower South', 'LA': 'Lower South',
+            'MS': 'Lower South', 'AL': 'Lower South', 'GA': 'Lower South',
+            'FL': 'Lower South', 'AR': 'Lower South',
+            'ME': 'Northeast', 'NH': 'Northeast', 'VT': 'Northeast',
+            'MA': 'Northeast', 'RI': 'Northeast', 'CT': 'Northeast',
+            'NY': 'Northeast', 'PA': 'Northeast', 'NJ': 'Northeast',
+            'MD': 'Mid-Atlantic', 'DE': 'Mid-Atlantic', 'VA': 'Mid-Atlantic',
+            'WV': 'Mid-Atlantic', 'NC': 'Mid-Atlantic',
+            'WA': 'Northwest', 'OR': 'Northwest', 'ID': 'Northwest',
+            'MN': 'Upper Midwest', 'WI': 'Upper Midwest', 'MI': 'Upper Midwest',
+            'IA': 'Upper Midwest', 'ND': 'Upper Midwest', 'SD': 'Upper Midwest',
+            'OH': 'Lower Midwest', 'IN': 'Lower Midwest', 'IL': 'Lower Midwest',
+            'MO': 'Lower Midwest', 'KY': 'Lower Midwest', 'TN': 'Lower Midwest',
+            'KS': 'Western Plains', 'NE': 'Western Plains', 'CO': 'Western Plains',
+            'WY': 'Western Plains', 'MT': 'Western Plains',
+        }
+        region_filter = _STATE_REGION.get(garden.state.upper()[:2])
+
+    results = search_guides(query, plant_name=plant_name or None, n_results=3,
+                            region_filter=region_filter)
+
+    if not results:
+        return {
+            'message': (
+                'No results found in growing guides. '
+                'Run python scripts/build_rag.py to build the index if not done yet.'
+            ),
+            'results': [],
+        }
+
+    return {
+        'query':   query,
+        'results': [
+            {
+                'source':  r['source'],
+                'region':  r['region'],
+                'passage': r['text'][:800],   # trim to keep context manageable
+                'score':   r['score'],
+            }
+            for r in results
+        ],
+    }
+
+
 # ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 def execute_tool(name: str, input_data: dict, garden) -> dict:
@@ -753,6 +852,7 @@ def execute_tool(name: str, input_data: dict, garden) -> dict:
         'get_weather_forecast':          lambda: _tool_get_weather_forecast(input_data, garden),
         'get_watering_history':          lambda: _tool_get_watering_history(input_data, garden),
         'get_watering_recommendation':   lambda: _tool_get_watering_recommendation(input_data, garden),
+        'search_growing_guides':         lambda: _tool_search_growing_guides(input_data, garden),
     }
     handler = handlers.get(name)
     if handler is None:
