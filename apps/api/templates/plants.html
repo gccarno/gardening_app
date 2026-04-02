@@ -269,9 +269,17 @@
 </section>
 {% elif tab == 'timeline' %}
 {# ══ Timeline / Gantt Tab ══════════════════════════════════════════════════ #}
-{% set ns = namespace(tl=[]) %}
-{% for p in planning_plants + growing_plants %}
+{% set ns = namespace(tl=[], unscheduled=[]) %}
+{% for p in growing_plants %}
   {% if p.planted_date %}{% set ns.tl = ns.tl + [p] %}{% endif %}
+{% endfor %}
+{% for p in planning_plants %}
+  {% set pcal = (plant_cal if plant_cal is defined else {}).get(p.id, {}) %}
+  {% if p.planted_date or pcal.get('start_indoors') or pcal.get('direct_sow') %}
+    {% set ns.tl = ns.tl + [p] %}
+  {% else %}
+    {% set ns.unscheduled = ns.unscheduled + [p] %}
+  {% endif %}
 {% endfor %}
 
 <section>
@@ -279,18 +287,30 @@
     Compare your plants side-by-side across the growing season.
   </p>
 
+  {% if ns.tl or ns.unscheduled %}
+  <div class="gantt-filters">
+    <button class="btn-filter active" data-filter="all">All</button>
+    <button class="btn-filter" data-filter="growing">Growing only</button>
+    <button class="btn-filter" data-filter="planning">Planning only</button>
+  </div>
+
   {% if ns.tl %}
   <script>
   const GANTT_PLANTS = [
     {% for p in ns.tl %}
+    {% set pcal = (plant_cal if plant_cal is defined else {}).get(p.id, {}) %}
     {
       id: {{ p.id }},
       name: {{ p.name | tojson }},
       status: {{ p.status | tojson }},
-      planted: {{ p.planted_date.isoformat() | tojson }},
+      planted: {{ p.planted_date.isoformat() | tojson if p.planted_date else 'null' }},
       harvest: {{ p.expected_harvest.isoformat() | tojson if p.expected_harvest else 'null' }},
       transplant: {{ p.transplant_date.isoformat() | tojson if p.transplant_date else 'null' }},
-      germDays: {{ p.library_entry.days_to_germination | tojson if p.library_entry and p.library_entry.days_to_germination else 'null' }}
+      germDays: {{ p.library_entry.days_to_germination | tojson if p.library_entry and p.library_entry.days_to_germination else 'null' }},
+      calStartIndoors: {{ pcal.get('start_indoors').isoformat() | tojson if pcal.get('start_indoors') else 'null' }},
+      calDirectSow:    {{ pcal.get('direct_sow').isoformat()    | tojson if pcal.get('direct_sow')    else 'null' }},
+      calTransplant:   {{ pcal.get('transplant_cal').isoformat()| tojson if pcal.get('transplant_cal') else 'null' }},
+      daysToHarvest:   {{ p.library_entry.days_to_harvest | tojson if p.library_entry and p.library_entry.days_to_harvest else 'null' }}
     }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
@@ -303,7 +323,14 @@
     <span class="gantt-swatch gantt-swatch--grow"></span> Growing
     <span class="gantt-swatch gantt-swatch--harvest"></span> Harvest
     <span class="gantt-swatch gantt-swatch--today"></span> Today
+    &ensp;
+    <span class="gantt-cal-pin gantt-cal-pin--start-indoors gantt-cal-pin--legend"></span> Indoor (rec.)
+    <span class="gantt-cal-pin gantt-cal-pin--direct-sow gantt-cal-pin--legend"></span> Direct Sow (rec.)
+    <span class="gantt-cal-pin gantt-cal-pin--transplant gantt-cal-pin--legend"></span> Transplant (rec.)
   </div>
+  {% if not garden_id %}
+  <p class="muted" style="font-size:0.8rem;margin:-0.5rem 0 0.75rem;">Select a garden above to see calendar-recommended dates for your zone.</p>
+  {% endif %}
   <div class="gantt-chart">
     <div class="gantt-inner">
       <div id="gantt-header" class="gantt-header">
@@ -354,10 +381,33 @@
     const container = document.getElementById('gantt-inner-rows');
     const todayPct = pct(today);
 
+    let prevStatus = null;
     plants.forEach(function (p) {
+      // Insert section header when status group changes
+      if (p.status !== prevStatus) {
+        const hdr = document.createElement('div');
+        hdr.className = 'gantt-section-header gantt-section-header--' + p.status;
+        hdr.textContent = p.status === 'growing' ? 'Growing' : 'Planning';
+        container.appendChild(hdr);
+        prevStatus = p.status;
+      }
       const planted    = parseDate(p.planted);
       const harvest    = parseDate(p.harvest);
       const transplant = parseDate(p.transplant);
+      const calStart   = parseDate(p.calStartIndoors);
+      const calDirect  = parseDate(p.calDirectSow);
+      const calTrans   = parseDate(p.calTransplant);
+
+      // Effective dates: fall back to calendar data for planning plants with no actual planted date
+      const effectivePlanted    = planted || calStart || calDirect;
+      const effectiveTransplant = transplant || (!planted && calTrans ? calTrans : null);
+      let   effectiveHarvest    = harvest;
+      if (!effectiveHarvest && p.daysToHarvest) {
+        const growBase = transplant || calTrans || calDirect || calStart || planted;
+        if (growBase) effectiveHarvest = addDays(growBase, p.daysToHarvest);
+      }
+
+      if (!effectivePlanted) { return; } // truly no date info — skip
 
       const row = document.createElement('div');
       row.className = 'gantt-row gantt-row--' + p.status;
@@ -383,47 +433,62 @@
         area.appendChild(gl);
       });
 
-      // Phase logic:
-      // CASE A — transplant_date exists: indoor bar (planted→transplant) + growing bar (transplant→harvest)
-      // CASE B — germDays but no transplant: germ bar (planted→planted+germDays) + growing bar
-      // CASE C — neither: growing bar only (planted→harvest)
-      let growStart = planted;
+      // Phase logic using effective dates:
+      // CASE A — effectiveTransplant: indoor bar (effectivePlanted→effectiveTransplant) + growing bar
+      // CASE B — germDays, no transplant: germ bar (effectivePlanted→effectivePlanted+germDays) + growing bar
+      // CASE C — neither: growing bar only
+      let growStart = effectivePlanted;
       const planSuffix = p.status === 'planning' ? '-planning' : '';
 
-      if (transplant) {
+      if (effectiveTransplant) {
         const bar = document.createElement('div');
         bar.className = 'gantt-bar gantt-bar--indoor';
-        bar.style.left  = pct(planted) + '%';
-        bar.style.width = Math.max(pct(transplant) - pct(planted), 0.5) + '%';
-        bar.title = 'Start Indoors: ' + fmtDate(planted) + ' → ' + fmtDate(transplant);
+        bar.style.left  = pct(effectivePlanted) + '%';
+        bar.style.width = Math.max(pct(effectiveTransplant) - pct(effectivePlanted), 0.5) + '%';
+        bar.title = 'Start Indoors: ' + fmtDate(effectivePlanted) + ' → ' + fmtDate(effectiveTransplant);
         area.appendChild(bar);
-        growStart = transplant;
-      } else if (p.germDays && planted) {
-        const germEnd = addDays(planted, p.germDays);
+        growStart = effectiveTransplant;
+      } else if (p.germDays) {
+        const germEnd = addDays(effectivePlanted, p.germDays);
         const bar = document.createElement('div');
         bar.className = 'gantt-bar gantt-bar--germ';
-        bar.style.left  = pct(planted) + '%';
-        bar.style.width = Math.max(pct(germEnd) - pct(planted), 0.5) + '%';
+        bar.style.left  = pct(effectivePlanted) + '%';
+        bar.style.width = Math.max(pct(germEnd) - pct(effectivePlanted), 0.5) + '%';
         bar.title = 'Germination (' + p.germDays + ' days)';
         area.appendChild(bar);
         growStart = germEnd;
       }
 
       // Growing bar
-      const growEnd = harvest || today;
+      const growEnd = effectiveHarvest || today;
       const growBar = document.createElement('div');
       growBar.className = 'gantt-bar gantt-bar--growing' + planSuffix;
       growBar.style.left  = pct(growStart) + '%';
       growBar.style.width = Math.max(pct(growEnd) - pct(growStart), 0.5) + '%';
-      growBar.title = harvest ? 'Growing' : 'Growing (no harvest date set)';
+      growBar.title = effectiveHarvest
+        ? ('Growing → Harvest: ' + fmtDate(effectiveHarvest) + (harvest ? '' : ' (est.)'))
+        : 'Growing (no harvest date)';
       area.appendChild(growBar);
 
+      // Calendar event pins — recommended dates from planting calendar
+      function addCalPin(d, label, cls) {
+        if (!d) return;
+        const pin = document.createElement('div');
+        pin.className = 'gantt-cal-pin gantt-cal-pin--' + cls;
+        pin.style.left = pct(d) + '%';
+        pin.title = label + ': ' + fmtDate(d) + ' (rec.)';
+        area.appendChild(pin);
+      }
+      addCalPin(calStart,  'Start Indoors',  'start-indoors');
+      addCalPin(calDirect, 'Direct Sow',     'direct-sow');
+      addCalPin(calTrans,  'Transplant Out', 'transplant');
+
       // Harvest marker
-      if (harvest) {
+      if (effectiveHarvest) {
         const hm = document.createElement('div');
         hm.className = 'gantt-harvest-marker';
-        hm.style.left = pct(harvest) + '%';
-        hm.title = 'Harvest: ' + fmtDate(harvest);
+        hm.style.left = pct(effectiveHarvest) + '%';
+        hm.title = 'Harvest: ' + fmtDate(effectiveHarvest) + (harvest ? '' : ' (est. from days to harvest)');
         area.appendChild(hm);
       }
 
@@ -438,12 +503,47 @@
       row.appendChild(area);
       container.appendChild(row);
     });
+
+    // Filter buttons
+    document.querySelectorAll('.btn-filter').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.btn-filter').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        const f = btn.dataset.filter;
+        document.querySelectorAll('.gantt-row, .gantt-section-header').forEach(function (el) {
+          if (f === 'all') {
+            el.style.display = '';
+          } else if (el.classList.contains('gantt-section-header')) {
+            el.style.display = el.classList.contains('gantt-section-header--' + f) ? '' : 'none';
+          } else {
+            el.style.display = el.classList.contains('gantt-row--' + f) ? '' : 'none';
+          }
+        });
+        const unscheduled = document.getElementById('unscheduled-section');
+        if (unscheduled) {
+          unscheduled.style.display = (f === 'growing') ? 'none' : '';
+        }
+      });
+    });
   })();
   </script>
 
-  {% else %}
-  <p class="muted">No plants with a planted date yet. Move a plant to <em>Growing</em> or add a planted date to see the timeline.</p>
+  {% endif %}{# end if ns.tl #}
+
+  {% if ns.unscheduled %}
+  <div id="unscheduled-section" class="gantt-unscheduled">
+    <h3>Planning &mdash; no dates set</h3>
+    <ul>
+      {% for p in ns.unscheduled %}
+      <li><a href="/plants/{{ p.id }}">{{ p.name }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
   {% endif %}
+
+  {% else %}
+  <p class="muted">No plants yet. Add a plant and set a planted date, or move a plant to <em>Growing</em> to see the timeline.</p>
+  {% endif %}{# end if ns.tl or ns.unscheduled #}
 </section>
 {% endif %}
 

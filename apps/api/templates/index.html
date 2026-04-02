@@ -343,6 +343,7 @@ function toggleChat() {
 
 const GARDEN_ID = {{ selected.id if selected else 'null' }};
 let conversationHistory = [];
+let chatSessionId = crypto.randomUUID();
 
 async function sendChat(msgOverride) {
   const input = document.getElementById('chat-input');
@@ -366,6 +367,7 @@ async function sendChat(msgOverride) {
         message: msg,
         garden_id: GARDEN_ID,
         conversation_history: conversationHistory.slice(0, -1),
+        session_id: chatSessionId,
       }),
     });
     const data = await res.json();
@@ -376,6 +378,7 @@ async function sendChat(msgOverride) {
     if (data.conversation_history) {
       conversationHistory = data.conversation_history;
     }
+    if (data.session_id) chatSessionId = data.session_id;
     conversationHistory.push({ role: 'assistant', content: reply });
   } catch (err) {
     removeMsg(typingId);

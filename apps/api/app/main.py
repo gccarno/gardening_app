@@ -969,6 +969,37 @@ def create_app():
 
         # Build smart reminders
         today = date.today()
+
+        # Resolve garden frost date for planting calendar data
+        import re as _re
+        from datetime import datetime as _datetime
+        garden_frost = None
+        if selected_garden:
+            if selected_garden.last_frost_date:
+                garden_frost = selected_garden.last_frost_date
+            elif selected_garden.usda_zone:
+                zone_num = _re.sub(r'[ab]$', '', str(selected_garden.usda_zone).strip(), flags=_re.IGNORECASE)
+                spring_str, _ = _FROST_DATES.get(zone_num, ('unknown', 'unknown'))
+                if spring_str not in ('none', 'rare', 'unknown'):
+                    try:
+                        garden_frost = _datetime.strptime(f'{spring_str} {today.year}', '%b %d %Y').date()
+                    except Exception:
+                        pass
+
+        def _pcal(entry, frost):
+            if not entry or not frost:
+                return {}
+            c = {}
+            if entry.sow_indoor_weeks is not None:
+                c['start_indoors'] = frost - timedelta(weeks=entry.sow_indoor_weeks)
+            if entry.direct_sow_offset is not None:
+                c['direct_sow'] = frost + timedelta(weeks=entry.direct_sow_offset)
+            if entry.transplant_offset is not None:
+                c['transplant_cal'] = frost + timedelta(weeks=entry.transplant_offset)
+            return c
+
+        plant_cal = {p.id: _pcal(p.library_entry, garden_frost)
+                     for p in planning_plants + growing_plants}
         reminders = []
 
         for p in growing_plants:
@@ -1023,6 +1054,7 @@ def create_app():
             reminders=reminders,
             tasks=tasks,
             today=today,
+            plant_cal=plant_cal,
         )
 
     @app.route('/plants/<int:plant_id>/set-status', methods=['POST'])
@@ -2219,14 +2251,17 @@ def create_app():
         import sys as _sys
         from pathlib import Path as _Path
         _root = str(_Path(app.root_path).parents[2])
+        _logs_root = str(_Path(app.root_path).parents[2] / 'logs')
         if _root not in _sys.path:
             _sys.path.insert(0, _root)
         from apps.ml_service.app.recommender import recommend
 
+        import uuid as _uuid
         data                 = request.get_json(force=True)
         user_msg             = (data.get('message') or '').strip()
         garden_id            = data.get('garden_id')
         conversation_history = data.get('conversation_history') or []
+        session_id           = data.get('session_id') or str(_uuid.uuid4())
 
         if not user_msg:
             return jsonify({'reply': 'Please type a message first.'}), 400
@@ -2295,15 +2330,35 @@ def create_app():
         # Build full message list: conversation history + new user message
         messages = list(conversation_history) + [{'role': 'user', 'content': user_msg}]
 
-        try:
-            from apps.ml_service.app.chat_tools import run_agentic_loop
-            reply = run_agentic_loop(system_prompt, messages, garden)
-        except RuntimeError as exc:
-            return jsonify({'reply': str(exc), 'conversation_history': messages})
-        except Exception as exc:
-            reply = f'Sorry, the assistant ran into an error: {exc}'
+        from apps.ml_service.app.chat_tools import run_agentic_loop
+        from apps.ml_service.app.chat_logger import create_session_logger, log_event, close_session_logger
 
-        return jsonify({'reply': reply, 'conversation_history': messages})
+        _session_logger = create_session_logger(session_id, _logs_root)
+        try:
+            log_event(_session_logger, 'session_start',
+                      session_id=session_id,
+                      garden_id=garden_id,
+                      garden_name=garden_name,
+                      user_message=user_msg,
+                      history_length=len(conversation_history))
+            reply = run_agentic_loop(system_prompt, messages, garden,
+                                     session_logger=_session_logger)
+            log_event(_session_logger, 'session_end',
+                      session_id=session_id,
+                      final_reply_length=len(reply))
+            return jsonify({'reply': reply, 'conversation_history': messages,
+                            'session_id': session_id})
+        except RuntimeError as exc:
+            log_event(_session_logger, 'error', error=str(exc))
+            return jsonify({'reply': str(exc), 'conversation_history': messages,
+                            'session_id': session_id})
+        except Exception as exc:
+            log_event(_session_logger, 'error', error=str(exc))
+            reply = f'Sorry, the assistant ran into an error: {exc}'
+            return jsonify({'reply': reply, 'conversation_history': messages,
+                            'session_id': session_id})
+        finally:
+            close_session_logger(_session_logger)
 
     return app
 

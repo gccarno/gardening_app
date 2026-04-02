@@ -865,18 +865,22 @@ def execute_tool(name: str, input_data: dict, garden) -> dict:
 
 # ── Agentic loop ──────────────────────────────────────────────────────────────
 
-def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5) -> str:
+def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5, session_logger=None) -> str:
     """
     Agentic loop for Ollama (llama3.1+) using the OpenAI-compatible tool-calling API.
     Passes the full conversation history and supports multi-round tool use.
     """
     import requests
+    from apps.ml_service.app.chat_logger import log_event
     base  = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
     model = os.environ.get('LLM_MODEL') or 'llama3.1'
 
     working = [{'role': 'system', 'content': system}] + list(messages)
 
-    for _ in range(max_rounds):
+    for round_num in range(1, max_rounds + 1):
+        if session_logger:
+            log_event(session_logger, 'llm_request', round=round_num,
+                      provider='ollama', message_count=len(working))
         resp = requests.post(
             f'{base}/api/chat',
             json={
@@ -892,6 +896,10 @@ def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5) -
         working.append(msg)
 
         tool_calls = msg.get('tool_calls') or []
+        if session_logger:
+            log_event(session_logger, 'llm_response', round=round_num,
+                      provider='ollama',
+                      stop_reason='end_turn' if not tool_calls else 'tool_use')
         if not tool_calls:
             return (msg.get('content') or '').strip() or 'Done.'
 
@@ -901,6 +909,14 @@ def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5) -
             if isinstance(args, str):
                 args = json.loads(args)
             result = execute_tool(fn['name'], args, garden)
+            if session_logger:
+                log_event(session_logger, 'tool_call', round=round_num,
+                          tool=fn['name'], input=args)
+                log_event(session_logger, 'tool_result', round=round_num,
+                          tool=fn['name'],
+                          ok='error' not in result,
+                          result_keys=list(result.keys()) if isinstance(result, dict) else None,
+                          error=result.get('error') if isinstance(result, dict) else None)
             working.append({'role': 'tool', 'content': json.dumps(result)})
 
     return 'I ran into a loop. Please try rephrasing your question.'
@@ -911,6 +927,7 @@ def run_agentic_loop(
     messages: list,
     garden,
     max_tool_rounds: int = 5,
+    session_logger=None,
 ) -> str:
     """
     Run multi-turn tool loop until Claude returns a pure text response.
@@ -919,9 +936,11 @@ def run_agentic_loop(
     Falls back to a plain complete() call for non-Anthropic providers.
     """
     from apps.ml_service.app.llm_provider import PROVIDER, complete as _llm_complete
+    from apps.ml_service.app.chat_logger import log_event
 
     if PROVIDER == 'ollama':
-        return _run_ollama_loop(system, messages, garden, max_tool_rounds)
+        return _run_ollama_loop(system, messages, garden, max_tool_rounds,
+                                session_logger=session_logger)
 
     if PROVIDER != 'anthropic':
         # Other non-Anthropic providers: pass the last user message only (no tool support)
@@ -933,7 +952,14 @@ def run_agentic_loop(
                 block.get('text', '') for block in last_user
                 if isinstance(block, dict) and block.get('type') == 'text'
             )
-        return _llm_complete(system, last_user)
+        if session_logger:
+            log_event(session_logger, 'llm_request', round=1, provider=PROVIDER,
+                      message_count=len(messages))
+        result = _llm_complete(system, last_user)
+        if session_logger:
+            log_event(session_logger, 'llm_response', round=1, provider=PROVIDER,
+                      stop_reason='end_turn')
+        return result
 
     import anthropic
 
@@ -947,7 +973,11 @@ def run_agentic_loop(
     client = anthropic.Anthropic(api_key=key)
     working_messages = list(messages)
 
-    for _ in range(max_tool_rounds):
+    for round_num in range(1, max_tool_rounds + 1):
+        if session_logger:
+            log_event(session_logger, 'llm_request', round=round_num,
+                      message_count=len(working_messages))
+
         response = client.messages.create(
             model=CHAT_MODEL,
             max_tokens=1024,
@@ -958,6 +988,11 @@ def run_agentic_loop(
 
         # Append assistant turn to working history
         working_messages.append({'role': 'assistant', 'content': response.content})
+
+        if session_logger:
+            log_event(session_logger, 'llm_response', round=round_num,
+                      stop_reason=response.stop_reason,
+                      content_blocks=len(response.content))
 
         if response.stop_reason != 'tool_use':
             text_parts = [
@@ -972,6 +1007,14 @@ def run_agentic_loop(
             if block.type != 'tool_use':
                 continue
             result = execute_tool(block.name, block.input, garden)
+            if session_logger:
+                log_event(session_logger, 'tool_call', round=round_num,
+                          tool=block.name, input=block.input)
+                log_event(session_logger, 'tool_result', round=round_num,
+                          tool=block.name,
+                          ok='error' not in result,
+                          result_keys=list(result.keys()) if isinstance(result, dict) else None,
+                          error=result.get('error') if isinstance(result, dict) else None)
             tool_results.append({
                 'type':        'tool_result',
                 'tool_use_id': block.id,
