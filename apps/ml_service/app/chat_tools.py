@@ -234,7 +234,7 @@ TOOL_SCHEMAS = [
 ]
 
 # Ollama / OpenAI-style tool schemas (converted from TOOL_SCHEMAS at import time)
-# Ollama 0.3+ accepts `tools` in this format for models that support tool calling (llama3.1+).
+# Ollama 0.3+ accepts `tools` in this format for models that support tool calling (llama3.1+, gemma4+).
 _OLLAMA_TOOL_SCHEMAS = [
     {
         'type': 'function',
@@ -867,7 +867,7 @@ def execute_tool(name: str, input_data: dict, garden) -> dict:
 
 def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5, session_logger=None) -> str:
     """
-    Agentic loop for Ollama (llama3.1+) using the OpenAI-compatible tool-calling API.
+    Agentic loop for Ollama (llama3.1+, gemma4+) using the OpenAI-compatible tool-calling API.
     Passes the full conversation history and supports multi-round tool use.
     """
     import requests

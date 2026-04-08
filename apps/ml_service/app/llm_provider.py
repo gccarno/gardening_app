@@ -21,7 +21,7 @@ CHAT_MODEL = os.environ.get('CHAT_MODEL', 'claude-sonnet-4-6')
 _DEFAULTS = {
     'anthropic':   'claude-haiku-4-5-20251001',
     'openai':      'gpt-4o-mini',
-    'ollama':      'llama3.1',
+    'ollama':      'gemma4:2b',
     'huggingface': 'mistralai/Mistral-7B-Instruct-v0.2',
 }
 
