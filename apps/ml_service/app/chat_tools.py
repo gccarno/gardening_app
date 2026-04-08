@@ -250,21 +250,17 @@ _OLLAMA_TOOL_SCHEMAS = [
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-def _get_models():
-    """Lazily import SQLAlchemy models (requires active Flask app context)."""
-    from apps.api.app.db.models import (
-        Garden, GardenBed, Plant, BedPlant, PlantLibrary, Task, db,
-    )
-    return Garden, GardenBed, Plant, BedPlant, PlantLibrary, Task, db
+from apps.backend.app.db.models import (
+    Garden, GardenBed, Plant, BedPlant, PlantLibrary, Task, WeatherLog,
+)
 
 
-def _find_library_plant(name: str):
+def _find_library_plant(name: str, db):
     """Case-insensitive search in PlantLibrary. Returns first match or None."""
-    _, _, _, _, PlantLibrary, _, _ = _get_models()
-    entry = PlantLibrary.query.filter(PlantLibrary.name.ilike(name)).first()
+    entry = db.query(PlantLibrary).filter(PlantLibrary.name.ilike(name)).first()
     if entry:
         return entry
-    return PlantLibrary.query.filter(PlantLibrary.name.ilike(f'%{name}%')).first()
+    return db.query(PlantLibrary).filter(PlantLibrary.name.ilike(f'%{name}%')).first()
 
 
 def _find_garden_plant(name: str, garden):
@@ -334,11 +330,11 @@ def _tool_get_garden_plan(input_data: dict, garden) -> dict:
     }
 
 
-def _tool_check_companion_planting(input_data: dict, garden) -> dict:
+def _tool_check_companion_planting(input_data: dict, garden, db) -> dict:
     plant_name = input_data.get('plant_name', '')
     companion_name = input_data.get('companion_name')
 
-    entry = _find_library_plant(plant_name)
+    entry = _find_library_plant(plant_name, db)
     if not entry:
         return {'error': f'Plant "{plant_name}" not found in the library.'}
 
@@ -375,9 +371,9 @@ def _tool_check_companion_planting(input_data: dict, garden) -> dict:
     return result
 
 
-def _tool_check_planting_calendar(input_data: dict, garden) -> dict:
+def _tool_check_planting_calendar(input_data: dict, garden, db) -> dict:
     plant_name = input_data.get('plant_name', '')
-    entry = _find_library_plant(plant_name)
+    entry = _find_library_plant(plant_name, db)
     if not entry:
         return {'error': f'Plant "{plant_name}" not found in the library.'}
 
@@ -429,11 +425,11 @@ def _tool_check_planting_calendar(input_data: dict, garden) -> dict:
     return result
 
 
-def _tool_check_spacing_requirements(input_data: dict, garden) -> dict:
+def _tool_check_spacing_requirements(input_data: dict, garden, db) -> dict:
     plant_name = input_data.get('plant_name', '')
     bed_name   = input_data.get('bed_name')
 
-    entry = _find_library_plant(plant_name)
+    entry = _find_library_plant(plant_name, db)
     if not entry:
         return {'error': f'Plant "{plant_name}" not found in the library.'}
 
@@ -466,9 +462,9 @@ def _tool_check_spacing_requirements(input_data: dict, garden) -> dict:
     return result
 
 
-def _tool_get_plant_care_info(input_data: dict, garden) -> dict:
+def _tool_get_plant_care_info(input_data: dict, garden, db) -> dict:
     plant_name = input_data.get('plant_name', '')
-    entry = _find_library_plant(plant_name)
+    entry = _find_library_plant(plant_name, db)
     if not entry:
         return {'error': f'Plant "{plant_name}" not found in the library.'}
 
@@ -503,17 +499,15 @@ def _tool_get_plant_care_info(input_data: dict, garden) -> dict:
     return {k: v for k, v in result.items() if v is not None}
 
 
-def _tool_add_plant_to_garden(input_data: dict, garden) -> dict:
+def _tool_add_plant_to_garden(input_data: dict, garden, db) -> dict:
     if not garden:
         return {'error': 'No garden selected. Please select a garden first.'}
-
-    _, _, Plant, BedPlant, _, _, db = _get_models()
 
     plant_name = input_data.get('plant_name', '')
     bed_name   = input_data.get('bed_name')
     notes      = input_data.get('notes')
 
-    lib = _find_library_plant(plant_name)
+    lib = _find_library_plant(plant_name, db)
 
     plant = Plant(
         name=lib.name if lib else plant_name,
@@ -524,30 +518,28 @@ def _tool_add_plant_to_garden(input_data: dict, garden) -> dict:
         notes=notes,
         status='growing',
     )
-    db.session.add(plant)
-    db.session.flush()
+    db.add(plant)
+    db.flush()
 
     result = {'added': plant.name, 'garden': garden.name, 'plant_id': plant.id}
 
     if bed_name:
         bed = _find_bed(bed_name, garden)
         if bed:
-            db.session.add(BedPlant(bed_id=bed.id, plant_id=plant.id))
+            db.add(BedPlant(bed_id=bed.id, plant_id=plant.id))
             result['bed'] = bed.name
         else:
             result['bed_warning'] = (
                 f'Bed "{bed_name}" not found; plant added to garden without a bed.'
             )
 
-    db.session.commit()
+    db.commit()
     return result
 
 
-def _tool_create_task(input_data: dict, garden) -> dict:
+def _tool_create_task(input_data: dict, garden, db) -> dict:
     if not garden:
         return {'error': 'No garden selected. Please select a garden first.'}
-
-    _, _, _, _, _, Task, db = _get_models()
 
     task_type    = input_data.get('task_type', 'other')
     plant_name   = input_data.get('plant_name')
@@ -598,8 +590,8 @@ def _tool_create_task(input_data: dict, garden) -> dict:
         plant_id=plant.id if plant else None,
         garden_id=garden.id,
     )
-    db.session.add(task)
-    db.session.commit()
+    db.add(task)
+    db.commit()
 
     return {
         'created': task.title,
@@ -609,18 +601,16 @@ def _tool_create_task(input_data: dict, garden) -> dict:
     }
 
 
-def _tool_list_upcoming_tasks(input_data: dict, garden) -> dict:
+def _tool_list_upcoming_tasks(input_data: dict, garden, db) -> dict:
     if not garden:
         return {'error': 'No garden selected.'}
-
-    _, _, _, _, _, Task, _ = _get_models()
 
     days   = int(input_data.get('days') or 14)
     today  = date.today()
     cutoff = today + timedelta(days=days)
 
     tasks = (
-        Task.query
+        db.query(Task)
         .filter_by(garden_id=garden.id, completed=False)
         .filter(Task.due_date != None)  # noqa: E711
         .filter(Task.due_date <= cutoff)
@@ -660,17 +650,14 @@ def _tool_get_weather_forecast(input_data: dict, garden) -> dict:
     }
 
 
-def _tool_get_watering_history(input_data: dict, garden) -> dict:
+def _tool_get_watering_history(input_data: dict, garden, db) -> dict:
     if not garden:
         return {'error': 'No garden selected.'}
-
-    _, _, _, _, _, _, _ = _get_models()  # ensure models importable
-    from apps.api.app.db.models import WeatherLog
 
     days_back = int(input_data.get('days_back') or 14)
     cutoff    = date.today() - timedelta(days=days_back)
 
-    logs = (WeatherLog.query
+    logs = (db.query(WeatherLog)
             .filter_by(garden_id=garden.id)
             .filter(WeatherLog.date >= cutoff)
             .order_by(WeatherLog.date.desc())
@@ -711,17 +698,16 @@ def _tool_get_watering_history(input_data: dict, garden) -> dict:
     }
 
 
-def _tool_get_watering_recommendation(input_data: dict, garden) -> dict:
+def _tool_get_watering_recommendation(input_data: dict, garden, db) -> dict:
     if not garden:
         return {'error': 'No garden selected.'}
 
-    from apps.api.app.db.models import WeatherLog
     from apps.ml_service.app.watering_engine import (
         fetch_forecast_today, get_watering_recommendations,
     )
 
     cutoff = date.today() - timedelta(days=14)
-    weather_logs = (WeatherLog.query
+    weather_logs = (db.query(WeatherLog)
                     .filter_by(garden_id=garden.id)
                     .filter(WeatherLog.date >= cutoff)
                     .all())
@@ -838,21 +824,21 @@ def _tool_search_growing_guides(input_data: dict, garden) -> dict:
 
 # ── Tool dispatcher ───────────────────────────────────────────────────────────
 
-def execute_tool(name: str, input_data: dict, garden) -> dict:
+def execute_tool(name: str, input_data: dict, garden, db) -> dict:
     """Route a tool call to its implementation. Returns a result dict."""
     handlers = {
-        'get_garden_plan':            lambda: _tool_get_garden_plan(input_data, garden),
-        'check_companion_planting':   lambda: _tool_check_companion_planting(input_data, garden),
-        'check_planting_calendar':    lambda: _tool_check_planting_calendar(input_data, garden),
-        'check_spacing_requirements': lambda: _tool_check_spacing_requirements(input_data, garden),
-        'get_plant_care_info':        lambda: _tool_get_plant_care_info(input_data, garden),
-        'add_plant_to_garden':        lambda: _tool_add_plant_to_garden(input_data, garden),
-        'create_task':                lambda: _tool_create_task(input_data, garden),
-        'list_upcoming_tasks':        lambda: _tool_list_upcoming_tasks(input_data, garden),
-        'get_weather_forecast':          lambda: _tool_get_weather_forecast(input_data, garden),
-        'get_watering_history':          lambda: _tool_get_watering_history(input_data, garden),
-        'get_watering_recommendation':   lambda: _tool_get_watering_recommendation(input_data, garden),
-        'search_growing_guides':         lambda: _tool_search_growing_guides(input_data, garden),
+        'get_garden_plan':             lambda: _tool_get_garden_plan(input_data, garden),
+        'check_companion_planting':    lambda: _tool_check_companion_planting(input_data, garden, db),
+        'check_planting_calendar':     lambda: _tool_check_planting_calendar(input_data, garden, db),
+        'check_spacing_requirements':  lambda: _tool_check_spacing_requirements(input_data, garden, db),
+        'get_plant_care_info':         lambda: _tool_get_plant_care_info(input_data, garden, db),
+        'add_plant_to_garden':         lambda: _tool_add_plant_to_garden(input_data, garden, db),
+        'create_task':                 lambda: _tool_create_task(input_data, garden, db),
+        'list_upcoming_tasks':         lambda: _tool_list_upcoming_tasks(input_data, garden, db),
+        'get_weather_forecast':        lambda: _tool_get_weather_forecast(input_data, garden),
+        'get_watering_history':        lambda: _tool_get_watering_history(input_data, garden, db),
+        'get_watering_recommendation': lambda: _tool_get_watering_recommendation(input_data, garden, db),
+        'search_growing_guides':       lambda: _tool_search_growing_guides(input_data, garden),
     }
     handler = handlers.get(name)
     if handler is None:
@@ -865,7 +851,7 @@ def execute_tool(name: str, input_data: dict, garden) -> dict:
 
 # ── Agentic loop ──────────────────────────────────────────────────────────────
 
-def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5, session_logger=None) -> str:
+def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 5, session_logger=None) -> str:
     """
     Agentic loop for Ollama (llama3.1+, gemma4+) using the OpenAI-compatible tool-calling API.
     Passes the full conversation history and supports multi-round tool use.
@@ -908,7 +894,7 @@ def _run_ollama_loop(system: str, messages: list, garden, max_rounds: int = 5, s
             args = fn.get('arguments', {})
             if isinstance(args, str):
                 args = json.loads(args)
-            result = execute_tool(fn['name'], args, garden)
+            result = execute_tool(fn['name'], args, garden, db)
             if session_logger:
                 log_event(session_logger, 'tool_call', round=round_num,
                           tool=fn['name'], input=args)
@@ -926,6 +912,7 @@ def run_agentic_loop(
     system: str,
     messages: list,
     garden,
+    db,
     max_tool_rounds: int = 5,
     session_logger=None,
 ) -> str:
@@ -939,7 +926,7 @@ def run_agentic_loop(
     from apps.ml_service.app.chat_logger import log_event
 
     if PROVIDER == 'ollama':
-        return _run_ollama_loop(system, messages, garden, max_tool_rounds,
+        return _run_ollama_loop(system, messages, garden, db, max_tool_rounds,
                                 session_logger=session_logger)
 
     if PROVIDER != 'anthropic':
@@ -1006,7 +993,7 @@ def run_agentic_loop(
         for block in response.content:
             if block.type != 'tool_use':
                 continue
-            result = execute_tool(block.name, block.input, garden)
+            result = execute_tool(block.name, block.input, garden, db)
             if session_logger:
                 log_event(session_logger, 'tool_call', round=round_num,
                           tool=block.name, input=block.input)

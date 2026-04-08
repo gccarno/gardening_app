@@ -100,7 +100,7 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
                   session_id=session_id, garden_id=garden_id,
                   garden_name=garden_name, user_message=user_msg,
                   history_length=len(conversation_history))
-        reply = run_agentic_loop(system_prompt, messages, garden,
+        reply = run_agentic_loop(system_prompt, messages, garden, db,
                                  session_logger=_session_logger)
         log_event(_session_logger, 'session_end',
                   session_id=session_id, final_reply_length=len(reply))

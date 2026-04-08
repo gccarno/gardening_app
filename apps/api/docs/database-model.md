@@ -96,12 +96,77 @@ erDiagram
         text how_to_grow
         text faqs
         text nutrition
+        int usda_fdc_id
         int permapeople_id
         string permapeople_link
         text permapeople_description
         string family
         string layer
         string edible_parts
+        string openfarm_id
+        string openfarm_slug
+        int trefle_id
+        string trefle_slug
+        string toxicity
+        string duration
+        string ligneous_type
+        string growth_habit
+        string growth_form
+        string growth_rate
+        string nitrogen_fixation
+        bool vegetable
+        text observations
+        int average_height_cm
+        int maximum_height_cm
+        int spread_cm
+        int row_spacing_cm
+        int minimum_root_depth_cm
+        int soil_nutriments
+        int soil_salinity
+        int atmospheric_humidity
+        int precipitation_min_mm
+        int precipitation_max_mm
+        text bloom_months
+        text fruit_months
+        text growth_months
+        string flower_color
+        bool flower_conspicuous
+        string foliage_color
+        string foliage_texture
+        bool leaf_retention
+        string fruit_color
+        bool fruit_conspicuous
+        string fruit_shape
+        bool seed_persistence
+        bool poisonous_to_pets
+        bool poisonous_to_humans
+        bool drought_tolerant
+        bool salt_tolerant
+        bool thorny
+        bool invasive
+        bool rare
+        bool tropical
+        bool indoor
+        bool cuisine
+        bool medicinal
+        text attracts
+        text propagation_methods
+        string harvest_season
+        string harvest_method
+        string fruiting_season
+        text pruning_months
+    }
+
+    PlantLibraryImage {
+        int id PK
+        int plant_library_id FK
+        string filename
+        string source
+        text source_url
+        text attribution
+        string file_hash
+        bool is_primary
+        datetime created_at
     }
 
     CanvasPlant {
@@ -116,6 +181,11 @@ erDiagram
         string display_mode
         string custom_image
         string label
+    }
+
+    AppSetting {
+        string key PK
+        text value
     }
 
     Task {
@@ -155,6 +225,7 @@ erDiagram
     Plant ||--o{ Task : "has"
     Plant }o--o| PlantLibrary : "based on"
 
+    PlantLibrary ||--o{ PlantLibraryImage : "has"
     PlantLibrary ||--o{ CanvasPlant : "template for"
 ```
 
@@ -175,10 +246,22 @@ A specific plant instance within a garden. Always linked to a `PlantLibrary` ent
 Many-to-many link between `Plant` and `GardenBed`. Each row represents one placement of a plant inside a bed at grid coordinates (`grid_x`, `grid_y`, in inches from bed origin). Per-placement care tracking: last watered/fertilized/harvested, health notes, and growth `stage` (`seedling` → `growing` → `harvesting` → `done`).
 
 ### PlantLibrary
-Shared reference catalog (~44 plants seeded). Contains growing specs (spacing, sunlight, water needs, days to germination/harvest), zone/temperature ranges, soil preferences, companion planting data (JSON arrays in `good_neighbors`/`bad_neighbors`), and how-to-grow guides (JSON). Enriched from Perenual API and Permapeople (CC BY-SA 4.0).
+Shared reference catalog (~8,988 plants). Contains growing specs (spacing, sunlight, water needs, days to germination/harvest), zone/temperature ranges, soil preferences, companion planting data (JSON arrays in `good_neighbors`/`bad_neighbors`), and how-to-grow guides (JSON). Data sourced from:
+
+- **Permapeople** (CC BY-SA 4.0) — companion planting, family, layer, edible parts
+- **Trefle** — detailed botanical data: growth dimensions, phenology months, flower/foliage/fruit traits, soil tolerances
+- **OpenFarm** (CC0) — growing guides (`how_to_grow`, `faqs`)
+- **USDA FDC** — nutrition data (`usda_fdc_id`)
+- **Perenual** — trait flags only (`poisonous_to_pets`, `drought_tolerant`, `invasive`, etc.); `perenual_id` is not populated for any current plants — the Perenual enrichment pipeline has been retired
+
+### PlantLibraryImage
+Multiple images per library entry (6,233 images across 2,193 plants). `source` tracks origin: `manual`, `wikimedia`, `inaturalist`, `openverse`, `pexels`. `file_hash` (SHA-256) prevents duplicate downloads. `is_primary` marks the default display image. Files stored in `static/plant_images/`.
 
 ### CanvasPlant
 A free-placed plant circle on the planner canvas — not inside any bed grid. Positioned by `pos_x`/`pos_y` (feet) with `radius_ft`. Display is either a `color` fill or an `image` (library image or custom upload in `static/canvas_plant_images/`). Optionally linked to a `Plant` instance and/or `PlantLibrary` entry.
+
+### AppSetting
+Key/value store for app-wide configuration. Primary key is the string `key`. Single-user, no garden scoping. Used for settings that apply globally (e.g., default units, feature flags).
 
 ### Task
 To-do items scoped to any combination of garden, bed, and/or plant. `task_type` values: `seeding`, `transplanting`, `watering`, `fertilizing`, `weeding`, `mulching`, `harvest`, `pruning`, `other`. Tracks completion date separately from the `completed` flag.
@@ -191,6 +274,6 @@ Daily weather snapshots per garden. Unique constraint on `(garden_id, date)` pre
 ## Key Design Notes
 
 - **Plants are placed two ways:** inside a bed grid (`BedPlant`) or freely on the canvas (`CanvasPlant`). Both can reference the same `Plant` instance and `PlantLibrary` entry.
-- **No migrations framework** — new columns are added via `ALTER TABLE` in `create_app()` on startup (`apps/api/app/main.py`).
 - **PlantLibrary is shared** across all gardens. Edits to it (spacing, notes, image) affect every garden's display.
-- **SQLite** database at `instance/garden.db`. Delete the file to fully reset (stops Flask first — the file is locked on Windows while running).
+- **SQLite** database at `apps/api/instance/garden.db`. The FastAPI backend (`apps/backend/`) reads the same database file. Delete the file to fully reset the schema — stop the server first (the file is locked on Windows while running).
+- **No migrations framework** — SQLite `ALTER TABLE` statements are run at startup to add new columns to existing databases.

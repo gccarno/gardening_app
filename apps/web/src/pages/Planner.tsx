@@ -70,7 +70,7 @@ async function api(method: string, path: string, body?: unknown) {
 }
 
 function snap(value: number) { return Math.round(value / PX) * PX; }
-function plantSpan(spacingIn: number, tileIn: number) { return Math.max(1, Math.round(spacingIn / tileIn)); }
+function plantSpan(spacingIn: number, tileIn: number) { const s = Math.round((spacingIn || 12) / tileIn); return Math.max(1, isNaN(s) ? 1 : s); }
 
 // ── BedGrid component ─────────────────────────────────────────────────────────
 function BedGrid({
@@ -1502,7 +1502,9 @@ export default function Planner() {
             }
 
             const todayPct = toPct(today.toISOString().slice(0, 10));
-            const plantsWithDates = gardenPlants.filter(p => p.planted_date || p.transplant_date || p.expected_harvest);
+            const plantsWithDates = gardenPlants.filter(
+              p => p.planted_date || p.transplant_date || p.expected_harvest || p.status === 'planning'
+            );
 
             return (
               <div>
@@ -1558,11 +1560,16 @@ export default function Planner() {
                     })}
                   </div>
                 )}
-                {gardenPlants.length > 0 && plantsWithDates.length < gardenPlants.length && (
-                  <p style={{ fontSize: '0.72rem', color: '#9ab49a', marginTop: '0.5rem' }}>
-                    {gardenPlants.length - plantsWithDates.length} plant(s) have no dates set.
-                  </p>
-                )}
+                {(() => {
+                  const noDateGrowing = gardenPlants.filter(
+                    p => p.status !== 'planning' && !p.planted_date && !p.transplant_date && !p.expected_harvest
+                  ).length;
+                  return noDateGrowing > 0 ? (
+                    <p style={{ fontSize: '0.72rem', color: '#9ab49a', marginTop: '0.5rem' }}>
+                      {noDateGrowing} growing plant(s) have no dates set.
+                    </p>
+                  ) : null;
+                })()}
               </div>
             );
           })()}

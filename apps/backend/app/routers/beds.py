@@ -94,6 +94,7 @@ def api_bed_grid(bed_id: int, db: Session = Depends(get_db)):
             'plant_id':       bp.plant_id,
             'plant_name':     bp.plant.name if bp.plant else '?',
             'image_filename': entry.image_filename if entry else None,
+            'spacing_in':     entry.spacing_in if entry and entry.spacing_in else 12,
             'grid_x':         bp.grid_x,
             'grid_y':         bp.grid_y,
         })

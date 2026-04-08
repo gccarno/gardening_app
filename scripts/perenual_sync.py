@@ -32,7 +32,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'api'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'backend'))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -40,8 +40,9 @@ load_dotenv()
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from app.main import create_app
-from app.db.models import db, PlantLibrary, PlantLibraryImage, AppSetting
+from sqlalchemy import func
+from app.db.models import PlantLibrary, PlantLibraryImage, AppSetting
+from app.db.session import SessionLocal
 
 API_KEY     = os.getenv('PERENUAL_API_KEY', '')
 BASE        = 'https://perenual.com/api'
@@ -309,7 +310,7 @@ def write_perenual_fields(entry, data, dry_run):
 
 # ── Image save ────────────────────────────────────────────────────────────────
 
-def save_image(entry, url, img_dir, dry_run):
+def save_image(entry, url, img_dir, dry_run, session):
     """Download image, deduplicate by hash, save to disk + DB."""
     if not url or 'Upgrade Plans' in str(url):
         return None
@@ -319,12 +320,12 @@ def save_image(entry, url, img_dir, dry_run):
         img_bytes = r.content
         fhash = hashlib.sha256(img_bytes).hexdigest()
 
-        if PlantLibraryImage.query.filter_by(file_hash=fhash).first():
+        if session.query(PlantLibraryImage).filter_by(file_hash=fhash).first():
             return None  # duplicate
 
         ct  = r.headers.get('content-type', '')
         ext = '.png' if 'png' in ct else '.webp' if 'webp' in ct else '.jpg'
-        count = PlantLibraryImage.query.filter_by(
+        count = session.query(PlantLibraryImage).filter_by(
             plant_library_id=entry.id, source='perenual'
         ).count()
         filename = f'{entry.id}_perenual_{count + 1}{ext}'
@@ -336,10 +337,10 @@ def save_image(entry, url, img_dir, dry_run):
         with open(dest, 'wb') as f:
             f.write(img_bytes)
 
-        has_primary = PlantLibraryImage.query.filter_by(
+        has_primary = session.query(PlantLibraryImage).filter_by(
             plant_library_id=entry.id, is_primary=True
         ).first() is not None
-        db.session.add(PlantLibraryImage(
+        session.add(PlantLibraryImage(
             plant_library_id=entry.id,
             filename=filename,
             source='perenual',
@@ -355,21 +356,21 @@ def save_image(entry, url, img_dir, dry_run):
 
 # ── Match existing plant ───────────────────────────────────────────────────────
 
-def find_existing(perenual_id, sci_name, common_name):
+def find_existing(perenual_id, sci_name, common_name, session):
     """Look up a matching PlantLibrary entry. Returns entry or None."""
     if perenual_id:
-        found = PlantLibrary.query.filter_by(perenual_id=perenual_id).first()
+        found = session.query(PlantLibrary).filter_by(perenual_id=perenual_id).first()
         if found:
             return found
     if sci_name:
-        found = PlantLibrary.query.filter(
-            db.func.lower(PlantLibrary.scientific_name) == sci_name.lower()
+        found = session.query(PlantLibrary).filter(
+            func.lower(PlantLibrary.scientific_name) == sci_name.lower()
         ).first()
         if found:
             return found
     if common_name:
-        found = PlantLibrary.query.filter(
-            db.func.lower(PlantLibrary.name) == common_name.lower()
+        found = session.query(PlantLibrary).filter(
+            func.lower(PlantLibrary.name) == common_name.lower()
         ).first()
         if found:
             return found
@@ -378,7 +379,7 @@ def find_existing(perenual_id, sci_name, common_name):
 
 # ── Create new entry ──────────────────────────────────────────────────────────
 
-def create_new(data, img_dir, dry_run):
+def create_new(data, img_dir, dry_run, session):
     """Create a new PlantLibrary entry from Perenual species data."""
     name = (data.get('common_name') or '').strip()
     if not name:
@@ -397,8 +398,8 @@ def create_new(data, img_dir, dry_run):
         perenual_id=data.get('id'),
         family=data.get('family') or None,
     )
-    db.session.add(entry)
-    db.session.flush()  # assign entry.id before saving image
+    session.add(entry)
+    session.flush()  # assign entry.id before saving image
 
     merge_fill(entry, data, dry_run=False)
     write_perenual_fields(entry, data, dry_run=False)
@@ -406,18 +407,18 @@ def create_new(data, img_dir, dry_run):
     img = data.get('default_image') or {}
     url = img.get('small_url') or img.get('thumbnail')
     if url:
-        fname = save_image(entry, url, img_dir, dry_run=False)
+        fname = save_image(entry, url, img_dir, dry_run=False, session=session)
         if fname:
             print(f'      [image] saved {fname}')
 
-    db.session.commit()
+    session.commit()
     return entry
 
 
 # ── AppSetting helpers ────────────────────────────────────────────────────────
 
-def get_next_id():
-    row = AppSetting.query.get('perenual_sync_next_id')
+def get_next_id(session):
+    row = session.get(AppSetting, 'perenual_sync_next_id')
     if row and row.value:
         try:
             return int(row.value)
@@ -426,15 +427,15 @@ def get_next_id():
     return 1
 
 
-def set_next_id(next_id, dry_run):
+def set_next_id(next_id, dry_run, session):
     if dry_run:
         return
-    row = AppSetting.query.get('perenual_sync_next_id')
+    row = session.get(AppSetting, 'perenual_sync_next_id')
     if row:
         row.value = str(next_id)
     else:
-        db.session.add(AppSetting(key='perenual_sync_next_id', value=str(next_id)))
-    db.session.commit()
+        session.add(AppSetting(key='perenual_sync_next_id', value=str(next_id)))
+    session.commit()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -465,12 +466,12 @@ def main():
     SESSION.mount('https://', adapter)
     SESSION.mount('http://',  adapter)
 
-    flask_app = create_app()
-    with flask_app.app_context():
-        img_dir = os.path.join(flask_app.static_folder, 'plant_images')
+    session = SessionLocal()
+    try:
+        img_dir = os.path.join(_REPO_ROOT, 'apps', 'api', 'static', 'plant_images')
         os.makedirs(img_dir, exist_ok=True)
 
-        start_id = get_next_id()
+        start_id = get_next_id(session)
 
         if start_id > MAX_FREE_ID:
             print('All 3,000 free-tier species have been processed.')
@@ -494,7 +495,7 @@ def main():
 
             if status == 'rate_limit':
                 print('RATE LIMIT (429) — stopping.')
-                set_next_id(pid, args.dry_run)
+                set_next_id(pid, args.dry_run, session)
                 break
 
             if status == 'not_found':
@@ -519,7 +520,7 @@ def main():
             sci_name    = _first(data.get('scientific_name')) or ''
             print(f'{common_name!r}', end=' ', flush=True)
 
-            entry = find_existing(pid, sci_name, common_name)
+            entry = find_existing(pid, sci_name, common_name, session)
 
             if entry is None:
                 name_for_new = (data.get('common_name') or '').strip()
@@ -527,7 +528,7 @@ def main():
                     print('→ skipped (no common_name)')
                     next_start = pid + 1
                     continue
-                new_entry = create_new(data, img_dir, args.dry_run)
+                new_entry = create_new(data, img_dir, args.dry_run, session)
                 if args.dry_run:
                     print(f'→ would add {name_for_new!r}')
                     n_added += 1
@@ -561,13 +562,13 @@ def main():
                 img = data.get('default_image') or {}
                 url = img.get('small_url') or img.get('thumbnail')
                 if url:
-                    fname = save_image(entry, url, img_dir, args.dry_run)
+                    fname = save_image(entry, url, img_dir, args.dry_run, session)
                     if fname:
                         print(f'      [image] {fname}')
 
                 if not args.dry_run:
                     entry.perenual_id = pid
-                    db.session.commit()
+                    session.commit()
 
                 n_matched += 1
                 if all_changes:
@@ -575,14 +576,14 @@ def main():
 
             except Exception as e:
                 print(f'      ERROR: {e}')
-                db.session.rollback()
+                session.rollback()
                 n_errors += 1
 
             next_start = pid + 1
 
         else:
             # Loop finished without break (no rate limit hit)
-            set_next_id(next_start, args.dry_run)
+            set_next_id(next_start, args.dry_run, session)
 
         print(f'\nDone. '
               f'Matched: {n_matched} ({n_updated} updated)  '
@@ -590,6 +591,9 @@ def main():
               f'Premium/not-found: {n_premium + n_not_found}  '
               f'Errors: {n_errors}')
         print(f'Next run starts at ID: {next_start}')
+
+    finally:
+        session.close()
 
 
 if __name__ == '__main__':

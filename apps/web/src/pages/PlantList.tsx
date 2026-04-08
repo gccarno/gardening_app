@@ -60,7 +60,7 @@ function GanttChart({ rows, filter }: { rows: GanttRow[]; filter: string }) {
               {g.status === 'growing' ? 'Growing' : 'Planning'}
             </div>
             {g.items.map(p => {
-              const planted = parseDate(p.planted);
+              const planted = parseDate(p.planted) ?? (p.status === 'planning' ? today : null);
               const harvest = parseDate(p.harvest);
               const transplant = parseDate(p.transplant);
               if (!planted) return null;
@@ -126,14 +126,14 @@ export default function PlantList() {
   const growingPlants = allPlants?.filter(p => p.status === 'growing') ?? [];
   const pendingTasks = tasks?.filter(t => !t.completed) ?? [];
 
-  const ganttRows: GanttRow[] = [...growingPlants, ...planningPlants]
-    .filter(p => p.planted_date || p.transplant_date)
-    .map(p => ({
-      id: p.id, name: p.name, status: p.status || 'planning',
-      planted: p.planted_date ?? null, harvest: p.expected_harvest ?? null,
-      transplant: p.transplant_date ?? null, germDays: null, daysToHarvest: p.days_to_harvest ?? null,
-    }));
-  const unscheduled = planningPlants.filter(p => !p.planted_date && !p.transplant_date);
+  const ganttRows: GanttRow[] = [
+    ...growingPlants.filter(p => p.planted_date || p.transplant_date),
+    ...planningPlants,
+  ].map(p => ({
+    id: p.id, name: p.name, status: p.status || 'planning',
+    planted: p.planted_date ?? null, harvest: p.expected_harvest ?? null,
+    transplant: p.transplant_date ?? null, germDays: null, daysToHarvest: p.days_to_harvest ?? null,
+  }));
 
   function handleFormChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     setAddForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -310,7 +310,7 @@ export default function PlantList() {
       {tab === 'timeline' && (
         <section>
           <p className="muted" style={{ marginBottom: '1rem' }}>Compare your plants side-by-side across the growing season.</p>
-          {(ganttRows.length > 0 || unscheduled.length > 0) ? (
+          {ganttRows.length > 0 ? (
             <>
               <div className="gantt-filters">
                 {[['all', 'All'], ['growing', 'Growing only'], ['planning', 'Planning only']].map(([f, lbl]) => (
@@ -324,13 +324,7 @@ export default function PlantList() {
                 <span className="gantt-swatch gantt-swatch--harvest" /> Harvest &ensp;
                 <span className="gantt-swatch gantt-swatch--today" /> Today
               </div>
-              {ganttRows.length > 0 && <GanttChart rows={ganttRows} filter={ganttFilter} />}
-              {unscheduled.length > 0 && ganttFilter !== 'growing' && (
-                <div className="gantt-unscheduled">
-                  <h3>Planning — no dates set</h3>
-                  <ul>{unscheduled.map(p => <li key={p.id}><Link to={`/plants/${p.id}`}>{p.name}</Link></li>)}</ul>
-                </div>
-              )}
+              <GanttChart rows={ganttRows} filter={ganttFilter} />
             </>
           ) : (
             <p className="muted">No plants yet. Add a plant and set a planted date to see the timeline.</p>
