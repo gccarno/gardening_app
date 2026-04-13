@@ -219,14 +219,17 @@ const canvasPlantEls    = {}; // cp_id → DOM element
 function applyCircleAppearance(el, cp) {
     const bg = el.querySelector('.circle-bg');
     const img = bg ? bg.querySelector('img') : null;
-    if (cp.display_mode === 'image' && cp.image_filename) {
-        const src = cp.custom_image
-            ? `/static/canvas_plant_images/${cp.image_filename}`
-            : `/static/plant_images/${cp.image_filename}`;
-        if (img) {
-            img.src = src;
-            img.style.display = 'block';
-        }
+    const svgSrc = cp.svg_icon_url || null;
+    if (cp.custom_image) {
+        const src = `/static/canvas_plant_images/${cp.image_filename}`;
+        if (img) { img.src = src; img.style.display = 'block'; }
+        el.style.backgroundColor = 'transparent';
+    } else if (svgSrc) {
+        if (img) { img.src = svgSrc; img.style.display = 'block'; }
+        el.style.backgroundColor = 'transparent';
+    } else if (cp.display_mode === 'image' && cp.image_filename) {
+        const src = `/static/plant_images/${cp.image_filename}`;
+        if (img) { img.src = src; img.style.display = 'block'; }
         el.style.backgroundColor = 'transparent';
     } else {
         if (img) img.style.display = 'none';

@@ -31,6 +31,7 @@ Requirements:
 """
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -40,12 +41,21 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'api'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'backend'))
 
 from dotenv import load_dotenv
 load_dotenv()
 
+# gemma4:e2b is too large for batch extraction; fall back to gemma3:4b for Ollama
+if os.environ.get('LLM_PROVIDER', '').lower() == 'ollama':
+    os.environ['LLM_MODEL'] = os.environ.get('TAMU_LLM_MODEL', 'gemma4:e2b')
+
 import requests
+
+LOG_DIR = os.path.join(_REPO_ROOT, 'logs')
+LOG_FILE = os.path.join(LOG_DIR, 'tamu_sync.log')
+
+logger = logging.getLogger('tamu_sync')
 
 PDF_DIR = os.path.join(os.path.dirname(__file__), 'tamu_pdfs')
 
@@ -171,15 +181,15 @@ def download_pdf(plant_name, url, series):
         r = requests.get(url, timeout=30,
                          headers={'User-Agent': 'GardenApp/1.0 (educational)'})
         if r.status_code == 404:
-            print(f'    404 not found: {url}')
+            logger.warning('404 not found: %s', url)
             return None
         r.raise_for_status()
         with open(dest, 'wb') as f:
             f.write(r.content)
-        print(f'    downloaded {filename} ({len(r.content)//1024} KB)')
+        logger.info('downloaded %s (%d KB)', filename, len(r.content) // 1024)
         return dest
     except Exception as e:
-        print(f'    download error {url}: {e}')
+        logger.error('download error %s: %s', url, e)
         return None
 
 
@@ -200,7 +210,7 @@ def extract_pdf_text(pdf_path):
                 if t:
                     text_parts.append(t)
     except Exception as e:
-        print(f'    PDF read error {pdf_path}: {e}')
+        logger.error('PDF read error %s: %s', pdf_path, e)
         return ''
 
     return '\n\n'.join(text_parts)
@@ -208,15 +218,22 @@ def extract_pdf_text(pdf_path):
 
 # ── LLM extraction ─────────────────────────────────────────────────────────────
 
+def _llm_complete(system, user):
+    """Call llm_provider.complete via the ml_service module."""
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        'llm_provider',
+        os.path.join(_REPO_ROOT, 'apps', 'ml_service', 'app', 'llm_provider.py'),
+    )
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    return _mod.complete(system, user)
+
+
 def extract_fields_with_llm(plant_name, pdf_text):
-    """Use claude-haiku to extract structured fields from PDF text. Returns dict or None."""
-    import anthropic
+    """Use the configured local LLM to extract structured fields from PDF text. Returns dict or None."""
 
-    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
-    if not api_key:
-        raise RuntimeError('ANTHROPIC_API_KEY not set in .env')
-
-    # Truncate very long PDFs to ~6000 chars to keep costs low
+    # Truncate very long PDFs to ~6000 chars
     if len(pdf_text) > 6000:
         pdf_text = pdf_text[:6000] + '\n[... truncated ...]'
 
@@ -226,14 +243,7 @@ def extract_fields_with_llm(plant_name, pdf_text):
         f'Extract into this exact JSON schema:\n{_EXTRACTION_SCHEMA}'
     )
 
-    client = anthropic.Anthropic(api_key=api_key)
-    resp = client.messages.create(
-        model='claude-haiku-4-5-20251001',
-        max_tokens=2048,
-        system=_SYSTEM_PROMPT,
-        messages=[{'role': 'user', 'content': user_prompt}],
-    )
-    raw = resp.content[0].text.strip()
+    raw = _llm_complete(_SYSTEM_PROMPT, user_prompt).strip()
 
     # Strip markdown code fences if present
     raw = re.sub(r'^```(?:json)?\s*', '', raw)
@@ -242,8 +252,8 @@ def extract_fields_with_llm(plant_name, pdf_text):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f'    JSON parse error: {e}')
-        print(f'    Raw response: {raw[:300]}')
+        logger.error('JSON parse error: %s', e)
+        logger.debug('Raw LLM response: %s', raw[:300])
         return None
 
 
@@ -350,19 +360,35 @@ def parse_args():
                    help='Download PDFs only, no LLM extraction')
     p.add_argument('--delay',         type=float, default=1.0,
                    help='Seconds between LLM calls (default 1.0)')
+    p.add_argument('--log-level',     default='INFO',
+                   choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                   help='Log verbosity (default INFO)')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
 
-    from app.main import create_app
-    from app.db.models import db, PlantLibrary
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_level = getattr(logging, args.log_level)
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s %(levelname)-8s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+    logger.info('tamu_sync starting (dry_run=%s, force=%s)', args.dry_run, args.force)
 
-    flask_app = create_app()
-    with flask_app.app_context():
-        all_entries = PlantLibrary.query.all()
-        print(f'{len(all_entries)} library entries loaded\n')
+    from app.db.session import SessionLocal
+    from app.db.models import PlantLibrary
+
+    db = SessionLocal()
+    try:
+        all_entries = db.query(PlantLibrary).all()
+        logger.info('%d library entries loaded', len(all_entries))
 
         n_updated = n_skipped = n_no_match = n_errors = n_downloaded = 0
 
@@ -372,13 +398,10 @@ def main():
             filter_lower = args.plant.lower()
             pdf_list = [(p, u, s) for p, u, s in TAMU_PDFS
                         if filter_lower in p.lower()]
-            print(f'Filtered to {len(pdf_list)} PDF(s) matching {args.plant!r}\n')
-
-        # Deduplicate: prefer commercial over easy if same plant appears twice
-        # (we process all; fill-in-blank handles duplicates safely)
+            logger.info('Filtered to %d PDF(s) matching %r', len(pdf_list), args.plant)
 
         for plant_name, url, series in pdf_list:
-            print(f'[{series}] {plant_name}')
+            logger.info('[%s] %s', series, plant_name)
 
             # Download PDF
             pdf_path = download_pdf(plant_name, url, series)
@@ -393,53 +416,55 @@ def main():
             # Find library entry
             entry = find_library_entry(plant_name, all_entries)
             if not entry:
-                print(f'  no library match for {plant_name!r}')
+                logger.warning('no library match for %r', plant_name)
                 n_no_match += 1
                 continue
 
             # Skip if already enriched (unless --force)
             if not args.force and not _blank(getattr(entry, 'how_to_grow', None)):
-                print(f'  already has how_to_grow, skipping (use --force to re-extract)')
+                logger.debug('%r already has how_to_grow, skipping', plant_name)
                 n_skipped += 1
                 continue
 
             # Extract text from PDF
             text = extract_pdf_text(pdf_path)
             if not text.strip():
-                print(f'  empty text from PDF')
+                logger.warning('empty text from PDF: %s', pdf_path)
                 n_errors += 1
                 continue
 
-            print(f'  extracted {len(text)} chars from PDF')
+            logger.info('extracted %d chars from PDF', len(text))
 
             # LLM extraction
             extracted = extract_fields_with_llm(plant_name, text)
             time.sleep(args.delay)
 
             if not extracted:
-                print(f'  LLM extraction failed')
+                logger.error('LLM extraction failed for %r', plant_name)
                 n_errors += 1
                 continue
 
             if args.dry_run:
-                print(f'  [dry-run] would update {entry.name!r}:')
-                print(f'    {json.dumps(extracted, indent=4)}')
+                logger.info('[dry-run] would update %r: %s', entry.name, json.dumps(extracted, indent=2))
                 n_updated += 1
                 continue
 
             # Merge
             changes = merge_tamu_data(entry, extracted, dry_run=False)
             if changes:
-                db.session.commit()
-                print(f'  updated {entry.name!r}: {[c[0] for c in changes]}')
+                db.commit()
+                logger.info('updated %r: %s', entry.name, [c[0] for c in changes])
                 n_updated += 1
             else:
-                print(f'  no new fields to set for {entry.name!r}')
+                logger.info('no new fields to set for %r', entry.name)
                 n_skipped += 1
 
-        print(f'\nDone. '
-              f'downloaded={n_downloaded} updated={n_updated} '
-              f'skipped={n_skipped} no_match={n_no_match} errors={n_errors}')
+        logger.info(
+            'Done. downloaded=%d updated=%d skipped=%d no_match=%d errors=%d',
+            n_downloaded, n_updated, n_skipped, n_no_match, n_errors,
+        )
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

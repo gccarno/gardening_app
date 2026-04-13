@@ -1,16 +1,57 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
+from .db.session import engine
 from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat
+from .routers.weather import run_daily_weather_fetch
+
+_GARDEN_MIGRATIONS = [
+    ('first_frost_date',           'ALTER TABLE garden ADD COLUMN first_frost_date DATE'),
+    ('frost_free',                 'ALTER TABLE garden ADD COLUMN frost_free BOOLEAN'),
+    ('frost_station_id',           'ALTER TABLE garden ADD COLUMN frost_station_id VARCHAR(20)'),
+    ('frost_station_name',         'ALTER TABLE garden ADD COLUMN frost_station_name VARCHAR(100)'),
+    ('frost_station_distance_km',  'ALTER TABLE garden ADD COLUMN frost_station_distance_km FLOAT'),
+    ('last_frost_dates_json',      'ALTER TABLE garden ADD COLUMN last_frost_dates_json TEXT'),
+    ('first_frost_dates_json',     'ALTER TABLE garden ADD COLUMN first_frost_dates_json TEXT'),
+]
+
+
+def _run_migrations():
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        cols = [row[1] for row in conn.execute(text('PRAGMA table_info(garden)'))]
+        for col, ddl in _GARDEN_MIGRATIONS:
+            if col not in cols:
+                conn.execute(text(ddl))
+                conn.commit()
+                print(f'[migration] Added garden.{col}')
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _run_migrations()
+    scheduler = BackgroundScheduler()
+    # Fetch weather for all gardens daily at 2 AM; also runs once shortly after startup.
+    scheduler.add_job(run_daily_weather_fetch, 'cron', hour=2, minute=0)
+    scheduler.add_job(run_daily_weather_fetch, 'date')  # run once at startup
+    scheduler.start()
+    print('[scheduler] Daily weather collection started.')
+    yield
+    scheduler.shutdown()
+    print('[scheduler] Scheduler stopped.')
+
 
 app = FastAPI(
     title='Garden App API',
     description='FastAPI backend for the garden planning app.',
     version='0.1.0',
+    lifespan=lifespan,
 )
 
 app.add_middleware(

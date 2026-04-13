@@ -32,6 +32,13 @@ class Garden(Base):
     usda_zone              = Column(String(10), nullable=True)
     zone_temp_range        = Column(String(50), nullable=True)
     last_frost_date        = Column(Date, nullable=True)
+    first_frost_date       = Column(Date, nullable=True)
+    frost_free             = Column(Boolean, nullable=True)
+    frost_station_id       = Column(String(20), nullable=True)
+    frost_station_name     = Column(String(100), nullable=True)
+    frost_station_distance_km = Column(Float, nullable=True)
+    last_frost_dates_json  = Column(Text, nullable=True)   # JSON {"10%": "MM/DD", ...}
+    first_frost_dates_json = Column(Text, nullable=True)   # JSON {"10%": "MM/DD", ...}
     watering_frequency_days = Column(Integer, nullable=True, default=7)
     water_source           = Column(String(30), nullable=True)  # rain/hose/drip/sprinkler
     background_image       = Column(String(200), nullable=True)
@@ -160,6 +167,8 @@ class PlantLibrary(Base):
     # Trefle
     trefle_id             = Column(Integer, nullable=True)
     trefle_slug           = Column(String(100), nullable=True)
+    genus                 = Column(String(100), nullable=True)
+    edible                = Column(Boolean, nullable=True)
     toxicity              = Column(String(20), nullable=True)
     duration              = Column(String(50), nullable=True)
     ligneous_type         = Column(String(50), nullable=True)

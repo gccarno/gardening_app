@@ -152,6 +152,18 @@ def create_app():
             if 'annotations' not in cols:
                 conn.execute(db.text("ALTER TABLE garden ADD COLUMN annotations TEXT"))
                 conn.commit()
+            for col, ddl in [
+                ('first_frost_date',          'ALTER TABLE garden ADD COLUMN first_frost_date DATE'),
+                ('frost_free',                'ALTER TABLE garden ADD COLUMN frost_free BOOLEAN'),
+                ('frost_station_id',          'ALTER TABLE garden ADD COLUMN frost_station_id VARCHAR(20)'),
+                ('frost_station_name',        'ALTER TABLE garden ADD COLUMN frost_station_name VARCHAR(100)'),
+                ('frost_station_distance_km', 'ALTER TABLE garden ADD COLUMN frost_station_distance_km FLOAT'),
+                ('last_frost_dates_json',     'ALTER TABLE garden ADD COLUMN last_frost_dates_json TEXT'),
+                ('first_frost_dates_json',    'ALTER TABLE garden ADD COLUMN first_frost_dates_json TEXT'),
+            ]:
+                if col not in cols:
+                    conn.execute(db.text(ddl))
+                    conn.commit()
             bed_cols = [row[1] for row in conn.execute(db.text("PRAGMA table_info(garden_bed)"))]
             for col, ddl in [
                 ('soil_ph',     'ALTER TABLE garden_bed ADD COLUMN soil_ph FLOAT'),

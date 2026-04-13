@@ -18,6 +18,13 @@ class Garden(db.Model):
     usda_zone = db.Column(db.String(10), nullable=True)
     zone_temp_range = db.Column(db.String(50), nullable=True)
     last_frost_date = db.Column(db.Date, nullable=True)
+    first_frost_date = db.Column(db.Date, nullable=True)
+    frost_free = db.Column(db.Boolean, nullable=True)
+    frost_station_id = db.Column(db.String(20), nullable=True)
+    frost_station_name = db.Column(db.String(100), nullable=True)
+    frost_station_distance_km = db.Column(db.Float, nullable=True)
+    last_frost_dates_json = db.Column(db.Text, nullable=True)   # JSON {"10%": "MM/DD", ...}
+    first_frost_dates_json = db.Column(db.Text, nullable=True)  # JSON {"10%": "MM/DD", ...}
     watering_frequency_days = db.Column(db.Integer, nullable=True, default=7)
     water_source = db.Column(db.String(30), nullable=True)  # rain/hose/drip/sprinkler
     background_image = db.Column(db.String(200), nullable=True)

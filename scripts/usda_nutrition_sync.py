@@ -23,16 +23,15 @@ Rate limit: 1,000 req/hr — default --delay 4.0s (~900 req/hr at 2 req/plant)
 """
 import argparse
 import json
+import logging
 import os
 import sys
 import time
+from datetime import datetime
+from pathlib import Path
 
-# Windows UTF-8 fix for plant names with diacritics
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'api'))
+_REPO_ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(_REPO_ROOT / 'apps' / 'backend'))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -40,15 +39,36 @@ load_dotenv()
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from app.main import create_app
-from app.db.models import db, PlantLibrary, AppSetting
+from sqlalchemy import or_
+from app.db.session import SessionLocal
+from app.db.models import PlantLibrary, AppSetting
 
-USDA_BASE       = 'https://api.nal.usda.gov/fdc/v1'
-API_KEY         = os.getenv('USDA_API_KEY', '')
-SETTING_KEY     = 'usda_nutrition_sync_cursor'
-DEFAULT_DELAY   = 4.0
-DATATYPE_ORDER  = ['Foundation', 'SR Legacy', 'Survey (FNDDS)']
-EDIBLE_TYPES    = ['vegetable', 'fruit', 'herb', 'mushroom']
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+_LOG_DIR = _REPO_ROOT / 'logs'
+_LOG_DIR.mkdir(exist_ok=True)
+_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+_LOG_FILE = _LOG_DIR / f'usda_nutrition_sync_{_timestamp}.log'
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s  %(levelname)-8s  %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(_LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger(__name__)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+USDA_BASE      = 'https://api.nal.usda.gov/fdc/v1'
+API_KEY        = os.getenv('USDA_API_KEY', '')
+SETTING_KEY    = 'usda_nutrition_sync_cursor'
+DEFAULT_DELAY  = 4.0
+DATATYPE_ORDER = ['Foundation', 'SR Legacy', 'Survey (FNDDS)']
+EDIBLE_TYPES   = ['vegetable', 'fruit', 'herb', 'mushroom']
 
 # USDA nutrient ID → nutrition JSON key
 NUTRIENT_MAP = {
@@ -104,27 +124,27 @@ def parse_args():
 
 # ── Progress cursor ───────────────────────────────────────────────────────────
 
-def get_cursor():
-    row = AppSetting.query.get(SETTING_KEY)
+def get_cursor(db):
+    row = db.get(AppSetting, SETTING_KEY)
     return int(row.value) if row and row.value else 0
 
 
-def set_cursor(plant_id, dry_run):
+def set_cursor(db, plant_id, dry_run):
     if dry_run:
         return
-    row = AppSetting.query.get(SETTING_KEY)
+    row = db.get(AppSetting, SETTING_KEY)
     if row:
         row.value = str(plant_id)
     else:
-        db.session.add(AppSetting(key=SETTING_KEY, value=str(plant_id)))
-    db.session.commit()
+        db.add(AppSetting(key=SETTING_KEY, value=str(plant_id)))
+    db.commit()
 
 
 # ── DB query ──────────────────────────────────────────────────────────────────
 
-def build_plant_query(force):
-    q = PlantLibrary.query.filter(
-        db.or_(
+def build_plant_query(db, force):
+    q = db.query(PlantLibrary).filter(
+        or_(
             PlantLibrary.type.in_(EDIBLE_TYPES),
             PlantLibrary.edible_parts.isnot(None),
         )
@@ -244,62 +264,62 @@ def build_nutrition_json(nutrients, fdc_id, data_type):
 
 # ── Per-plant processing ──────────────────────────────────────────────────────
 
-def process_plant(entry, args, stats):
+def process_plant(db, entry, args, stats):
     """Process one plant. Returns disposition: 'updated'/'not_found'/'error'/'rate_limit'."""
     label = f'[{entry.id}] {entry.name} ({entry.type or "?"})'
-    print(label)
+    log.info(label)
 
     # ── Request 1: Search by common name ─────────────────────────────────────
     foods, status = search_food(entry.name)
     time.sleep(args.delay)
 
     if status == 'rate_limit':
-        print('  -> 429 rate limit on search')
+        log.warning('  -> 429 rate limit on search')
         return 'rate_limit'
     if status.startswith('error'):
-        print(f'  -> search error: {status}')
+        log.error('  -> search error: %s', status)
         stats['errors'] += 1
         return 'error'
 
     # Fallback: try scientific name if common name search returned nothing
     if not foods and entry.scientific_name:
-        print(f'  (no results for "{entry.name}", retrying with scientific name)')
+        log.info('  (no results for "%s", retrying with scientific name)', entry.name)
         foods, status = search_food(entry.scientific_name)
         time.sleep(args.delay)
         if status == 'rate_limit':
-            print('  -> 429 rate limit on fallback search')
+            log.warning('  -> 429 rate limit on fallback search')
             return 'rate_limit'
         if status.startswith('error'):
-            print(f'  -> fallback search error: {status}')
+            log.error('  -> fallback search error: %s', status)
             stats['errors'] += 1
             return 'error'
 
     if not foods:
-        print('  -> no USDA match found')
+        log.info('  -> no USDA match found')
         stats['not_found'] += 1
         return 'not_found'
 
     # ── Pick best match ───────────────────────────────────────────────────────
     match = pick_best_match(foods, entry)
     if not match:
-        print('  -> no usable match in results')
+        log.info('  -> no usable match in results')
         stats['not_found'] += 1
         return 'not_found'
 
     fdc_id    = match.get('fdcId')
     data_type = match.get('dataType', '?')
     desc      = match.get('description', '?')
-    print(f'  -> matched "{desc}" ({data_type}, fdcId={fdc_id})')
+    log.info('  -> matched "%s" (%s, fdcId=%s)', desc, data_type, fdc_id)
 
     # ── Request 2: Fetch full nutrient detail ─────────────────────────────────
     detail, status = fetch_food_detail(fdc_id)
     time.sleep(args.delay)
 
     if status == 'rate_limit':
-        print('  -> 429 rate limit on detail fetch')
+        log.warning('  -> 429 rate limit on detail fetch')
         return 'rate_limit'
     if status.startswith('error') or detail is None:
-        print(f'  -> detail fetch error: {status}')
+        log.error('  -> detail fetch error: %s', status)
         stats['errors'] += 1
         return 'error'
 
@@ -309,21 +329,22 @@ def process_plant(entry, args, stats):
 
     should_write_nutrition = not entry.nutrition or args.force
 
-    # ── Print preview ─────────────────────────────────────────────────────────
+    # ── Log preview ───────────────────────────────────────────────────────────
     cal = nutrition_data.get('calories', '?')
     pro = nutrition_data.get('protein_g', '?')
     fat = nutrition_data.get('fat_g', '?')
     cbh = nutrition_data.get('carbs_g', '?')
-    print(f'     cal={cal} protein={pro}g fat={fat}g carbs={cbh}g '
-          f'({"write" if should_write_nutrition else "skip — nutrition already set"})')
+    log.info('     cal=%s protein=%sg fat=%sg carbs=%sg (%s)',
+             cal, pro, fat, cbh,
+             'write' if should_write_nutrition else 'skip — nutrition already set')
 
     # ── Write to DB ───────────────────────────────────────────────────────────
     if not args.dry_run:
         entry.usda_fdc_id = fdc_id
         if should_write_nutrition:
             entry.nutrition = json.dumps(nutrition_data)
-        db.session.commit()
-        set_cursor(entry.id, dry_run=False)
+        db.commit()
+        set_cursor(db, entry.id, dry_run=False)
 
     stats['matched'] += 1
     return 'updated'
@@ -333,7 +354,7 @@ def process_plant(entry, args, stats):
 
 def main():
     if not API_KEY:
-        print('ERROR: USDA_API_KEY not set in .env')
+        log.error('USDA_API_KEY not set in .env')
         sys.exit(1)
 
     args = parse_args()
@@ -342,17 +363,17 @@ def main():
     SESSION.mount('https://', adapter)
     SESSION.mount('http://', adapter)
 
-    flask_app = create_app()
-    with flask_app.app_context():
+    db = SessionLocal()
+    try:
         # ── Build plant list ──────────────────────────────────────────────────
         if args.plant_id:
-            plants = PlantLibrary.query.filter_by(id=args.plant_id).all()
+            plants = db.query(PlantLibrary).filter_by(id=args.plant_id).all()
             if not plants:
-                print(f'ERROR: PlantLibrary id={args.plant_id} not found')
+                log.error('PlantLibrary id=%s not found', args.plant_id)
                 sys.exit(1)
         else:
-            cursor = get_cursor()
-            q = build_plant_query(args.force)
+            cursor = get_cursor(db)
+            q = build_plant_query(db, args.force)
             if not args.force:
                 q = q.filter(PlantLibrary.id > cursor)
             plants = q.all()
@@ -360,37 +381,37 @@ def main():
                 plants = plants[:args.limit]
 
         total = len(plants)
-        print(f'USDA Nutrition Sync — {total} plants to process')
+        log.info('USDA Nutrition Sync — %d plants to process', total)
         if args.dry_run:
-            print('  (DRY RUN — no DB writes)')
-        print(f'  delay={args.delay}s  force={args.force}  limit={args.limit}')
-        print()
+            log.info('  (DRY RUN — no DB writes)')
+        log.info('  delay=%ss  force=%s  limit=%s', args.delay, args.force, args.limit)
 
         stats = {'matched': 0, 'not_found': 0, 'errors': 0}
         last_id = None
 
         for entry in plants:
-            result = process_plant(entry, args, stats)
+            result = process_plant(db, entry, args, stats)
             if result == 'rate_limit':
-                # Save cursor to retry the current plant next run
                 save_id = (last_id or 0)
-                print(f'\n429 received — saving progress at id={save_id} and stopping.')
-                set_cursor(save_id, args.dry_run)
+                log.warning('429 received — saving progress at id=%d and stopping.', save_id)
+                set_cursor(db, save_id, args.dry_run)
                 break
             last_id = entry.id
 
         # ── Final stats ───────────────────────────────────────────────────────
-        print()
-        print('Done.')
-        print(f'  Matched/updated:   {stats["matched"]}')
-        print(f'  Not found in USDA: {stats["not_found"]}')
-        print(f'  Errors:            {stats["errors"]}')
-        print(f'  Total processed:   {sum(stats.values())}')
+        log.info('Done.')
+        log.info('  Matched/updated:   %d', stats['matched'])
+        log.info('  Not found in USDA: %d', stats['not_found'])
+        log.info('  Errors:            %d', stats['errors'])
+        log.info('  Total processed:   %d', sum(stats.values()))
 
         if not args.plant_id:
-            cursor_now = get_cursor()
-            print(f'\nNext run resumes after PlantLibrary.id = {cursor_now}')
-            print(f"To restart from beginning: delete AppSetting(key='{SETTING_KEY}') from DB")
+            cursor_now = get_cursor(db)
+            log.info('Next run resumes after PlantLibrary.id = %d', cursor_now)
+            log.info("To restart from beginning: delete AppSetting(key='%s') from DB", SETTING_KEY)
+
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

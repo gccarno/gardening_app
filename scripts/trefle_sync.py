@@ -13,28 +13,34 @@ Strategy:
   - --fetch-images — download Trefle images to disk (no DB insert yet)
 
 Usage:
-    python scripts/trefle_sync.py --dry-run            # preview all plants
+    python scripts/trefle_sync.py --dry-run                      # preview all plants
     python scripts/trefle_sync.py --plant-id 1 --dry-run
-    python scripts/trefle_sync.py                      # live run
-    python scripts/trefle_sync.py --add-new            # also add new plants
+    python scripts/trefle_sync.py                                # live run
+    python scripts/trefle_sync.py --add-new                      # also add new plants
     python scripts/trefle_sync.py --plant-id 1 --fetch-images
-    python scripts/trefle_sync.py --force              # re-sync already-synced
+    python scripts/trefle_sync.py --force                        # re-sync already-synced
+    python scripts/trefle_sync.py --limit 5 --dry-run            # safe test on 5 plants
+    python scripts/trefle_sync.py --limit 5 --log-level DEBUG    # diagnose field coverage
+    python scripts/trefle_sync.py --log-level DEBUG --dry-run    # full diagnostic dry run
+    python scripts/trefle_sync.py --log-file /tmp/sync.log       # custom log file
 
 API key: TREFLE_API_KEY in .env
 Rate limit: 120 req/min — default --delay 0.6s
 """
 import argparse
 import json
+import logging
 import os
 import sys
 import time
+from collections import defaultdict
 
 # Ensure stdout can handle Unicode on Windows (cp1252 terminals choke on some plant names)
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'api'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'backend'))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -42,8 +48,32 @@ load_dotenv()
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from app.main import create_app
-from app.db.models import db, PlantLibrary
+from app.db.session import SessionLocal
+from app.db.models import PlantLibrary
+
+logger = logging.getLogger('trefle_sync')
+
+_stats_trefle_provided     = defaultdict(int)
+_stats_set                 = defaultdict(int)
+_stats_skipped_already_set = defaultdict(int)
+
+
+def _setup_logging(level_name: str, log_file=None) -> None:
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    logger.setLevel(level)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(sh)
+    log_dir = os.path.join(_REPO_ROOT, 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    fh_path = log_file or os.path.join(log_dir, 'trefle_sync.log')
+    fh = logging.FileHandler(fh_path, encoding='utf-8')
+    fh.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)-8s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    ))
+    logger.addHandler(fh)
+
 
 TREFLE_BASE = 'https://trefle.io/api/v1'
 API_KEY     = os.getenv('TREFLE_API_KEY', '')
@@ -75,9 +105,14 @@ def trefle_get(path, params=None, timeout=10):
         if r.status_code == 404:
             return None
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        logger.debug(
+            f'  [api] {path} -> keys: '
+            f'{list(data.keys()) if isinstance(data, dict) else type(data).__name__}'
+        )
+        return data
     except Exception as e:
-        print(f'    API error: {e}')
+        logger.warning(f'    API error: {e}')
         return None
 
 
@@ -94,7 +129,14 @@ def fetch_species_detail(slug):
     resp = trefle_get(f'/species/{slug}')
     if resp is None:
         return None
-    return resp.get('data')
+    detail = resp.get('data')
+    if detail is not None:
+        growth = detail.get('growth') or {}
+        logger.debug(
+            f'  [detail] {slug}: top-level keys={list(detail.keys())}, '
+            f'growth keys={list(growth.keys())}'
+        )
+    return detail
 
 
 def best_match(results, entry):
@@ -185,32 +227,44 @@ def _blank(val):
 def merge_fields(entry, species, dry_run):
     """Fill-in-blank merge of Trefle species data into a PlantLibrary entry.
     Returns list of (field, value, note) tuples for changed fields."""
-    g = species.get('growth') or {}
+    g     = species.get('growth') or {}
+    specs = species.get('specifications') or {}
     changes = []
 
     def _set(field, value, note=''):
         if value is None:
+            logger.debug(f'    {field}: null in Trefle response')
             return
+        _stats_trefle_provided[field] += 1
         current = getattr(entry, field, None)
         # For booleans, treat None as blank but don't treat False as blank
         if isinstance(value, bool):
             if current is None:
+                _stats_set[field] += 1
                 changes.append((field, value, note))
                 if not dry_run:
                     setattr(entry, field, value)
             else:
-                print(f'      {field}: already set, skipping')
+                _stats_skipped_already_set[field] += 1
+                logger.debug(f'    {field}: already set, skipping')
             return
         if _blank(current):
+            _stats_set[field] += 1
             changes.append((field, value, note))
             if not dry_run:
                 setattr(entry, field, value)
         else:
-            print(f'      {field}: already set, skipping')
+            _stats_skipped_already_set[field] += 1
+            logger.debug(f'    {field}: already set ({str(current)[:40]!r}), skipping')
 
     # ── Core / taxonomy ────────────────────────────────────────────────────
     _set('scientific_name', species.get('scientific_name') or None)
     _set('family',          species.get('family') or None)
+    _set('genus',           species.get('genus') or None)
+
+    edible_val = species.get('edible')
+    if edible_val is not None:
+        _set('edible', bool(edible_val))
 
     # ── Growing conditions ─────────────────────────────────────────────────
     _set('sunlight', _light_to_sunlight(g.get('light')),
@@ -228,8 +282,14 @@ def merge_fields(entry, species, dry_run):
     _set('temp_min_f', _c_to_f(min_c), note=f'from {min_c}C')
     _set('temp_max_f', _c_to_f(max_c), note=f'from {max_c}C')
 
-    _set('min_zone', species.get('hardiness_zone_united_states_min'))
-    _set('max_zone', species.get('hardiness_zone_united_states_max'))
+    hz_min = species.get('hardiness_zone_united_states_min')
+    hz_max = species.get('hardiness_zone_united_states_max')
+    logger.debug(
+        f'    hardiness zone raw: min={hz_min!r}, max={hz_max!r} | '
+        f'zone-related keys: {[k for k in species if "zone" in k.lower() or "hardi" in k.lower()]}'
+    )
+    _set('min_zone', hz_min)
+    _set('max_zone', hz_max)
 
     # spacing: prefer row_spacing, fall back to spread
     rs_cm = _get_nested(g, 'row_spacing', 'cm')
@@ -249,24 +309,25 @@ def merge_fields(entry, species, dry_run):
     _set('permapeople_description', g.get('description') or None)
 
     # ── New Trefle fields ──────────────────────────────────────────────────
-    _set('toxicity',          species.get('toxicity') or None)
+    # toxicity, ligneous_type, growth_* and height are under 'specifications'
+    _set('toxicity',          specs.get('toxicity') or None)
 
     dur = species.get('duration')
     _set('duration', _join_array(dur) if isinstance(dur, list) else dur or None)
 
-    _set('ligneous_type',     species.get('ligneous_type') or None)
-    _set('growth_habit',      species.get('growth_habit') or None)
-    _set('growth_form',       species.get('growth_form') or None)
-    _set('growth_rate',       species.get('growth_rate') or None)
-    _set('nitrogen_fixation', species.get('nitrogen_fixation') or None)
+    _set('ligneous_type',     specs.get('ligneous_type') or None)
+    _set('growth_habit',      specs.get('growth_habit') or None)
+    _set('growth_form',       specs.get('growth_form') or None)
+    _set('growth_rate',       specs.get('growth_rate') or None)
+    _set('nitrogen_fixation', specs.get('nitrogen_fixation') or None)
     _set('observations',      species.get('observations') or None)
 
     veg = species.get('vegetable')
     if veg is not None:
         _set('vegetable', bool(veg))
 
-    avg_h = _get_nested(species, 'average_height', 'cm')
-    max_h = _get_nested(species, 'maximum_height', 'cm')
+    avg_h = _get_nested(specs, 'average_height', 'cm')
+    max_h = _get_nested(specs, 'maximum_height', 'cm')
     _set('average_height_cm', int(avg_h) if avg_h is not None else None)
     _set('maximum_height_cm', int(max_h) if max_h is not None else None)
 
@@ -334,10 +395,10 @@ def fetch_images_to_disk(entry, species, img_dir, dry_run):
             fname = f'trefle_{entry.id}_{category}_{n}.jpg'
             dest  = os.path.join(img_dir, fname)
             if os.path.exists(dest):
-                print(f'      [image] {fname} already exists, skipping')
+                logger.debug(f'      [image] {fname} already exists, skipping')
                 continue
             if dry_run:
-                print(f'      [image-dry] would save {fname}  ({url[:60]})')
+                logger.info(f'      [image-dry] would save {fname}  ({url[:60]})')
                 saved += 1
                 continue
             try:
@@ -345,22 +406,22 @@ def fetch_images_to_disk(entry, species, img_dir, dry_run):
                 r.raise_for_status()
                 with open(dest, 'wb') as f:
                     f.write(r.content)
-                print(f'      [image] saved {fname}')
+                logger.info(f'      [image] saved {fname}')
                 saved += 1
             except Exception as e:
-                print(f'      [image] error {fname}: {e}')
+                logger.error(f'      [image] error {fname}: {e}')
     return saved
 
 
 # ── New plant creation ─────────────────────────────────────────────────────────
 
-def create_from_trefle(species, dry_run):
+def create_from_trefle(session, species, dry_run):
     """Create a new PlantLibrary entry from a Trefle species dict."""
     name = (species.get('common_name') or species.get('scientific_name') or '').strip()
     if not name:
         return None
     if dry_run:
-        print(f'    [dry-run] would add: {name}')
+        logger.info(f'    [dry-run] would add: {name}')
         return None
     entry = PlantLibrary(
         name            = name,
@@ -369,11 +430,11 @@ def create_from_trefle(species, dry_run):
         trefle_id       = species.get('id'),
         trefle_slug     = species.get('slug'),
     )
-    db.session.add(entry)
-    db.session.flush()
+    session.add(entry)
+    session.flush()
     merge_fields(entry, species, dry_run=False)
-    db.session.commit()
-    print(f'    [added] {name} (trefle id={species.get("id")})')
+    session.commit()
+    logger.info(f'    [added] {name} (trefle id={species.get("id")})')
     return entry
 
 
@@ -391,44 +452,56 @@ def parse_args():
                    help='Download Trefle images to disk (no DB insert)')
     p.add_argument('--delay',        type=float, default=0.6,
                    help='Seconds between requests (default 0.6; limit is 120/min)')
+    p.add_argument('--limit',        type=int,   default=None,
+                   help='Process only the first N plants (useful for testing)')
+    p.add_argument('--log-level',    default='INFO',
+                   choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                   help='Logging verbosity (default: INFO)')
+    p.add_argument('--log-file',     default=None,
+                   help='Write logs to this path (default: logs/trefle_sync.log)')
     return p.parse_args()
 
 
 def main():
-    if not API_KEY:
-        print('ERROR: TREFLE_API_KEY not set in .env')
-        sys.exit(1)
-
     args = parse_args()
+    _setup_logging(args.log_level, args.log_file)
+
+    if not API_KEY:
+        logger.error('ERROR: TREFLE_API_KEY not set in .env')
+        sys.exit(1)
 
     adapter = _make_retry_adapter(3)
     SESSION.mount('https://', adapter)
     SESSION.mount('http://',  adapter)
 
-    flask_app = create_app()
-    with flask_app.app_context():
-        img_dir = os.path.join(flask_app.static_folder, 'plant_images')
-        os.makedirs(img_dir, exist_ok=True)
+    img_dir = os.path.join(_REPO_ROOT, 'apps', 'api', 'static', 'plant_images')
+    os.makedirs(img_dir, exist_ok=True)
 
+    db = SessionLocal()
+    try:
         if args.plant_id:
-            plants = PlantLibrary.query.filter_by(id=args.plant_id).all()
+            plants = db.query(PlantLibrary).filter_by(id=args.plant_id).all()
         else:
-            plants = PlantLibrary.query.order_by(PlantLibrary.name).all()
+            plants = db.query(PlantLibrary).order_by(PlantLibrary.name).all()
 
-        print(f'{len(plants)} plant(s) to process  '
-              f'[dry_run={args.dry_run}, add_new={args.add_new}, '
-              f'force={args.force}, fetch_images={args.fetch_images}, '
-              f'delay={args.delay}s]\n')
+        if args.limit is not None:
+            plants = plants[:args.limit]
+
+        logger.info(
+            f'{len(plants)} plant(s) to process  '
+            f'[dry_run={args.dry_run}, add_new={args.add_new}, '
+            f'force={args.force}, fetch_images={args.fetch_images}, '
+            f'delay={args.delay}s]\n'
+        )
 
         n_updated = n_skipped = n_no_match = n_errors = n_added = 0
 
         for entry in plants:
             if entry.trefle_id and not args.force:
-                print(f'  {entry.name:<32} already synced (id={entry.trefle_id}), skipping')
+                logger.info(f'  {entry.name:<32} already synced (id={entry.trefle_id}), skipping')
                 n_skipped += 1
                 continue
 
-            print(f'  {entry.name:<32}', end='', flush=True)
             t0 = time.time()
 
             # Search
@@ -440,13 +513,13 @@ def main():
                 time.sleep(args.delay)
 
             if not results:
-                print(f' -> no match  ({time.time()-t0:.1f}s)')
+                logger.info(f'  {entry.name:<32} -> no match  ({time.time()-t0:.1f}s)')
                 n_no_match += 1
                 continue
 
             match = best_match(results, entry)
             if not match:
-                print(f' -> no match  ({time.time()-t0:.1f}s)')
+                logger.info(f'  {entry.name:<32} -> no match  ({time.time()-t0:.1f}s)')
                 n_no_match += 1
                 continue
 
@@ -455,10 +528,22 @@ def main():
             detail = fetch_species_detail(slug) if slug else None
             time.sleep(args.delay)
 
-            species = detail if detail else match
+            if detail is None:
+                logger.warning(
+                    f'  {entry.name}: detail fetch failed for slug={slug!r} — '
+                    f'falling back to search result. Growth fields (sunlight, water, '
+                    f'soil, temp, spacing, days_to_harvest, etc.) will all be null.'
+                )
+                species = match
+            else:
+                species = detail
+
             trefle_id   = species.get('id')
             trefle_name = species.get('common_name') or species.get('scientific_name', '?')
-            print(f' -> matched "{trefle_name}" (id={trefle_id})  ({time.time()-t0:.1f}s)')
+            logger.info(
+                f'  {entry.name:<32} -> matched "{trefle_name}" '
+                f'(id={trefle_id})  ({time.time()-t0:.1f}s)'
+            )
 
             try:
                 changes = merge_fields(entry, species, args.dry_run)
@@ -466,15 +551,15 @@ def main():
                 for field, value, note in changes:
                     display = str(value)[:60]
                     suffix  = f'  [{note}]' if note else ''
-                    print(f'      {field}: {display}{suffix}')
+                    logger.info(f'      {field}: {display}{suffix}')
 
                 if not changes:
-                    print('      (no new fields to fill)')
+                    logger.debug('      (no new fields to fill)')
 
                 if not args.dry_run:
                     entry.trefle_id   = trefle_id
                     entry.trefle_slug = slug
-                    db.session.commit()
+                    db.commit()
 
                 if args.fetch_images:
                     fetch_images_to_disk(entry, species, img_dir, args.dry_run)
@@ -483,14 +568,14 @@ def main():
                     n_updated += 1
 
             except Exception as e:
-                print(f'      ERROR during merge: {e}')
-                db.session.rollback()
+                logger.error(f'      ERROR during merge: {e}')
+                db.rollback()
                 n_errors += 1
 
         # --add-new: try common garden plants not yet in library
         if args.add_new:
-            print('\n--- Scanning for new plants ---')
-            known = {p.name.lower() for p in PlantLibrary.query.all()}
+            logger.info('\n--- Scanning for new plants ---')
+            known = {p.name.lower() for p in db.query(PlantLibrary).all()}
             candidates = [
                 'Artichoke', 'Asparagus', 'Bok Choy', 'Brussels Sprouts',
                 'Butternut Squash', 'Celery', 'Chicory', 'Chives', 'Collard Greens',
@@ -501,29 +586,47 @@ def main():
             for name in candidates:
                 if name.lower() in known:
                     continue
-                print(f'  {name:<32}', end='', flush=True)
                 results = search_species(name)
                 time.sleep(args.delay)
                 if not results:
-                    print(' -> no match')
+                    logger.info(f'  {name:<32} -> no match')
                     continue
                 match = best_match(results, type('_', (), {'name': name, 'scientific_name': None})())
                 if not match:
-                    print(' -> no match')
+                    logger.info(f'  {name:<32} -> no match')
                     continue
                 slug   = match.get('slug', '')
                 detail = fetch_species_detail(slug) if slug else None
                 time.sleep(args.delay)
                 species = detail if detail else match
                 tname   = species.get('common_name') or name
-                print(f' -> {tname}')
-                new_entry = create_from_trefle(species, args.dry_run)
+                logger.info(f'  {name:<32} -> {tname}')
+                new_entry = create_from_trefle(db, species, args.dry_run)
                 if new_entry:
                     n_added += 1
                     known.add(name.lower())
 
-        print(f'\nDone.  Updated: {n_updated}  Already synced: {n_skipped}  '
-              f'No match: {n_no_match}  Added: {n_added}  Errors: {n_errors}')
+    finally:
+        db.close()
+
+    # Field coverage summary
+    all_fields = sorted(
+        set(_stats_trefle_provided) | set(_stats_set) | set(_stats_skipped_already_set)
+    )
+    if all_fields:
+        logger.info('\n── Field coverage (Trefle → this run) ─────────────────')
+        logger.info(f'  {"Field":<30} {"Provided":>9} {"Set":>8} {"AlreadySet":>11}')
+        logger.info(f'  {"-"*30} {"-"*9} {"-"*8} {"-"*11}')
+        for f in all_fields:
+            logger.info(
+                f'  {f:<30} {_stats_trefle_provided[f]:>9} '
+                f'{_stats_set[f]:>8} {_stats_skipped_already_set[f]:>11}'
+            )
+
+    logger.info(
+        f'\nDone.  Updated: {n_updated}  Already synced: {n_skipped}  '
+        f'No match: {n_no_match}  Added: {n_added}  Errors: {n_errors}'
+    )
 
 
 if __name__ == '__main__':

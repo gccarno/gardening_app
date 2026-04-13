@@ -23,9 +23,11 @@ Rate limit: 100 req/day free tier — default --delay 1.0s, --limit 100
 import argparse
 import hashlib
 import json
+import logging
 import os
 import sys
 import time
+from datetime import datetime
 
 # Windows UTF-8 fix for plant names with diacritics
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
@@ -50,6 +52,34 @@ MAX_FREE_ID = 3000
 
 SESSION = requests.Session()
 SESSION.headers['User-Agent'] = 'GardenApp/1.0 (garden-planning-tool; educational use)'
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+def _setup_logging():
+    log_dir = os.path.join(_REPO_ROOT, 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_path = os.path.join(log_dir, f'perenual_sync_{timestamp}.log')
+
+    file_fmt = logging.Formatter(
+        '%(asctime)s %(levelname)-8s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
+    console_fmt = logging.Formatter('%(message)s')
+
+    fh = logging.FileHandler(log_path, encoding='utf-8')
+    fh.setFormatter(file_fmt)
+
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(console_fmt)
+
+    log = logging.getLogger('perenual_sync')
+    log.setLevel(logging.INFO)
+    log.addHandler(fh)
+    log.addHandler(sh)
+    return log
+
+logger = _setup_logging()
 
 
 def _make_retry_adapter(total=3):
@@ -350,7 +380,7 @@ def save_image(entry, url, img_dir, dry_run, session):
         ))
         return filename
     except Exception as e:
-        print(f'      [image] error: {e}')
+        logger.error(f'  [image] error: {e}')
         return None
 
 
@@ -388,7 +418,7 @@ def create_new(data, img_dir, dry_run, session):
     typ = _norm_type(data.get('type'))
 
     if dry_run:
-        print(f'      [dry-run] would create: {name!r} (type={typ}, sci={sci})')
+        logger.info(f'  [dry-run] would create: {name!r} (type={typ}, sci={sci})')
         return None
 
     entry = PlantLibrary(
@@ -409,7 +439,7 @@ def create_new(data, img_dir, dry_run, session):
     if url:
         fname = save_image(entry, url, img_dir, dry_run=False, session=session)
         if fname:
-            print(f'      [image] saved {fname}')
+            logger.info(f'  [image] saved {fname}')
 
     session.commit()
     return entry
@@ -457,7 +487,7 @@ def parse_args():
 
 def main():
     if not API_KEY:
-        print('ERROR: PERENUAL_API_KEY not set in .env')
+        logger.error('PERENUAL_API_KEY not set in .env')
         sys.exit(1)
 
     args = parse_args()
@@ -474,78 +504,79 @@ def main():
         start_id = get_next_id(session)
 
         if start_id > MAX_FREE_ID:
-            print('All 3,000 free-tier species have been processed.')
-            print('To restart, set AppSetting perenual_sync_next_id to 1.')
+            logger.info('All 3,000 free-tier species have been processed.')
+            logger.info('To restart, set AppSetting perenual_sync_next_id to 1.')
             return
 
         end_id = min(start_id + args.limit, MAX_FREE_ID + 1)
 
-        print(f'Processing Perenual IDs {start_id}–{end_id - 1}  '
-              f'[dry_run={args.dry_run}, force={args.force}, '
-              f'limit={args.limit}, delay={args.delay}s]\n')
+        logger.info(
+            f'Processing Perenual IDs {start_id}–{end_id - 1}  '
+            f'[dry_run={args.dry_run}, force={args.force}, '
+            f'limit={args.limit}, delay={args.delay}s]'
+        )
 
         n_matched = n_added = n_premium = n_not_found = n_errors = n_updated = 0
         next_start = start_id
 
         for pid in range(start_id, end_id):
-            print(f'[{pid}/{MAX_FREE_ID}]', end=' ', flush=True)
+            prefix = f'[{pid}/{MAX_FREE_ID}]'
 
             data, status = fetch_species(pid)
             time.sleep(args.delay)
 
             if status == 'rate_limit':
-                print('RATE LIMIT (429) — stopping.')
+                logger.warning(f'{prefix} RATE LIMIT (429) — stopping.')
                 set_next_id(pid, args.dry_run, session)
                 break
 
             if status == 'not_found':
-                print('not found')
+                logger.info(f'{prefix} not found')
                 n_not_found += 1
                 next_start = pid + 1
                 continue
 
             if status == 'premium':
-                print('premium-only, skipping')
+                logger.info(f'{prefix} premium-only, skipping')
                 n_premium += 1
                 next_start = pid + 1
                 continue
 
             if status.startswith('error'):
-                print(f'ERROR: {status}')
+                logger.error(f'{prefix} {status}')
                 n_errors += 1
                 next_start = pid + 1
                 continue
 
             common_name = (data.get('common_name') or '').strip()
             sci_name    = _first(data.get('scientific_name')) or ''
-            print(f'{common_name!r}', end=' ', flush=True)
 
             entry = find_existing(pid, sci_name, common_name, session)
 
             if entry is None:
                 name_for_new = (data.get('common_name') or '').strip()
                 if not name_for_new:
-                    print('→ skipped (no common_name)')
+                    logger.info(f'{prefix} skipped (no common_name)')
                     next_start = pid + 1
                     continue
                 new_entry = create_new(data, img_dir, args.dry_run, session)
                 if args.dry_run:
-                    print(f'→ would add {name_for_new!r}')
+                    logger.info(f'{prefix} {name_for_new!r} → would add')
                     n_added += 1
                 elif new_entry:
-                    print(f'→ added (library_id={new_entry.id})')
+                    logger.info(f'{prefix} {name_for_new!r} → added (library_id={new_entry.id})')
                     n_added += 1
                 next_start = pid + 1
                 continue
 
             # Existing plant — check if already fully synced
             if entry.perenual_id and not args.force:
-                print(f'→ already synced (library_id={entry.id}), skipping')
+                logger.info(f'{prefix} {common_name!r} → already synced (library_id={entry.id}), skipping')
                 n_matched += 1
                 next_start = pid + 1
                 continue
 
-            print(f'→ matched (library_id={entry.id})')
+            logger.info(f'{prefix} {common_name!r} → matched (library_id={entry.id})')
 
             try:
                 fill_changes     = merge_fill(entry, data, args.dry_run)
@@ -553,10 +584,10 @@ def main():
                 all_changes      = fill_changes + perenual_changes
 
                 for field, value in all_changes:
-                    print(f'      {field}: {str(value)[:70]}')
+                    logger.info(f'  {field}: {str(value)[:70]}')
 
                 if not all_changes:
-                    print('      (no new fields)')
+                    logger.info('  (no new fields)')
 
                 # Image
                 img = data.get('default_image') or {}
@@ -564,7 +595,7 @@ def main():
                 if url:
                     fname = save_image(entry, url, img_dir, args.dry_run, session)
                     if fname:
-                        print(f'      [image] {fname}')
+                        logger.info(f'  [image] {fname}')
 
                 if not args.dry_run:
                     entry.perenual_id = pid
@@ -575,7 +606,7 @@ def main():
                     n_updated += 1
 
             except Exception as e:
-                print(f'      ERROR: {e}')
+                logger.error(f'  ERROR: {e}')
                 session.rollback()
                 n_errors += 1
 
@@ -585,12 +616,14 @@ def main():
             # Loop finished without break (no rate limit hit)
             set_next_id(next_start, args.dry_run, session)
 
-        print(f'\nDone. '
-              f'Matched: {n_matched} ({n_updated} updated)  '
-              f'Added: {n_added}  '
-              f'Premium/not-found: {n_premium + n_not_found}  '
-              f'Errors: {n_errors}')
-        print(f'Next run starts at ID: {next_start}')
+        logger.info(
+            f'Done. '
+            f'Matched: {n_matched} ({n_updated} updated)  '
+            f'Added: {n_added}  '
+            f'Premium/not-found: {n_premium + n_not_found}  '
+            f'Errors: {n_errors}'
+        )
+        logger.info(f'Next run starts at ID: {next_start}')
 
     finally:
         session.close()

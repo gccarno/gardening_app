@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db.models import Garden, WeatherLog
-from ..db.session import get_db
+from ..db.session import SessionLocal, get_db
 from ..services.helpers import FROST_DATES, REPO_ROOT, WMO, get_or_404, rainfall_summary
 
 router = APIRouter(prefix='/api', tags=['weather'])
@@ -38,8 +38,14 @@ def api_garden_weather(garden_id: int, db: Session = Depends(get_db)):
     data  = resp.json()
     cur   = data.get('current', {})
     daily = data.get('daily', {})
-    zone_num = ''.join(filter(str.isdigit, garden.usda_zone or ''))
-    frost = FROST_DATES.get(zone_num, ('unknown', 'unknown'))
+
+    # Use real frost dates from DB if available; fall back to static zone lookup.
+    if garden.last_frost_date or garden.first_frost_date:
+        last_spring = garden.last_frost_date.strftime('%b %d') if garden.last_frost_date else 'unknown'
+        first_fall  = garden.first_frost_date.strftime('%b %d') if garden.first_frost_date else 'unknown'
+    else:
+        zone_num = ''.join(filter(str.isdigit, garden.usda_zone or ''))
+        last_spring, first_fall = FROST_DATES.get(zone_num, ('unknown', 'unknown'))
 
     days = []
     for i, d in enumerate(daily.get('time', [])):
@@ -60,50 +66,85 @@ def api_garden_weather(garden_id: int, db: Session = Depends(get_db)):
             'condition':     WMO.get(cur.get('weather_code'), 'Unknown'),
         },
         'daily': days,
-        'frost': {'last_spring': frost[0], 'first_fall': frost[1]},
+        'frost': {
+            'last_spring':  last_spring,
+            'first_fall':   first_fall,
+            'frost_free':   garden.frost_free,
+            'station_name': garden.frost_station_name,
+            'station_distance_km': garden.frost_station_distance_km,
+        },
     }
 
 
-@router.post('/gardens/{garden_id}/fetch-weather')
-def api_fetch_weather_history(garden_id: int, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
-    if not garden.latitude or not garden.longitude:
-        raise HTTPException(status_code=400, detail='no_location')
+def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
+    """Fetch 14 days of historical weather for one garden. Returns number of days saved."""
+    garden = db.get(Garden, garden_id)
+    if not garden or not garden.latitude or not garden.longitude:
+        return 0
 
     end_date   = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=13)
-    try:
-        resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
-            'latitude':           garden.latitude,
-            'longitude':          garden.longitude,
-            'start_date':         start_date.isoformat(),
-            'end_date':           end_date.isoformat(),
-            'daily':              'precipitation_sum,temperature_2m_max,temperature_2m_min',
-            'temperature_unit':   'fahrenheit',
-            'precipitation_unit': 'inch',
-            'timezone':           'auto',
-        }, timeout=10)
-        resp.raise_for_status()
-        daily = resp.json().get('daily', {})
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
+        'latitude':           garden.latitude,
+        'longitude':          garden.longitude,
+        'start_date':         start_date.isoformat(),
+        'end_date':           end_date.isoformat(),
+        'daily':              'precipitation_sum,temperature_2m_max,temperature_2m_min',
+        'temperature_unit':   'fahrenheit',
+        'precipitation_unit': 'inch',
+        'timezone':           'auto',
+    }, timeout=10)
+    resp.raise_for_status()
+    daily = resp.json().get('daily', {})
 
     created = 0
     for i, d_str in enumerate(daily.get('time', [])):
         d = date.fromisoformat(d_str)
         db.query(WeatherLog).filter_by(garden_id=garden_id, date=d).delete()
-        log = WeatherLog(
+        db.add(WeatherLog(
             garden_id=garden_id,
             date=d,
             rainfall_in=daily['precipitation_sum'][i],
             temp_high_f=daily['temperature_2m_max'][i],
             temp_low_f=daily['temperature_2m_min'][i],
             source='api',
-        )
-        db.add(log)
+        ))
         created += 1
     db.commit()
-    return {'ok': True, 'days_saved': created,
+    return created
+
+
+def run_daily_weather_fetch():
+    """APScheduler job: fetch weather for every garden that has coordinates."""
+    db = SessionLocal()
+    try:
+        gardens = db.query(Garden).filter(
+            Garden.latitude.isnot(None),
+            Garden.longitude.isnot(None),
+        ).all()
+        for g in gardens:
+            try:
+                saved = _fetch_weather_for_garden(db, g.id)
+                print(f'[weather] garden {g.id} ({g.name}): {saved} days saved')
+            except Exception as e:
+                print(f'[weather] garden {g.id} failed: {e}')
+    finally:
+        db.close()
+
+
+@router.post('/gardens/{garden_id}/fetch-weather')
+def api_fetch_weather_history(garden_id: int, db: Session = Depends(get_db)):
+    get_or_404(db, Garden, garden_id)  # raises 404 if missing
+    garden = db.get(Garden, garden_id)
+    if not garden.latitude or not garden.longitude:
+        raise HTTPException(status_code=400, detail='no_location')
+
+    try:
+        days_saved = _fetch_weather_for_garden(db, garden_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return {'ok': True, 'days_saved': days_saved,
             'rainfall_7d': rainfall_summary(db, garden_id, 7)}
 
 

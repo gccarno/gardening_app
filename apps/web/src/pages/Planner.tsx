@@ -6,6 +6,7 @@ import ChatWidget from '../components/ChatWidget';
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PX = 60; // px per foot at zoom=1
 const PX_PER_IN = PX / 12;
+const BED_HEADER_PX = 24; // height of the bed label bar in pixels
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Bed {
@@ -23,7 +24,7 @@ interface GridChip {
 interface CanvasPlant {
   id: number; name: string; pos_x: number; pos_y: number; radius_ft: number;
   color?: string; display_mode?: string; image_filename?: string; custom_image?: string;
-  library_id?: number; plant_id?: number; spacing_in?: number;
+  svg_icon_url?: string; ai_icon_url?: string; library_id?: number; plant_id?: number; spacing_in?: number;
 }
 interface LibPlant {
   id: number; name: string; type?: string; image_filename?: string; spacing_in?: number;
@@ -57,6 +58,12 @@ interface CareData {
   planted_date?: string; transplant_date?: string; last_watered?: string;
   last_fertilized?: string; last_harvest?: string; health_notes?: string;
   stage?: string; plant_notes?: string; is_bed: boolean;
+}
+interface LibraryInfo {
+  id: number; name: string; scientific_name?: string; type?: string;
+  image_filename?: string; sunlight?: string; water?: string;
+  spacing_in?: number; companion_plants?: string; growing_notes?: string;
+  days_to_germination?: number; days_to_harvest?: number;
 }
 
 // ── API helper ────────────────────────────────────────────────────────────────
@@ -112,7 +119,7 @@ function BedGrid({
   return (
     <div
       className="canvas-bed-grid"
-      style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, ${tilePx}px)`, gridTemplateRows: `repeat(${rows}, ${tilePx}px)`, position: 'relative' }}
+      style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, ${tilePx}px)`, gridTemplateRows: `repeat(${rows}, ${tilePx}px)`, position: 'relative', backgroundImage: 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: `${tilePx}px ${tilePx}px` }}
       onDragOver={e => {
         if (!dragPlant) return;
         e.preventDefault(); e.stopPropagation();
@@ -245,6 +252,13 @@ export default function Planner() {
 
   const [addBedForm, setAddBedForm] = useState({ name: '', width_ft: '4', height_ft: '8' });
 
+  // Library plant info panel
+  const [libInfo, setLibInfo] = useState<LibraryInfo | null>(null);
+
+  // Bed inline editing
+  const [bedEditMode, setBedEditMode] = useState(false);
+  const [bedEditForm, setBedEditForm] = useState({ name: '', width_ft: '', height_ft: '', depth_ft: '', location: '', description: '', soil_notes: '', soil_ph: '', clay_pct: '', compost_pct: '', sand_pct: '' });
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragBedRef = useRef<{ bedId: number; offsetX: number; offsetY: number } | null>(null);
   const cpDragRef = useRef<{ cpId: number; mode: 'move' | 'resize'; startX: number; startY?: number; startLeft: number; startTop: number; startDiam: number } | null>(null);
@@ -260,14 +274,16 @@ export default function Planner() {
 
   async function loadGardenData() {
     if (!gardenId) return;
-    // Fetch beds
-    const bedsData = await api('GET', `/api/beds?garden_id=${gardenId}`);
-    const placed: Bed[] = [], unplaced: Bed[] = [];
-    for (const b of bedsData as Bed[]) {
-      if (b.garden_id === gardenId) placed.push(b); // all beds belong to this garden already
-      if (b.pos_x == null) unplaced.push(b); else placed.push(b);
-    }
-    // Since all beds have the garden_id, separate by whether they're on canvas
+
+    // ── Phase 1: fetch beds, canvas plants, garden plants, and annotations in parallel ──
+    const [bedsData, cpData, gpData, annData] = await Promise.all([
+      api('GET', `/api/beds?garden_id=${gardenId}`),
+      api('GET', `/api/gardens/${gardenId}/canvas-plants`),
+      api('GET', `/api/plants?garden_id=${gardenId}`),
+      api('GET', `/api/gardens/${gardenId}/annotations`),
+    ]);
+
+    // Classify beds and render the canvas immediately
     const canvas: Bed[] = [], sidebar: Bed[] = [];
     for (const b of bedsData as Bed[]) {
       if (b.pos_x != null && b.pos_x >= 0) canvas.push(b);
@@ -275,32 +291,19 @@ export default function Planner() {
     }
     setCanvasBeds(canvas);
     setPaletteBeds(sidebar);
+    setCanvasPlants(cpData as CanvasPlant[]);
+    setGardenPlants(gpData as GardenPlant[]);
+    setAnnShapes(annData.shapes || []);
 
-    // Load grid chips for each bed
+    if (rightPanelOpen) loadPanelData();
+
+    // ── Phase 2: load grid chips in parallel (canvas is already visible) ──
     const chipsMap: Record<number, GridChip[]> = {};
     await Promise.all((bedsData as Bed[]).map(async b => {
       const g = await api('GET', `/api/beds/${b.id}/grid`);
       chipsMap[b.id] = g.placed || [];
     }));
     setBedChips(chipsMap);
-
-    // Canvas plants
-    const cpData = await api('GET', `/api/gardens/${gardenId}/canvas-plants`);
-    setCanvasPlants(cpData as CanvasPlant[]);
-
-    // Library plants (first 100)
-    const libData = await api('GET', `/api/library?per_page=100`);
-    setLibPlants((libData.entries || []) as LibPlant[]);
-
-    // Garden plants
-    const gpData = await api('GET', `/api/plants?garden_id=${gardenId}`);
-    setGardenPlants(gpData as GardenPlant[]);
-
-    if (rightPanelOpen) loadPanelData();
-
-    // Annotations
-    const annData = await api('GET', `/api/gardens/${gardenId}/annotations`);
-    setAnnShapes(annData.shapes || []);
   }
 
   async function loadPanelData() {
@@ -381,11 +384,13 @@ export default function Planner() {
       grid_y: cy * tileIn,
       spacing_in: selectedPlant.spacing_in ?? 12,
     };
-    if ('library_id' in selectedPlant && selectedPlant.library_id) payload.library_id = selectedPlant.library_id;
-    else if ('id' in selectedPlant) {
-      // GardenPlant
+    if ('library_id' in selectedPlant) {
+      // GardenPlant — has an explicit library_id field
       const gp = selectedPlant as GardenPlant;
       if (gp.library_id) payload.library_id = gp.library_id;
+    } else {
+      // LibPlant — its own .id IS the library entry id
+      payload.library_id = selectedPlant.id;
     }
     const r = await api('POST', `/api/beds/${bedId}/grid-plant`, payload);
     if (r.ok) {
@@ -593,6 +598,65 @@ export default function Planner() {
       setTaskSaved('Task added!');
       setTimeout(() => setTaskSaved(''), 2000);
       loadPanelData();
+    }
+  }
+
+  // ── Library plant info ────────────────────────────────────────────────────────
+  async function showLibInfo(libraryId: number) {
+    const d = await api('GET', `/api/library/${libraryId}`);
+    setLibInfo({
+      id: d.id, name: d.name, scientific_name: d.scientific_name,
+      type: d.type, image_filename: d.image_filename, sunlight: d.sunlight,
+      water: d.water, spacing_in: d.spacing_in,
+      companion_plants: d.companion_plants, growing_notes: d.growing_notes,
+      days_to_germination: d.days_to_germination, days_to_harvest: d.days_to_harvest,
+    });
+    setRightPanelTab('info');
+    if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); }
+  }
+
+  // ── Bed inline edit ───────────────────────────────────────────────────────────
+  function startBedEdit() {
+    if (!selectedBed) return;
+    setBedEditForm({
+      name: selectedBed.name,
+      width_ft: String(selectedBed.width_ft),
+      height_ft: String(selectedBed.height_ft),
+      depth_ft: selectedBed.depth_ft != null ? String(selectedBed.depth_ft) : '',
+      location: selectedBed.location || '',
+      description: selectedBed.description || '',
+      soil_notes: selectedBed.soil_notes || '',
+      soil_ph: selectedBed.soil_ph != null ? String(selectedBed.soil_ph) : '',
+      clay_pct: selectedBed.clay_pct != null ? String(selectedBed.clay_pct) : '',
+      compost_pct: selectedBed.compost_pct != null ? String(selectedBed.compost_pct) : '',
+      sand_pct: selectedBed.sand_pct != null ? String(selectedBed.sand_pct) : '',
+    });
+    setBedEditMode(true);
+  }
+
+  async function handleBedSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedBed) return;
+    const r = await api('PUT', `/api/beds/${selectedBed.id}`, {
+      name: bedEditForm.name || selectedBed.name,
+      width_ft: parseFloat(bedEditForm.width_ft) || selectedBed.width_ft,
+      height_ft: parseFloat(bedEditForm.height_ft) || selectedBed.height_ft,
+      depth_ft: bedEditForm.depth_ft ? parseFloat(bedEditForm.depth_ft) : null,
+      location: bedEditForm.location || null,
+      description: bedEditForm.description || null,
+      soil_notes: bedEditForm.soil_notes || null,
+      soil_ph: bedEditForm.soil_ph ? parseFloat(bedEditForm.soil_ph) : null,
+      clay_pct: bedEditForm.clay_pct ? parseFloat(bedEditForm.clay_pct) : null,
+      compost_pct: bedEditForm.compost_pct ? parseFloat(bedEditForm.compost_pct) : null,
+      sand_pct: bedEditForm.sand_pct ? parseFloat(bedEditForm.sand_pct) : null,
+    });
+    if (r.id) {
+      // PUT /api/beds/{id} returns the bed object directly
+      const updated: Bed = { ...selectedBed, ...r };
+      setSelectedBed(updated);
+      setCanvasBeds(prev => prev.map(b => b.id === updated.id ? updated : b));
+      setPaletteBeds(prev => prev.map(b => b.id === updated.id ? updated : b));
+      setBedEditMode(false);
     }
   }
 
@@ -1012,7 +1076,7 @@ export default function Planner() {
               <li key={b.id}
                   className={`palette-item palette-bed${selectedBed?.id === b.id ? ' active' : ''}`}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.4rem', background: selectedBed?.id === b.id ? '#d4edcc' : '#f0f5ef', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer' }}
-                  onClick={() => { setSelectedBed(b); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
+                  onClick={() => { setSelectedBed(b); setBedEditMode(false); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
                 <span style={{ color: '#9ab49a', fontSize: '0.7rem', flexShrink: 0 }}>{b.width_ft}×{b.height_ft}</span>
                 <button title="Focus on canvas" style={{ background: 'none', border: 'none', color: '#3a6b35', cursor: 'pointer', fontSize: '0.8rem', padding: '0 0.1rem', flexShrink: 0 }}
@@ -1028,7 +1092,7 @@ export default function Planner() {
                   draggable
                   onDragStart={e => handlePaletteBedDragStart(e, b)}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.4rem', background: selectedBed?.id === b.id ? '#d4edcc' : '#f0f5ef', borderRadius: '4px', fontSize: '0.8rem', cursor: 'grab', opacity: 0.75 }}
-                  onClick={() => { setSelectedBed(b); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
+                  onClick={() => { setSelectedBed(b); setBedEditMode(false); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
                 <span style={{ fontSize: '0.65rem', color: '#9ab49a', flexShrink: 0 }} title="Drag to canvas">⋮⋮</span>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
                 <span style={{ color: '#9ab49a', fontSize: '0.7rem', flexShrink: 0 }}>{b.width_ft}×{b.height_ft}</span>
@@ -1073,7 +1137,7 @@ export default function Planner() {
                           style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: isSelected ? '#d4edcc' : '#f4f9f4', borderRadius: '4px', fontSize: '0.78rem', cursor: 'pointer' }}>
                         {rep.image_filename ? <img src={`/static/plant_images/${rep.image_filename}`} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rep.name}</span>
-                        {rep.library_id && <Link to={`/library/${rep.library_id}`} style={{ fontSize: '0.7rem', color: '#7a907a' }} onClick={e => e.stopPropagation()}>ℹ</Link>}
+                        {rep.library_id && <button title="Plant info" onClick={e => { e.stopPropagation(); showLibInfo(rep.library_id!); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>}
                       </li>
                     );
                   }
@@ -1112,7 +1176,11 @@ export default function Planner() {
             </details>
           )}
 
-          <details open style={{ marginTop: '0.4rem' }}>
+          <details open style={{ marginTop: '0.4rem' }} onToggle={e => {
+            if ((e.currentTarget as HTMLDetailsElement).open && libPlants.length === 0 && !libSearch.trim()) {
+              api('GET', '/api/library?per_page=100').then(d => setLibPlants((d.entries || []) as LibPlant[]));
+            }
+          }}>
             <summary className="sidebar-label" style={{ fontWeight: 600, fontSize: '0.8rem', color: '#3a5c37', cursor: 'pointer' }}>Library Plants</summary>
             <div style={{ marginTop: '0.3rem', position: 'relative' }}>
               <input
@@ -1141,6 +1209,7 @@ export default function Planner() {
                     style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: selectedPlant?.id === p.id ? '#d4edcc' : '#f4f9f4', borderRadius: '4px', fontSize: '0.78rem', cursor: 'pointer' }}>
                   {p.image_filename ? <img src={`/static/plant_images/${p.image_filename}`} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                  <button title="Plant info" onClick={e => { e.stopPropagation(); showLibInfo(p.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>
                 </li>
               ))}
             </ul>
@@ -1160,7 +1229,7 @@ export default function Planner() {
         <div
           id="planner-canvas"
           ref={canvasRef}
-          style={{ position: 'relative', minWidth: '1200px', minHeight: '900px', transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${900 / zoom}px` }}
+          style={{ position: 'relative', minWidth: '1200px', minHeight: '900px', transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${900 / zoom}px`, backgroundImage: 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: `${PX}px ${PX}px` }}
           onDragOver={e => { handleCanvasDragOver(e); if (selectedPlant) e.preventDefault(); }}
           onDrop={e => {
             if (dragBedRef.current) { handleCanvasDropBed(e); return; }
@@ -1176,10 +1245,10 @@ export default function Planner() {
               draggable
               onDragStart={e => handleBedDragStart(e, bed)}
               onDragEnd={handleBedDragEnd}
-              style={{ position: 'absolute', left: (bed.pos_x ?? 0) * PX, top: (bed.pos_y ?? 0) * PX, width: bed.width_ft * PX, height: bed.height_ft * PX, background: '#e8f5e3', border: '2px solid #a8c8a0', borderRadius: '4px', boxSizing: 'border-box' }}
+              style={{ position: 'absolute', left: (bed.pos_x ?? 0) * PX, top: (bed.pos_y ?? 0) * PX, width: bed.width_ft * PX, height: bed.height_ft * PX + BED_HEADER_PX, background: '#e8f5e3', border: '2px solid #a8c8a0', borderRadius: '4px', boxSizing: 'border-box' }}
             >
               <div className="canvas-bed-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 6px', background: selectedBed?.id === bed.id ? '#a8d8a0' : '#c8e0c0', fontSize: '0.75rem', fontWeight: 600, cursor: 'grab' }}
-                   onClick={e => { e.stopPropagation(); setSelectedBed(bed); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
+                   onClick={e => { e.stopPropagation(); setSelectedBed(bed); setBedEditMode(false); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
                 <span>{bed.name}</span>
                 <button className="bed-header-delete" style={{ background: 'none', border: 'none', color: '#b84040', cursor: 'pointer', fontSize: '0.9rem', padding: '0 0.1rem' }} draggable={false}
                         onClick={e => { e.stopPropagation(); handleDeleteBed(bed.id, bed.name); }}>×</button>
@@ -1202,7 +1271,7 @@ export default function Planner() {
             const diamPx = cp.radius_ft * PX * 2;
             const leftPx = cp.pos_x * PX - cp.radius_ft * PX;
             const topPx = cp.pos_y * PX - cp.radius_ft * PX;
-            const imgSrc = cp.custom_image ? `/static/canvas_plant_images/${cp.custom_image}` : (cp.image_filename ? `/static/plant_images/${cp.image_filename}` : null);
+            const imgSrc = cp.custom_image ? `/static/canvas_plant_images/${cp.custom_image}` : (cp.ai_icon_url || cp.svg_icon_url || (cp.image_filename ? `/static/plant_images/${cp.image_filename}` : null));
             return (
               <div
                 key={cp.id}
@@ -1341,13 +1410,13 @@ export default function Planner() {
           )}
 
           {/* Bed detail panel */}
-          {selectedBed && (
+          {selectedBed && !bedEditMode && (
             <div style={{ borderTop: '1px solid #d0e0c8', paddingTop: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                 <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#3a5c37' }}>🛏 {selectedBed.name}</div>
                 <div style={{ display: 'flex', gap: '0.3rem' }}>
-                  <Link to={`/beds/${selectedBed.id}`} style={{ fontSize: '0.72rem', color: '#3a6b35' }}>Edit →</Link>
-                  <button style={{ background: 'none', border: 'none', color: '#9ab49a', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }} onClick={() => setSelectedBed(null)}>×</button>
+                  <button className="btn-small btn-link" style={{ fontSize: '0.72rem' }} onClick={startBedEdit}>✎ Edit</button>
+                  <button style={{ background: 'none', border: 'none', color: '#9ab49a', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }} onClick={() => { setSelectedBed(null); setBedEditMode(false); }}>×</button>
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.2rem 0.6rem', fontSize: '0.78rem', color: '#5a7a5a' }}>
@@ -1374,6 +1443,35 @@ export default function Planner() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Bed edit form */}
+          {selectedBed && bedEditMode && (
+            <div style={{ borderTop: '1px solid #d0e0c8', paddingTop: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#3a5c37' }}>✎ Edit Bed</div>
+                <button style={{ background: 'none', border: 'none', color: '#9ab49a', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }} onClick={() => setBedEditMode(false)}>✕ Cancel</button>
+              </div>
+              <form onSubmit={handleBedSave} style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.78rem' }}>
+                <label>Name <input type="text" value={bedEditForm.name} onChange={e => setBedEditForm(f => ({ ...f, name: e.target.value }))} required style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                  <label style={{ flex: 1 }}>Width (ft) <input type="number" step="0.5" min="0.5" value={bedEditForm.width_ft} onChange={e => setBedEditForm(f => ({ ...f, width_ft: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                  <label style={{ flex: 1 }}>Height (ft) <input type="number" step="0.5" min="0.5" value={bedEditForm.height_ft} onChange={e => setBedEditForm(f => ({ ...f, height_ft: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                </div>
+                <label>Depth (ft) <input type="number" step="0.5" min="0" value={bedEditForm.depth_ft} onChange={e => setBedEditForm(f => ({ ...f, depth_ft: e.target.value }))} placeholder="optional" style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                <label>Location <input type="text" value={bedEditForm.location} onChange={e => setBedEditForm(f => ({ ...f, location: e.target.value }))} placeholder="e.g. South fence" style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                <label>Description <textarea rows={2} value={bedEditForm.description} onChange={e => setBedEditForm(f => ({ ...f, description: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%', resize: 'vertical' }} /></label>
+                <div style={{ fontWeight: 600, color: '#4a6a47', marginTop: '0.2rem' }}>Soil</div>
+                <label>pH <input type="number" step="0.1" min="0" max="14" value={bedEditForm.soil_ph} onChange={e => setBedEditForm(f => ({ ...f, soil_ph: e.target.value }))} placeholder="e.g. 6.5" style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                <label>Notes <textarea rows={2} value={bedEditForm.soil_notes} onChange={e => setBedEditForm(f => ({ ...f, soil_notes: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%', resize: 'vertical' }} /></label>
+                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                  <label style={{ flex: 1 }}>Clay % <input type="number" step="1" min="0" max="100" value={bedEditForm.clay_pct} onChange={e => setBedEditForm(f => ({ ...f, clay_pct: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                  <label style={{ flex: 1 }}>Compost % <input type="number" step="1" min="0" max="100" value={bedEditForm.compost_pct} onChange={e => setBedEditForm(f => ({ ...f, compost_pct: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                  <label style={{ flex: 1 }}>Sand % <input type="number" step="1" min="0" max="100" value={bedEditForm.sand_pct} onChange={e => setBedEditForm(f => ({ ...f, sand_pct: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
+                </div>
+                <button type="submit" className="btn-small" style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>Save</button>
+              </form>
             </div>
           )}
 
@@ -1477,6 +1575,40 @@ export default function Planner() {
                   {careSaved && <span className="muted" style={{ fontSize: '0.75rem' }}>Saved.</span>}
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* Library plant info */}
+          {libInfo && (
+            <div style={{ borderTop: '1px solid #d0e0c8', paddingTop: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{libInfo.name}</div>
+                  {libInfo.scientific_name && <div style={{ fontSize: '0.78rem', color: '#7a907a', fontStyle: 'italic' }}>{libInfo.scientific_name}</div>}
+                  {libInfo.type && <div style={{ fontSize: '0.72rem', color: '#9ab49a' }}>{libInfo.type}</div>}
+                </div>
+                <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setLibInfo(null)}>Close</button>
+              </div>
+              {libInfo.image_filename && (
+                <img src={`/static/plant_images/${libInfo.image_filename}`} alt={libInfo.name}
+                     style={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 4, marginBottom: '0.4rem' }} />
+              )}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.75rem', fontSize: '0.78rem', color: '#5a7a5a', marginBottom: '0.4rem' }}>
+                {libInfo.sunlight && <span>☀ {libInfo.sunlight}</span>}
+                {libInfo.water && <span>💧 {libInfo.water}</span>}
+                {libInfo.spacing_in && <span>↔ {libInfo.spacing_in}"</span>}
+                {libInfo.days_to_germination && <span>🌱 {libInfo.days_to_germination}d germ.</span>}
+                {libInfo.days_to_harvest && <span>🥕 {libInfo.days_to_harvest}d harvest</span>}
+              </div>
+              {libInfo.companion_plants && (
+                <div style={{ fontSize: '0.75rem', marginBottom: '0.3rem' }}>
+                  <span style={{ fontWeight: 600, color: '#4a6a47' }}>Companions: </span>
+                  <span style={{ color: '#5a7a5a' }}>{libInfo.companion_plants}</span>
+                </div>
+              )}
+              {libInfo.growing_notes && (
+                <div style={{ fontSize: '0.75rem', color: '#5a7a5a', lineHeight: 1.4 }}>{libInfo.growing_notes}</div>
+              )}
             </div>
           )}
 

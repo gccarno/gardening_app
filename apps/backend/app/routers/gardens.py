@@ -52,6 +52,48 @@ _PLANTING_HINTS = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _parse_frost_date(mm_dd: str, year: int) -> date | None:
+    """Convert 'MM/DD' string to a date object for the given year."""
+    try:
+        m, d = mm_dd.split('/')
+        return date(year, int(m), int(d))
+    except Exception:
+        return None
+
+
+def _apply_frost(garden: Garden, zip_code: str) -> None:
+    """Fetch NOAA frost dates from apis.joelgrant.dev and apply to garden."""
+    try:
+        r = http.get(f'https://apis.joelgrant.dev/api/v1/frost/{zip_code}', timeout=8)
+        r.raise_for_status()
+        data = r.json().get('data', {})
+    except Exception:
+        return
+
+    garden.frost_free = data.get('frost_free', False)
+
+    station = data.get('weather_station', {})
+    garden.frost_station_id          = station.get('station_id')
+    garden.frost_station_name        = station.get('name')
+    garden.frost_station_distance_km = station.get('distance_km')
+
+    frost_dates = data.get('frost_dates', {})
+    last_frost_probs  = frost_dates.get('last_frost_32f', {})   # spring: last frost
+    first_frost_probs = frost_dates.get('first_frost_32f', {})  # fall: first frost
+
+    if last_frost_probs:
+        garden.last_frost_dates_json = json.dumps(last_frost_probs)
+        fifty = last_frost_probs.get('50%')
+        if fifty:
+            garden.last_frost_date = _parse_frost_date(fifty, date.today().year)
+
+    if first_frost_probs:
+        garden.first_frost_dates_json = json.dumps(first_frost_probs)
+        fifty = first_frost_probs.get('50%')
+        if fifty:
+            garden.first_frost_date = _parse_frost_date(fifty, date.today().year)
+
+
 def _apply_zip(garden: Garden, zip_code: str) -> None:
     """Fetch USDA zone + city/state for a ZIP code and apply to garden."""
     zip_code = zip_code.strip()
@@ -81,25 +123,33 @@ def _apply_zip(garden: Garden, zip_code: str) -> None:
     except Exception:
         pass
     garden.zip_code = zip_code
+    _apply_frost(garden, zip_code)
 
 
 def _serialize_garden(g: Garden) -> dict:
     return {
-        'id':                      g.id,
-        'name':                    g.name,
-        'description':             g.description,
-        'unit':                    g.unit,
-        'zip_code':                g.zip_code,
-        'city':                    g.city,
-        'state':                   g.state,
-        'latitude':                g.latitude,
-        'longitude':               g.longitude,
-        'usda_zone':               g.usda_zone,
-        'zone_temp_range':         g.zone_temp_range,
-        'last_frost_date':         g.last_frost_date.isoformat() if g.last_frost_date else None,
-        'watering_frequency_days': g.watering_frequency_days,
-        'water_source':            g.water_source,
-        'background_image':        g.background_image,
+        'id':                          g.id,
+        'name':                        g.name,
+        'description':                 g.description,
+        'unit':                        g.unit,
+        'zip_code':                    g.zip_code,
+        'city':                        g.city,
+        'state':                       g.state,
+        'latitude':                    g.latitude,
+        'longitude':                   g.longitude,
+        'usda_zone':                   g.usda_zone,
+        'zone_temp_range':             g.zone_temp_range,
+        'last_frost_date':             g.last_frost_date.isoformat() if g.last_frost_date else None,
+        'first_frost_date':            g.first_frost_date.isoformat() if g.first_frost_date else None,
+        'frost_free':                  g.frost_free,
+        'frost_station_id':            g.frost_station_id,
+        'frost_station_name':          g.frost_station_name,
+        'frost_station_distance_km':   g.frost_station_distance_km,
+        'last_frost_dates':            json.loads(g.last_frost_dates_json) if g.last_frost_dates_json else None,
+        'first_frost_dates':           json.loads(g.first_frost_dates_json) if g.first_frost_dates_json else None,
+        'watering_frequency_days':     g.watering_frequency_days,
+        'water_source':                g.water_source,
+        'background_image':            g.background_image,
     }
 
 
@@ -141,9 +191,12 @@ def api_garden_update(garden_id: int, body: dict, db: Session = Depends(get_db))
     if 'unit'                    in body: garden.unit                    = body.get('unit', 'ft')
     if 'watering_frequency_days' in body: garden.watering_frequency_days = body.get('watering_frequency_days') or 7
     if 'water_source'            in body: garden.water_source            = body.get('water_source') or None
-    if 'last_frost_date'         in body:
+    if 'last_frost_date' in body:
         f = body.get('last_frost_date')
         garden.last_frost_date = date.fromisoformat(f) if f else None
+    if 'first_frost_date' in body:
+        f = body.get('first_frost_date')
+        garden.first_frost_date = date.fromisoformat(f) if f else None
     zip_code = (body.get('zip_code') or '').strip()
     if zip_code and zip_code != garden.zip_code:
         _apply_zip(garden, zip_code)

@@ -1234,8 +1234,24 @@ details[open] .faq-q::after { content: '▾'; }
   vertical-align: middle;
 }
 
-.chat-widget__toggle {
+.chat-widget__restart {
   margin-left: auto;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  opacity: 0.7;
+}
+.chat-widget__restart:hover:not(:disabled) { background: rgba(255,255,255,.15); opacity: 1; }
+.chat-widget__restart:disabled { cursor: not-allowed; animation: spin 1s linear infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.chat-widget__toggle {
+  margin-left: 0;
   background: transparent;
   border: none;
   color: white;
@@ -1567,6 +1583,24 @@ details[open] .faq-q::after { content: '▾'; }
 .activity-icon { flex-shrink: 0; font-size: 0.85rem; margin-top: 0.05rem; }
 .activity-text { flex: 1; line-height: 1.4; }
 .activity-date { display: block; font-size: 0.75rem; color: #9ab49a; }
+
+/* ── Planner bed grid cells ──────────────────────────────────────────────── */
+.grid-cell {
+  box-sizing: border-box;
+  border-right: 1px dotted rgba(80, 120, 80, 0.28);
+  border-bottom: 1px dotted rgba(80, 120, 80, 0.28);
+}
+.cell-occupied {
+  background: rgba(90, 158, 84, 0.06);
+}
+.cell-drop-target {
+  background: rgba(90, 200, 90, 0.28) !important;
+  border-color: rgba(40, 150, 40, 0.45) !important;
+}
+.cell-drop-bad {
+  background: rgba(200, 90, 90, 0.22) !important;
+  border-color: rgba(150, 40, 40, 0.45) !important;
+}
 
 /* ── Bed grid plant chips ────────────────────────────────────────────────── */
 .grid-plant-chip {

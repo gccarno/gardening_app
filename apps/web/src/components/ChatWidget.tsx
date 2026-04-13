@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { sendChat } from '../api/gardens';
+import { sendChat, restartModel } from '../api/gardens';
 
 type Msg = { id: string; role: 'user' | 'bot'; text: string };
 
@@ -19,6 +19,7 @@ export default function ChatWidget({
   const [input, setInput]     = useState('');
   const [loading, setLoading] = useState(false);
   const [chipsHidden, setChipsHidden] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const historyRef  = useRef<Array<{ role: string; content: string }>>([]);
   const sessionRef  = useRef(crypto.randomUUID());
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -28,6 +29,23 @@ export default function ChatWidget({
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
   }, [msgs]);
+
+  async function handleRestart(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      const result = await restartModel();
+      const text = result.ok
+        ? `Model server restarted (${result.provider}${result.model ? ` · ${result.model}` : ''}).`
+        : `Restart failed: ${result.error ?? 'unknown error'}`;
+      setMsgs(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text }]);
+    } catch {
+      setMsgs(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: 'Could not reach the server to restart the model.' }]);
+    } finally {
+      setRestarting(false);
+    }
+  }
 
   async function send(override?: string) {
     const text = (override ?? input).trim();
@@ -76,6 +94,13 @@ export default function ChatWidget({
             </span>
           )}
         </div>
+        <button
+          className="chat-widget__restart"
+          aria-label="Restart model server"
+          title="Restart model server"
+          onClick={handleRestart}
+          disabled={restarting}
+        >{restarting ? '⟳' : '↺'}</button>
         <button className="chat-widget__toggle" aria-label="Toggle chat">{open ? '▾' : '▸'}</button>
       </div>
 

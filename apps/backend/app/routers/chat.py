@@ -116,6 +116,59 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
         close_session_logger(_session_logger)
 
 
+@router.post('/chat/restart-model')
+def restart_model():
+    """
+    For Ollama: unload the model then reload it so it is ready for the next chat.
+    For other providers: verify the API key / connectivity and return a status.
+    """
+    from ..services.helpers import REPO_ROOT  # noqa: F401 — ensure env loaded
+    from apps.ml_service.app.llm_provider import PROVIDER, _model, _DEFAULTS
+
+    if PROVIDER == 'ollama':
+        import os
+        import requests as _req
+        base = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+        model = _model('ollama')
+
+        # Unload (keep_alive=0) then immediately reload (keep_alive=-1 = keep forever)
+        def _chat(keep_alive):
+            return _req.post(
+                f'{base}/api/generate',
+                json={'model': model, 'prompt': '', 'keep_alive': keep_alive},
+                timeout=60,
+            )
+
+        try:
+            _chat(0)   # unload
+        except Exception:
+            pass  # ignore if not loaded yet
+
+        try:
+            r = _chat(-1)  # reload
+            r.raise_for_status()
+            return {'ok': True, 'provider': PROVIDER, 'model': model}
+        except Exception as exc:
+            return {'ok': False, 'provider': PROVIDER, 'model': model, 'error': str(exc)}
+
+    elif PROVIDER == 'anthropic':
+        import os
+        key = os.environ.get('ANTHROPIC_API_KEY', '')
+        if not key:
+            return {'ok': False, 'provider': PROVIDER, 'error': 'ANTHROPIC_API_KEY not set'}
+        return {'ok': True, 'provider': PROVIDER, 'model': _model('anthropic')}
+
+    elif PROVIDER == 'openai':
+        import os
+        key = os.environ.get('OPENAI_API_KEY', '')
+        if not key:
+            return {'ok': False, 'provider': PROVIDER, 'error': 'OPENAI_API_KEY not set'}
+        return {'ok': True, 'provider': PROVIDER, 'model': _model('openai')}
+
+    else:
+        return {'ok': True, 'provider': PROVIDER, 'model': _model(PROVIDER)}
+
+
 @router.get('/recommendations')
 def api_recommendations(
     garden_id: Optional[int] = None,

@@ -18,17 +18,40 @@ dependencies = [
     "alembic",
     "python-multipart",
     "sqlalchemy",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 eda = ["matplotlib", "seaborn", "jupyter"]
+# Image generation via HuggingFace diffusers (local GPU).
+# NOTE: PyTorch with CUDA must be installed separately — uv cannot pull the CUDA wheel:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+imggen = [
+    "diffusers>=0.31",
+    "transformers",
+    "accelerate",
+    "safetensors",
+    "huggingface-hub",
+    "gguf",        # required for FLUX GGUF quantized models
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.uv]
 package = false
+
+# Tell uv to find PyTorch CUDA wheels from the official PyTorch index.
+# Without this, `uv sync` installs the CPU-only wheel from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
 
 [dependency-groups]
 dev = [

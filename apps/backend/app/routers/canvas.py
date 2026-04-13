@@ -1,7 +1,9 @@
 """
 Canvas plant routes — interactive 2D garden planner visual layer.
 """
+import glob
 import os
+import re
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -27,6 +29,18 @@ def _cp_color_for_type(plant_type: str | None) -> str:
 
 def _serialize_cp(cp: CanvasPlant) -> dict:
     lib = cp.library_entry
+    svg_icon_url = None
+    ai_icon_url  = None
+    if cp.library_id:
+        svg_matches = glob.glob(str(STATIC_DIR / 'plant_svg_icons'  / f'{cp.library_id}_*.svg'))
+        if svg_matches:
+            svg_icon_url = f'/static/plant_svg_icons/{os.path.basename(svg_matches[0])}'
+        ai_matches = glob.glob(str(STATIC_DIR / 'plant_ai_images' / f'{cp.library_id}_*.png'))
+        # Prefer non-compare files (no _s\d suffix) for the canvas display
+        canonical = [m for m in ai_matches if not re.search(r'_s\d+\.png$', m)]
+        chosen = canonical[0] if canonical else (ai_matches[0] if ai_matches else None)
+        if chosen:
+            ai_icon_url = f'/static/plant_ai_images/{os.path.basename(chosen)}'
     return {
         'id':              cp.id,
         'pos_x':           cp.pos_x,
@@ -39,6 +53,8 @@ def _serialize_cp(cp: CanvasPlant) -> dict:
         'name':            cp.label or (lib.name if lib else (cp.plant.name if cp.plant else '?')),
         'image_filename':  cp.custom_image or (lib.image_filename if lib else None),
         'custom_image':    cp.custom_image,
+        'svg_icon_url':    svg_icon_url,
+        'ai_icon_url':     ai_icon_url,
         'scientific_name': lib.scientific_name if lib else None,
         'sunlight':        lib.sunlight   if lib else None,
         'water':           lib.water      if lib else None,

@@ -132,3 +132,9 @@ export async function sendChat(body: {
   if (!res.ok) throw new Error('Chat request failed');
   return res.json();
 }
+
+export async function restartModel(): Promise<{ ok: boolean; provider: string; model?: string; error?: string }> {
+  const res = await fetch(`${BASE}/chat/restart-model`, { method: 'POST' });
+  if (!res.ok) throw new Error('Restart request failed');
+  return res.json();
+}
