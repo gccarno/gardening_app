@@ -132,6 +132,72 @@ def api_library_quick_edit(entry_id: int, body: dict, db: Session = Depends(get_
     return {'ok': True}
 
 
+# Fields excluded from clone (external source IDs) and patch (identity fields)
+_EXTERNAL_IDS = {'id', 'perenual_id', 'trefle_id', 'permapeople_id', 'usda_fdc_id',
+                 'openfarm_id', 'openfarm_slug', 'trefle_slug', 'permapeople_link',
+                 'cloned_from_id', 'is_custom'}
+
+# All patchable scalar columns on PlantLibrary (excludes external IDs and relationship attrs)
+_PATCHABLE_FIELDS = {
+    'name', 'scientific_name', 'image_filename', 'type', 'spacing_in', 'sunlight', 'water',
+    'days_to_germination', 'days_to_harvest', 'notes', 'difficulty', 'min_zone', 'max_zone',
+    'temp_min_f', 'temp_max_f', 'soil_ph_min', 'soil_ph_max', 'soil_type',
+    'good_neighbors', 'bad_neighbors', 'sow_indoor_weeks', 'direct_sow_offset',
+    'transplant_offset', 'how_to_grow', 'faqs', 'nutrition',
+    'permapeople_description', 'family', 'layer', 'edible_parts',
+    'genus', 'edible', 'toxicity', 'duration', 'ligneous_type', 'growth_habit',
+    'growth_form', 'growth_rate', 'nitrogen_fixation', 'vegetable', 'observations',
+    'average_height_cm', 'maximum_height_cm', 'spread_cm', 'row_spacing_cm',
+    'minimum_root_depth_cm', 'soil_nutriments', 'soil_salinity', 'atmospheric_humidity',
+    'precipitation_min_mm', 'precipitation_max_mm', 'bloom_months', 'fruit_months',
+    'growth_months', 'flower_color', 'flower_conspicuous', 'foliage_color', 'foliage_texture',
+    'leaf_retention', 'fruit_color', 'fruit_conspicuous', 'fruit_shape', 'seed_persistence',
+    'poisonous_to_pets', 'poisonous_to_humans', 'drought_tolerant', 'salt_tolerant',
+    'thorny', 'invasive', 'rare', 'tropical', 'indoor', 'cuisine', 'medicinal',
+    'attracts', 'propagation_methods', 'harvest_season', 'harvest_method',
+    'fruiting_season', 'pruning_months',
+}
+
+
+@router.post('/library/{entry_id}/clone')
+def api_library_clone(entry_id: int, body: dict, db: Session = Depends(get_db)):
+    """Clone a plant library entry, giving the clone a new name."""
+    source = get_or_404(db, PlantLibrary, entry_id)
+    new_name = (body.get('name') or '').strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail='name is required')
+
+    # Copy all scalar columns except external IDs
+    clone_data = {}
+    for col in PlantLibrary.__table__.columns:
+        if col.name in _EXTERNAL_IDS:
+            continue
+        clone_data[col.name] = getattr(source, col.name)
+
+    clone_data['name'] = new_name
+    clone_data['cloned_from_id'] = entry_id
+    clone_data['is_custom'] = True
+
+    new_entry = PlantLibrary(**clone_data)
+    db.add(new_entry)
+    db.commit()
+    db.refresh(new_entry)
+    return {'id': new_entry.id, 'name': new_entry.name}
+
+
+@router.post('/library/{entry_id}/patch')
+def api_library_patch(entry_id: int, body: dict, db: Session = Depends(get_db)):
+    """Patch any patchable fields on a plant library entry."""
+    lib = get_or_404(db, PlantLibrary, entry_id)
+    unknown = set(body.keys()) - _PATCHABLE_FIELDS
+    if unknown:
+        raise HTTPException(status_code=400, detail=f'Unknown or non-patchable fields: {sorted(unknown)}')
+    for field, value in body.items():
+        setattr(lib, field, value)
+    db.commit()
+    return {'ok': True}
+
+
 # ── Library browse (paginated) ────────────────────────────────────────────────
 
 from typing import Optional
@@ -174,6 +240,8 @@ def api_library_list(
             'difficulty':          e.difficulty,
             'min_zone':            e.min_zone,
             'max_zone':            e.max_zone,
+            'is_custom':           e.is_custom,
+            'cloned_from_id':      e.cloned_from_id,
         } for e in entries],
     }
 
@@ -238,10 +306,18 @@ def api_library_detail(entry_id: int, db: Session = Depends(get_db)):
         'is_primary': img.is_primary,
     } for img in entry.images]
 
+    cloned_from_name = None
+    if entry.cloned_from_id:
+        src = db.get(PlantLibrary, entry.cloned_from_id)
+        cloned_from_name = src.name if src else None
+
     return {
         'id': entry.id,
         'name': entry.name,
         'scientific_name': entry.scientific_name,
+        'is_custom': entry.is_custom,
+        'cloned_from_id': entry.cloned_from_id,
+        'cloned_from_name': cloned_from_name,
         'type': entry.type,
         'sunlight': entry.sunlight,
         'water': entry.water,

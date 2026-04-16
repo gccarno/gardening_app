@@ -107,3 +107,22 @@ export async function quickEditLibrary(entryId: number, body: Record<string, unk
   if (!res.ok) throw new Error('Failed to quick-edit');
   return res.json();
 }
+
+export async function clonePlant(entryId: number, name: string): Promise<{ id: number; name: string }> {
+  const res = await fetch(`${BASE}/library/${entryId}/clone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error('Failed to clone plant');
+  return res.json();
+}
+
+export async function patchLibraryEntry(entryId: number, fields: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${BASE}/library/${entryId}/patch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  });
+  if (!res.ok) throw new Error('Failed to patch library entry');
+}

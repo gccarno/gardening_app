@@ -4,6 +4,7 @@ import { useGardens } from '../hooks/useGardens';
 import { usePlants, useCreatePlant, useDeletePlant, useSetPlantStatus } from '../hooks/usePlants';
 import { useTasks, useToggleTask } from '../hooks/useTasks';
 import type { Plant } from '../api/plants';
+import { plantImageUrl } from '../utils/images';
 
 type Tab = 'planning' | 'growing' | 'reminder' | 'timeline';
 
@@ -157,7 +158,7 @@ export default function PlantList() {
     return (
       <li className="card">
         {plant.image_filename && (
-          <img src={`/static/plant_images/${plant.image_filename}`} className="plant-card-img" alt={plant.name} />
+          <img src={plantImageUrl(plant.image_filename) ?? ''} className="plant-card-img" alt={plant.name} />
         )}
         <div className="plant-card-body">
           <Link to={`/plants/${plant.id}`}><strong>{plant.name}</strong></Link>

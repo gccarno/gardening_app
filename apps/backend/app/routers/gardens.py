@@ -150,6 +150,8 @@ def _serialize_garden(g: Garden) -> dict:
         'watering_frequency_days':     g.watering_frequency_days,
         'water_source':                g.water_source,
         'background_image':            g.background_image,
+        'background_color':            g.background_color,
+        'background_pattern':          g.background_pattern,
     }
 
 
@@ -191,6 +193,8 @@ def api_garden_update(garden_id: int, body: dict, db: Session = Depends(get_db))
     if 'unit'                    in body: garden.unit                    = body.get('unit', 'ft')
     if 'watering_frequency_days' in body: garden.watering_frequency_days = body.get('watering_frequency_days') or 7
     if 'water_source'            in body: garden.water_source            = body.get('water_source') or None
+    if 'background_color'        in body: garden.background_color        = body.get('background_color') or None
+    if 'background_pattern'      in body: garden.background_pattern      = body.get('background_pattern') or None
     if 'last_frost_date' in body:
         f = body.get('last_frost_date')
         garden.last_frost_date = date.fromisoformat(f) if f else None
@@ -430,11 +434,27 @@ def api_bulk_care(garden_id: int, body: dict, db: Session = Depends(get_db)):
 
     bed_ids = [b.id for b in garden.beds]
     bps = db.query(BedPlant).filter(BedPlant.bed_id.in_(bed_ids)).all() if bed_ids else []
-    field_map = {'water': 'last_watered', 'fertilize': 'last_fertilized'}
+    plants = db.query(Plant).filter(Plant.garden_id == garden_id).all()
 
-    if action in field_map:
+    if action == 'water':
+        watering_amount = body.get('watering_amount') or None
         for bp in bps:
-            setattr(bp, field_map[action], care_date)
+            bp.last_watered = care_date
+            if watering_amount: bp.watering_amount = watering_amount
+        for p in plants:
+            p.last_watered = care_date
+            if watering_amount: p.watering_amount = watering_amount
+    elif action == 'fertilize':
+        fertilizer_type = body.get('fertilizer_type') or None
+        fertilizer_npk  = body.get('fertilizer_npk') or None
+        for bp in bps:
+            bp.last_fertilized = care_date
+            if fertilizer_type: bp.fertilizer_type = fertilizer_type
+            if fertilizer_npk:  bp.fertilizer_npk  = fertilizer_npk
+        for p in plants:
+            p.last_fertilized = care_date
+            if fertilizer_type: p.fertilizer_type = fertilizer_type
+            if fertilizer_npk:  p.fertilizer_npk  = fertilizer_npk
 
     if create_task:
         type_map = {'water': 'watering', 'fertilize': 'fertilizing', 'mulch': 'mulching'}

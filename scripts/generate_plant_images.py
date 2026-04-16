@@ -63,7 +63,10 @@ _REPO_ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DB_PATH    = os.path.join(_REPO_ROOT, 'apps', 'api', 'instance', 'garden.db')
 _OUT_DIR    = os.path.join(_REPO_ROOT, 'apps', 'api', 'static', 'plant_ai_images')
 _LOG_PATH   = os.path.join(_OUT_DIR, 'experiments.jsonl')
-_RUN_LOG    = os.path.join(_OUT_DIR, 'generation.log')
+_RUN_LOG    = os.path.join(_REPO_ROOT, 'logs', 'plant_image_gen.log')
+
+# Add backend to path for SessionLocal / PlantLibraryImage imports
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'apps', 'backend'))
 
 logger = logging.getLogger('imggen')
 
@@ -86,6 +89,66 @@ def setup_logging(log_file: str = _RUN_LOG) -> None:
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
     logger.addHandler(ch)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DB registration
+# ─────────────────────────────────────────────────────────────────────────────
+
+import hashlib
+import re as _re
+
+# Matches normal-mode output: {id}_{slug}.png  (NOT compare-mode {id}_{slug}_s{N}.png)
+_NORMAL_PNG_RE = _re.compile(r'^(\d+)_[a-z0-9_]+(?<!_s\d)\.png$')
+
+
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def register_image_in_db(plant_id: int, filename: str, file_path: str, model_label: str) -> str:
+    """
+    Insert a row into plant_library_image for an AI-generated PNG.
+    Returns 'inserted' | 'duplicate' | 'error:<msg>'
+    Skips compare-mode files (name ends in _sN.png).
+    """
+    if not _NORMAL_PNG_RE.match(filename):
+        return 'skip'  # compare-mode file — not a canonical library image
+
+    try:
+        from app.db.session import SessionLocal
+        from app.db.models import PlantLibraryImage
+    except ImportError as e:
+        return f'error:import:{e}'
+
+    file_hash = _sha256(file_path)
+    db = SessionLocal()
+    try:
+        exists = db.query(PlantLibraryImage).filter_by(file_hash=file_hash).first()
+        if exists:
+            return 'duplicate'
+
+        img = PlantLibraryImage(
+            plant_library_id = plant_id,
+            filename         = f'plant_ai_images/{filename}',
+            source           = 'ai-generated',
+            source_url       = None,
+            attribution      = f'AI generated — {model_label}',
+            file_hash        = file_hash,
+            is_primary       = False,
+        )
+        db.add(img)
+        db.commit()
+        return 'inserted'
+    except Exception as e:
+        db.rollback()
+        return f'error:{e}'
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -570,12 +633,63 @@ def run_strategy(
         filename=out_filename, file_size=file_size,
         prompt=prompt, negative=negative,
     ))
+
+    # Register in PlantLibraryImage unless opted out
+    if not getattr(args, 'no_db_register', False):
+        model_label = (
+            f'diffusers/{_resolve_hf_model(args.hf_model)}' if args.backend == 'diffusers'
+            else f'ollama/{args.model}'
+        )
+        db_status = register_image_in_db(plant['id'], out_filename, out_path, model_label)
+        if db_status not in ('inserted', 'duplicate', 'skip'):
+            logger.warning('DB register failed for %s: %s', out_filename, db_status)
+
     return 'ok'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Report
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _register_existing_pngs(args) -> None:
+    """Scan output dir, register every normal-mode PNG that isn't in the DB yet."""
+    if not os.path.isdir(_OUT_DIR):
+        print(f'Output dir not found: {_OUT_DIR}')
+        return
+
+    model_label = (
+        f'diffusers/{_resolve_hf_model(args.hf_model)}' if args.backend == 'diffusers'
+        else f'ollama/{args.model}'
+    )
+
+    pngs = sorted(f for f in os.listdir(_OUT_DIR) if f.endswith('.png'))
+    n_inserted = n_duplicate = n_skip = n_error = 0
+
+    for fname in pngs:
+        m = _NORMAL_PNG_RE.match(fname)
+        if not m:
+            n_skip += 1
+            continue
+        plant_id = int(m.group(1))
+        fpath = os.path.join(_OUT_DIR, fname)
+        status = register_image_in_db(plant_id, fname, fpath, model_label)
+        if status == 'inserted':
+            n_inserted += 1
+        elif status == 'duplicate':
+            n_duplicate += 1
+        elif status == 'skip':
+            n_skip += 1
+        else:
+            n_error += 1
+            logger.warning('register_existing: %s → %s', fname, status)
+
+    logger.info(
+        'register_existing: inserted=%d  duplicate=%d  skip=%d  errors=%d  total=%d',
+        n_inserted, n_duplicate, n_skip, n_error, len(pngs),
+    )
+    print(f'Done.  inserted={n_inserted}  duplicate={n_duplicate}  '
+          f'skip(compare-mode)={n_skip}  errors={n_error}')
+
 
 def print_report() -> None:
     if not os.path.exists(_LOG_PATH):
@@ -628,8 +742,12 @@ def parse_args():
         description='Generate plant icons via Ollama (macOS) or HuggingFace diffusers (local GPU)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument('--list-prompts', action='store_true',  help='List all prompt strategies and exit')
-    p.add_argument('--report',       action='store_true',  help='Print experiment summary from log and exit')
+    p.add_argument('--list-prompts',      action='store_true', help='List all prompt strategies and exit')
+    p.add_argument('--report',            action='store_true', help='Print experiment summary from log and exit')
+    p.add_argument('--register-existing', action='store_true', dest='register_existing',
+                   help='Scan output dir and register all existing PNGs in the DB, then exit')
+    p.add_argument('--no-db-register',    action='store_true', dest='no_db_register',
+                   help='Skip PlantLibraryImage DB registration after generation')
     p.add_argument('--prompt',    type=int,   default=0,   help='Prompt strategy index (see --list-prompts)')
     p.add_argument('--compare',   action='store_true',     help='Run ALL strategies on --plant-id')
     p.add_argument('--limit',    type=int, default=None, help='Stop after N plants')
@@ -686,6 +804,10 @@ def main():
 
     if args.report:
         print_report()
+        return
+
+    if args.register_existing:
+        _register_existing_pngs(args)
         return
 
     os.makedirs(_OUT_DIR, exist_ok=True)

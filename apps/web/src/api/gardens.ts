@@ -16,6 +16,8 @@ export interface Garden {
   watering_frequency_days?: number;
   water_source?: string;
   background_image?: string;
+  background_color?: string;
+  background_pattern?: string;
 }
 
 export interface DashboardData {

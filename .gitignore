@@ -214,3 +214,4 @@ __marimo__/
 
 # Plant images (locally cached, large binary files)
 apps/api/static/plant_images/
+apps/api/static/plant_ai_images/*.png

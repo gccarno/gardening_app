@@ -10,6 +10,7 @@ from starlette.responses import FileResponse
 from .db.session import engine
 from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat
 from .routers.weather import run_daily_weather_fetch
+from .jobs.gcs_backup import run_backup as run_gcs_backup
 
 _GARDEN_MIGRATIONS = [
     ('first_frost_date',           'ALTER TABLE garden ADD COLUMN first_frost_date DATE'),
@@ -22,6 +23,12 @@ _GARDEN_MIGRATIONS = [
 ]
 
 
+_PLANT_LIBRARY_MIGRATIONS = [
+    ('cloned_from_id', 'ALTER TABLE plant_library ADD COLUMN cloned_from_id INTEGER REFERENCES plant_library(id)'),
+    ('is_custom',      'ALTER TABLE plant_library ADD COLUMN is_custom BOOLEAN DEFAULT 0'),
+]
+
+
 def _run_migrations():
     with engine.connect() as conn:
         from sqlalchemy import text
@@ -31,6 +38,12 @@ def _run_migrations():
                 conn.execute(text(ddl))
                 conn.commit()
                 print(f'[migration] Added garden.{col}')
+        lib_cols = [row[1] for row in conn.execute(text('PRAGMA table_info(plant_library)'))]
+        for col, ddl in _PLANT_LIBRARY_MIGRATIONS:
+            if col not in lib_cols:
+                conn.execute(text(ddl))
+                conn.commit()
+                print(f'[migration] Added plant_library.{col}')
 
 
 @asynccontextmanager
@@ -40,8 +53,9 @@ async def lifespan(app: FastAPI):
     # Fetch weather for all gardens daily at 2 AM; also runs once shortly after startup.
     scheduler.add_job(run_daily_weather_fetch, 'cron', hour=2, minute=0)
     scheduler.add_job(run_daily_weather_fetch, 'date')  # run once at startup
+    scheduler.add_job(run_gcs_backup, 'cron', hour=3, minute=0)
     scheduler.start()
-    print('[scheduler] Daily weather collection started.')
+    print('[scheduler] Daily weather collection and GCS backup scheduled.')
     yield
     scheduler.shutdown()
     print('[scheduler] Scheduler stopped.')

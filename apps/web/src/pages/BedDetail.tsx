@@ -4,6 +4,7 @@ import { useBed, useBedGrid, useUpdateBed, useDeleteBed, usePlaceInGrid, useSave
 import { useLibrary } from '../hooks/useLibrary';
 import { fetchBedPlant } from '../api/beds';
 import type { BedPlantDetail, GridPlant } from '../api/beds';
+import { plantImageUrl } from '../utils/images';
 
 export default function BedDetail() {
   const { id } = useParams<{ id: string }>();
@@ -185,7 +186,7 @@ export default function BedDetail() {
                     onClick={() => handleCellClick(x, y)}
                     title={p ? `${p.plant_name} — click for care info` : 'Click to place selected plant'}
                     style={p?.image_filename ? {
-                      backgroundImage: `url('/static/plant_images/${p.image_filename}')`,
+                      backgroundImage: `url('${plantImageUrl(p.image_filename)}')`,
                       backgroundSize: 'cover',
                       backgroundPosition: 'center',
                     } : undefined}
@@ -230,7 +231,7 @@ export default function BedDetail() {
         <div className="care-panel" style={{ display: 'block' }}>
           <div className="care-panel-header">
             {carePanel.image_filename && (
-              <img src={`/static/plant_images/${carePanel.image_filename}`} alt="" className="care-img" />
+              <img src={plantImageUrl(carePanel.image_filename) ?? ''} alt="" className="care-img" />
             )}
             <div>
               <h3 style={{ margin: '0 0 0.2rem' }}>{carePanel.plant_name}</h3>

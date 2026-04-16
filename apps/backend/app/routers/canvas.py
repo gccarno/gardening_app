@@ -2,13 +2,17 @@
 Canvas plant routes — interactive 2D garden planner visual layer.
 """
 import glob
+import logging
 import os
 import re
+import time
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..db.models import CanvasPlant, Garden, Plant, PlantLibrary
+
+logger = logging.getLogger(__name__)
 from ..db.session import get_db
 from ..services.helpers import STATIC_DIR, get_or_404
 from ..services.files import save_plant_image
@@ -27,20 +31,38 @@ def _cp_color_for_type(plant_type: str | None) -> str:
     }.get((plant_type or '').lower(), '#5a9e54')
 
 
-def _serialize_cp(cp: CanvasPlant) -> dict:
+def _serialize_cp(cp: CanvasPlant, svg_files: set | None = None, ai_files: set | None = None) -> dict:
+    """Serialize a CanvasPlant.
+
+    svg_files / ai_files: pre-scanned directory listing sets (for bulk serialization).
+    Pass None to fall back to glob.glob() (for single-plant endpoints).
+    """
     lib = cp.library_entry
     svg_icon_url = None
     ai_icon_url  = None
     if cp.library_id:
-        svg_matches = glob.glob(str(STATIC_DIR / 'plant_svg_icons'  / f'{cp.library_id}_*.svg'))
-        if svg_matches:
-            svg_icon_url = f'/static/plant_svg_icons/{os.path.basename(svg_matches[0])}'
-        ai_matches = glob.glob(str(STATIC_DIR / 'plant_ai_images' / f'{cp.library_id}_*.png'))
-        # Prefer non-compare files (no _s\d suffix) for the canvas display
-        canonical = [m for m in ai_matches if not re.search(r'_s\d+\.png$', m)]
-        chosen = canonical[0] if canonical else (ai_matches[0] if ai_matches else None)
-        if chosen:
-            ai_icon_url = f'/static/plant_ai_images/{os.path.basename(chosen)}'
+        prefix = str(cp.library_id)
+        if svg_files is not None:
+            svg_match = next((f for f in svg_files if f.startswith(f'{prefix}_') and f.endswith('.svg')), None)
+            if svg_match:
+                svg_icon_url = f'/static/plant_svg_icons/{svg_match}'
+        else:
+            svg_matches = glob.glob(str(STATIC_DIR / 'plant_svg_icons' / f'{cp.library_id}_*.svg'))
+            if svg_matches:
+                svg_icon_url = f'/static/plant_svg_icons/{os.path.basename(svg_matches[0])}'
+
+        if ai_files is not None:
+            ai_candidates = [f for f in ai_files if f.startswith(f'{prefix}_') and f.endswith('.png')]
+            canonical = [f for f in ai_candidates if not re.search(r'_s\d+\.png$', f)]
+            chosen = canonical[0] if canonical else (ai_candidates[0] if ai_candidates else None)
+            if chosen:
+                ai_icon_url = f'/static/plant_ai_images/{chosen}'
+        else:
+            ai_matches = glob.glob(str(STATIC_DIR / 'plant_ai_images' / f'{cp.library_id}_*.png'))
+            canonical = [m for m in ai_matches if not re.search(r'_s\d+\.png$', m)]
+            chosen = canonical[0] if canonical else (ai_matches[0] if ai_matches else None)
+            if chosen:
+                ai_icon_url = f'/static/plant_ai_images/{os.path.basename(chosen)}'
     return {
         'id':              cp.id,
         'pos_x':           cp.pos_x,
@@ -63,6 +85,12 @@ def _serialize_cp(cp: CanvasPlant) -> dict:
         'planted_date':    cp.plant.planted_date.isoformat()    if cp.plant and cp.plant.planted_date    else None,
         'transplant_date': cp.plant.transplant_date.isoformat() if cp.plant and cp.plant.transplant_date else None,
         'plant_notes':     cp.plant.notes or ''                 if cp.plant                              else '',
+        'status':          cp.plant.status                                         if cp.plant                              else 'planning',
+        'last_watered':    cp.plant.last_watered.isoformat()                       if cp.plant and cp.plant.last_watered    else None,
+        'watering_amount': cp.plant.watering_amount                                if cp.plant                              else None,
+        'last_fertilized': cp.plant.last_fertilized.isoformat()                    if cp.plant and cp.plant.last_fertilized else None,
+        'fertilizer_type': cp.plant.fertilizer_type                                if cp.plant                              else None,
+        'fertilizer_npk':  cp.plant.fertilizer_npk                                 if cp.plant                              else None,
     }
 
 
@@ -70,9 +98,27 @@ def _serialize_cp(cp: CanvasPlant) -> dict:
 
 @router.get('/gardens/{garden_id}/canvas-plants')
 def api_canvas_plants_list(garden_id: int, db: Session = Depends(get_db)):
+    t0 = time.monotonic()
     get_or_404(db, Garden, garden_id)
-    cps = db.query(CanvasPlant).filter_by(garden_id=garden_id).all()
-    return [_serialize_cp(cp) for cp in cps]
+    cps = (
+        db.query(CanvasPlant)
+        .filter_by(garden_id=garden_id)
+        .options(
+            joinedload(CanvasPlant.library_entry),
+            joinedload(CanvasPlant.plant),
+        )
+        .all()
+    )
+
+    # Pre-scan icon directories once instead of glob()-ing per plant
+    svg_dir = STATIC_DIR / 'plant_svg_icons'
+    ai_dir  = STATIC_DIR / 'plant_ai_images'
+    svg_files = set(os.listdir(svg_dir)) if svg_dir.exists() else set()
+    ai_files  = set(os.listdir(ai_dir))  if ai_dir.exists()  else set()
+
+    result = [_serialize_cp(cp, svg_files, ai_files) for cp in cps]
+    logger.info('[canvas_plants_list] garden %d: %d plants in %.0fms', garden_id, len(cps), (time.monotonic() - t0) * 1000)
+    return result
 
 
 @router.post('/gardens/{garden_id}/canvas-plants')

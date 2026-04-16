@@ -1,20 +1,32 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useLibrary } from '../hooks/useLibrary';
 import { perenualSearch, perenualSave } from '../api/library';
 
 const PLANT_TYPES = ['vegetable', 'herb', 'fruit', 'flower'];
 
 export default function LibraryBrowser() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [page, setPage] = useState(1);
+
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareIds, setCompareIds] = useState<number[]>([]);
 
   const [perenualQ, setPerenualQ] = useState('');
   const [perenualResults, setPerenualResults] = useState<unknown[]>([]);
   const [perenualSearching, setPerenualSearching] = useState(false);
   const [perenualMsg, setPerenualMsg] = useState('');
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
+
+  function toggleCompare(id: number) {
+    setCompareIds(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= 2) return [prev[1], id]; // replace oldest
+      return [...prev, id];
+    });
+  }
 
   const { data, isLoading } = useLibrary({
     q: search || undefined,
@@ -115,7 +127,7 @@ export default function LibraryBrowser() {
         )}
       </section>
 
-      <div className="lib-filters">
+      <div className="lib-filters" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
         <button className={`lib-filter${typeFilter === '' ? ' active' : ''}`} onClick={() => { setTypeFilter(''); setPage(1); }}>
           All ({total})
         </button>
@@ -125,6 +137,27 @@ export default function LibraryBrowser() {
             {t.charAt(0).toUpperCase() + t.slice(1)}s
           </button>
         ))}
+        <span style={{ marginLeft: 'auto' }}>
+          <button
+            onClick={() => { setCompareMode(m => !m); setCompareIds([]); }}
+            style={{ background: compareMode ? '#3a6b35' : '#f0f7ef', color: compareMode ? '#fff' : '#3a5c37', border: '1px solid #b0c8ae', borderRadius: '4px', padding: '0.3rem 0.7rem', cursor: 'pointer', font: 'inherit', fontSize: '0.85rem' }}
+          >
+            {compareMode ? 'Exit Compare' : 'Compare Plants'}
+          </button>
+          {compareMode && compareIds.length === 2 && (
+            <button
+              onClick={() => navigate(`/library/diff?a=${compareIds[0]}&b=${compareIds[1]}`)}
+              style={{ marginLeft: '0.4rem', background: '#3a6b35', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.3rem 0.8rem', cursor: 'pointer', font: 'inherit', fontSize: '0.85rem' }}
+            >
+              Diff selected →
+            </button>
+          )}
+          {compareMode && compareIds.length < 2 && (
+            <span className="muted" style={{ marginLeft: '0.5rem', fontSize: '0.82rem' }}>
+              Select {2 - compareIds.length} more plant{compareIds.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </span>
       </div>
 
       <form onSubmit={handleSearch} style={{ maxWidth: '340px', marginBottom: '1rem' }}>
@@ -144,6 +177,7 @@ export default function LibraryBrowser() {
           <table className="lib-table">
             <thead>
               <tr>
+                {compareMode && <th style={{ width: '2rem' }}></th>}
                 <th>Name</th>
                 <th>Type</th>
                 <th>Spacing</th>
@@ -154,17 +188,30 @@ export default function LibraryBrowser() {
               </tr>
             </thead>
             <tbody>
-              {entries.map(e => (
-                <tr key={e.id}>
-                  <td><Link to={`/library/${e.id}`}>{e.name}</Link></td>
-                  <td>{e.type && <span className={`lib-badge lib-badge--${e.type}`}>{e.type}</span>}</td>
-                  <td>{e.spacing_in ? `${e.spacing_in}″` : '—'}</td>
-                  <td>{e.sunlight || '—'}</td>
-                  <td>{e.water || '—'}</td>
-                  <td>{e.days_to_germination ? `${e.days_to_germination} days` : '—'}</td>
-                  <td>{e.days_to_harvest ? `${e.days_to_harvest} days` : '—'}</td>
-                </tr>
-              ))}
+              {entries.map(e => {
+                const isChecked = compareIds.includes(e.id);
+                return (
+                  <tr key={e.id} style={isChecked ? { background: '#eef6ec' } : undefined}>
+                    {compareMode && (
+                      <td>
+                        <input type="checkbox" checked={isChecked} onChange={() => toggleCompare(e.id)} />
+                      </td>
+                    )}
+                    <td>
+                      <Link to={`/library/${e.id}`}>{e.name}</Link>
+                      {(e as { is_custom?: boolean }).is_custom && (
+                        <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', background: '#d4edda', color: '#155724', borderRadius: '3px', padding: '0 0.3rem', verticalAlign: 'middle' }}>custom</span>
+                      )}
+                    </td>
+                    <td>{e.type && <span className={`lib-badge lib-badge--${e.type}`}>{e.type}</span>}</td>
+                    <td>{e.spacing_in ? `${e.spacing_in}″` : '—'}</td>
+                    <td>{e.sunlight || '—'}</td>
+                    <td>{e.water || '—'}</td>
+                    <td>{e.days_to_germination ? `${e.days_to_germination} days` : '—'}</td>
+                    <td>{e.days_to_harvest ? `${e.days_to_harvest} days` : '—'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 

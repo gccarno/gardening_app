@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { useLibraryEntry, useSetImagePrimary, useDeleteImage, useAddImageUrl, useUploadImage } from '../hooks/useLibrary';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useLibraryEntry, useSetImagePrimary, useDeleteImage, useAddImageUrl, useUploadImage, useClonePlant } from '../hooks/useLibrary';
 import { useGardens } from '../hooks/useGardens';
 import { createPlant } from '../api/plants';
+import { plantImageUrl } from '../utils/images';
 
 type Tab = 'overview' | 'calendar' | 'how-to' | 'companions' | 'soil' | 'nutrition' | 'faqs';
 
@@ -17,17 +18,24 @@ const HOW_TO_STAGES: [string, string, string][] = [
 export default function LibraryDetail() {
   const { id } = useParams<{ id: string }>();
   const entryId = parseInt(id!);
+  const navigate = useNavigate();
   const { data: entry, isLoading } = useLibraryEntry(entryId);
   const { data: gardens } = useGardens();
   const setPrimaryMut = useSetImagePrimary(entryId);
   const deleteImgMut = useDeleteImage(entryId);
   const addUrlMut = useAddImageUrl(entryId);
   const uploadMut = useUploadImage(entryId);
+  const cloneMut = useClonePlant();
 
   const [tab, setTab] = useState<Tab>('overview');
   const [selectedGarden, setSelectedGarden] = useState('');
   const [addingPlant, setAddingPlant] = useState(false);
   const [plantMsg, setPlantMsg] = useState('');
+
+  // Clone modal state
+  const [showCloneModal, setShowCloneModal] = useState(false);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneMsg, setCloneMsg] = useState('');
 
   // Image panel state
   const [showImgForm, setShowImgForm] = useState(false);
@@ -75,6 +83,16 @@ export default function LibraryDetail() {
     setAddingPlant(false);
   }
 
+  async function handleClone() {
+    if (!cloneName.trim()) { setCloneMsg('Please enter a name.'); return; }
+    setCloneMsg('Cloning…');
+    try {
+      const result = await cloneMut.mutateAsync({ entryId, name: cloneName.trim() });
+      setShowCloneModal(false);
+      navigate(`/library/${result.id}`);
+    } catch { setCloneMsg('Error cloning plant.'); }
+  }
+
   async function handleImgSubmit() {
     setImgMsg('Saving…');
     try {
@@ -113,7 +131,16 @@ export default function LibraryDetail() {
             {entry.min_zone && entry.max_zone && <span className="hero-stat">🌍 Zones {entry.min_zone as number}–{entry.max_zone as number}</span>}
           </div>
 
-          <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {entry.cloned_from_id && (
+            <p style={{ fontSize: '0.82rem', color: '#7a907a', margin: '0 0 0.5rem' }}>
+              Cloned from:{' '}
+              <Link to={`/library/${entry.cloned_from_id as number}`} style={{ color: '#3a6b35' }}>
+                {(entry.cloned_from_name as string) || `#${entry.cloned_from_id as number}`}
+              </Link>
+            </p>
+          )}
+
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <select
               value={selectedGarden}
               onChange={e => setSelectedGarden(e.target.value)}
@@ -125,15 +152,45 @@ export default function LibraryDetail() {
             <button onClick={handleAddToPlanning} disabled={addingPlant || !selectedGarden}>
               {addingPlant ? 'Adding…' : '+ Add to Planning'}
             </button>
+            <button
+              onClick={() => { setCloneName(`${entry.name as string} (Clone)`); setCloneMsg(''); setShowCloneModal(true); }}
+              style={{ background: '#f0f7ef', border: '1px solid #b0c8ae', color: '#3a5c37', padding: '0.38rem 0.75rem', borderRadius: '4px', cursor: 'pointer', font: 'inherit' }}
+            >
+              Clone Plant
+            </button>
             {plantMsg && <span className="muted">{plantMsg}</span>}
           </div>
+
+          {showCloneModal && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#f4f9f3', border: '1px solid #c0d4be', borderRadius: '6px', maxWidth: '380px' }}>
+              <p style={{ margin: '0 0 0.5rem', fontWeight: 600, fontSize: '0.9rem' }}>Clone this plant</p>
+              <input
+                type="text"
+                value={cloneName}
+                onChange={e => setCloneName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleClone(); if (e.key === 'Escape') setShowCloneModal(false); }}
+                placeholder="New plant name…"
+                autoFocus
+                style={{ width: '100%', font: 'inherit', padding: '0.35rem 0.5rem', border: '1px solid #c0d4be', borderRadius: '4px', marginBottom: '0.4rem', boxSizing: 'border-box' }}
+              />
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <button onClick={handleClone} disabled={cloneMut.isPending}>
+                  {cloneMut.isPending ? 'Cloning…' : 'Create Clone'}
+                </button>
+                <button onClick={() => setShowCloneModal(false)} style={{ background: 'none', border: '1px solid #c0d4be', padding: '0.35rem 0.6rem', borderRadius: '4px', cursor: 'pointer', font: 'inherit' }}>
+                  Cancel
+                </button>
+              </div>
+              {cloneMsg && <p style={{ fontSize: '0.8rem', margin: '0.3rem 0 0', color: '#c0392b' }}>{cloneMsg}</p>}
+            </div>
+          )}
         </div>
 
         <div className="plant-gallery" id="plant-gallery">
           <div className="plant-gallery__primary">
             {heroImg ? (
               <>
-                <img src={`/static/plant_images/${heroImg.filename}`} alt={entry.name} className="plant-hero-img" />
+                <img src={plantImageUrl(heroImg.filename) ?? ''} alt={entry.name} className="plant-hero-img" />
                 {heroImg.attribution && <p className="img-attribution">{heroImg.attribution}</p>}
               </>
             ) : (
@@ -147,7 +204,7 @@ export default function LibraryDetail() {
                      style={{ position: 'relative', display: 'inline-block' }}>
                   <button onClick={() => setPreviewImg({ filename: img.filename, attribution: img.attribution })}
                           style={{ padding: 0, border: 'none', background: 'none' }}>
-                    <img src={`/static/plant_images/${img.filename}`} alt="" style={{ width: '60px', height: '60px', objectFit: 'cover' }} />
+                    <img src={plantImageUrl(img.filename) ?? ''} alt="" style={{ width: '60px', height: '60px', objectFit: 'cover' }} />
                   </button>
                   <div className="thumb-menu">
                     <button className="thumb-menu-btn" onClick={() => setPrimaryMut.mutate(img.id)}>Set primary</button>

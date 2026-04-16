@@ -11,6 +11,7 @@ import TaskList from './pages/TaskList';
 import TaskDetail from './pages/TaskDetail';
 import LibraryBrowser from './pages/LibraryBrowser';
 import LibraryDetail from './pages/LibraryDetail';
+import PlantDiff from './pages/PlantDiff';
 import Planner from './pages/Planner';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/tasks"             element={<TaskList />} />
         <Route path="/tasks/:id"         element={<TaskDetail />} />
         <Route path="/library"           element={<LibraryBrowser />} />
+        <Route path="/library/diff"      element={<PlantDiff />} />
         <Route path="/library/:id"       element={<LibraryDetail />} />
         <Route path="/planner"           element={<Planner />} />
       </Routes>

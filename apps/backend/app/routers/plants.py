@@ -6,7 +6,7 @@ import re
 from datetime import date, timedelta, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -72,6 +72,11 @@ def _serialize_plant(p: Plant) -> dict:
         'planted_date':    p.planted_date.isoformat()    if p.planted_date    else None,
         'transplant_date': p.transplant_date.isoformat() if p.transplant_date else None,
         'expected_harvest': p.expected_harvest.isoformat() if p.expected_harvest else None,
+        'last_watered':    p.last_watered.isoformat()    if p.last_watered    else None,
+        'watering_amount': p.watering_amount,
+        'last_fertilized': p.last_fertilized.isoformat() if p.last_fertilized else None,
+        'fertilizer_type': p.fertilizer_type,
+        'fertilizer_npk':  p.fertilizer_npk,
         'garden_id':       p.garden_id,
         'library_id':      p.library_id,
         'image_filename':  p.library_entry.image_filename if p.library_entry else None,
@@ -237,6 +242,54 @@ def api_plant_get(plant_id: int, db: Session = Depends(get_db)):
     }
 
 
+# NOTE: bulk-status must be registered BEFORE /{plant_id} routes
+@router.post('/plants/bulk-status')
+def api_plants_bulk_status(body: dict, db: Session = Depends(get_db)):
+    ids        = body.get('ids', [])
+    new_status = body.get('status')
+    if new_status not in ('planning', 'growing', 'harvested'):
+        raise HTTPException(400, 'Invalid status')
+    updated = 0
+    for plant_id in ids:
+        plant = db.get(Plant, plant_id)
+        if not plant:
+            continue
+        plant.status = new_status
+        if new_status == 'growing' and not plant.planted_date:
+            plant.planted_date = date.today()
+        updated += 1
+    db.commit()
+    return {'ok': True, 'updated': updated}
+
+
+# NOTE: must be registered BEFORE /{plant_id} routes
+@router.post('/plants/bulk-care')
+def api_plants_bulk_care(body: dict, db: Session = Depends(get_db)):
+    ids = body.get('ids', [])
+
+    def _d(val):
+        return date.fromisoformat(val) if val else None
+
+    def _apply_care(obj):
+        if 'last_watered'    in body: obj.last_watered    = _d(body['last_watered'])
+        if 'watering_amount' in body: obj.watering_amount = body.get('watering_amount') or None
+        if 'last_fertilized' in body: obj.last_fertilized = _d(body['last_fertilized'])
+        if 'fertilizer_type' in body: obj.fertilizer_type = body.get('fertilizer_type') or None
+        if 'fertilizer_npk'  in body: obj.fertilizer_npk  = body.get('fertilizer_npk') or None
+
+    updated = 0
+    for plant_id in ids:
+        plant = db.get(Plant, plant_id)
+        if not plant:
+            continue
+        _apply_care(plant)
+        for bp in plant.bed_plants:
+            _apply_care(bp)
+        updated += 1
+    db.commit()
+    return {'ok': True, 'updated': updated}
+
+
 @router.put('/plants/{plant_id}')
 def api_plant_update(plant_id: int, body: dict, db: Session = Depends(get_db)):
     plant = get_or_404(db, Plant, plant_id)
@@ -310,6 +363,19 @@ def api_plant_care(plant_id: int, body: dict, db: Session = Depends(get_db)):
     if 'planted_date'    in body: plant.planted_date    = _d(body['planted_date'])
     if 'transplant_date' in body: plant.transplant_date = _d(body['transplant_date'])
     if 'plant_notes'     in body: plant.notes           = body['plant_notes'] or None
+    # Care fields — set on Plant directly (fixes canvas plants with no BedPlant)
+    if 'last_watered'    in body: plant.last_watered    = _d(body['last_watered'])
+    if 'watering_amount' in body: plant.watering_amount = body.get('watering_amount') or None
+    if 'last_fertilized' in body: plant.last_fertilized = _d(body['last_fertilized'])
+    if 'fertilizer_type' in body: plant.fertilizer_type = body.get('fertilizer_type') or None
+    if 'fertilizer_npk'  in body: plant.fertilizer_npk  = body.get('fertilizer_npk') or None
+    # Propagate to BedPlants for consistency
+    for bp in plant.bed_plants:
+        if 'last_watered'    in body: bp.last_watered    = _d(body['last_watered'])
+        if 'watering_amount' in body: bp.watering_amount = body.get('watering_amount') or None
+        if 'last_fertilized' in body: bp.last_fertilized = _d(body['last_fertilized'])
+        if 'fertilizer_type' in body: bp.fertilizer_type = body.get('fertilizer_type') or None
+        if 'fertilizer_npk'  in body: bp.fertilizer_npk  = body.get('fertilizer_npk') or None
     db.commit()
     return {'ok': True}
 

@@ -1,12 +1,63 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useGardens, useGarden } from '../hooks/useGardens';
 import ChatWidget from '../components/ChatWidget';
+import { plantImageUrl } from '../utils/images';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PX = 60; // px per foot at zoom=1
 const PX_PER_IN = PX / 12;
 const BED_HEADER_PX = 24; // height of the bed label bar in pixels
+
+const GARDEN_PALETTE = [
+  '#2d5a27', '#4a7c3f', '#6aaa58', '#a8d5a2', '#c8e6c9',
+  '#5d4037', '#795548', '#a1887f', '#d7ccc8', '#8d6e63',
+  '#f9a825', '#fbc02d', '#fff176', '#f0e68c',
+  '#b3e5fc', '#81d4fa', '#4fc3f7',
+  '#ffffff', '#f5f5f5', '#9e9e9e', '#424242',
+];
+
+const PATTERNS = [
+  { key: 'grass',      label: '🌿 Grass' },
+  { key: 'mulch',      label: '🍂 Mulch' },
+  { key: 'wood_chips', label: '🪵 Wood' },
+  { key: 'straw',      label: '🌾 Straw' },
+  { key: 'dirt',       label: '🟫 Dirt' },
+];
+
+// SVG data URI cursors for care tools
+const CURSOR_WATER = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><g fill='%2334aadc'><rect x='3' y='12' width='14' height='10' rx='2'/><rect x='17' y='10' width='8' height='4' rx='1'/><circle cx='7' cy='26' r='2'/><circle cx='13' cy='26' r='2'/><line x1='25' y1='6' x2='29' y2='12' stroke='%2334aadc' stroke-width='2' stroke-linecap='round'/></g></svg>") 28 10, crosshair`;
+const CURSOR_FERTILIZE = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><text y='26' font-size='26'>%F0%9F%92%A9</text></svg>") 16 16, crosshair`;
+const CURSOR_WEED = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><g fill='%23888' stroke='%23555' stroke-width='1'><rect x='7' y='2' width='3' height='12' rx='1'/><rect x='14' y='2' width='3' height='14' rx='1'/><rect x='21' y='2' width='3' height='12' rx='1'/><rect x='13' y='14' width='5' height='14' rx='1'/></g></svg>") 15 2, crosshair`;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function patternStyle(pattern: string | null | undefined): React.CSSProperties {
+  if (!pattern) return {};
+  const p: Record<string, React.CSSProperties> = {
+    grass: {
+      backgroundImage: `repeating-linear-gradient(45deg, #4a7c3f 0px, #4a7c3f 2px, transparent 2px, transparent 8px), repeating-linear-gradient(-45deg, #6aaa58 0px, #6aaa58 2px, transparent 2px, transparent 8px)`,
+      backgroundSize: '10px 10px',
+    },
+    mulch: {
+      backgroundImage: `repeating-linear-gradient(30deg, #795548 0px, #795548 3px, transparent 3px, transparent 12px), repeating-linear-gradient(150deg, #5d4037 0px, #5d4037 2px, transparent 2px, transparent 10px)`,
+      backgroundSize: '14px 14px',
+    },
+    wood_chips: {
+      backgroundImage: `repeating-linear-gradient(0deg, #a1887f 0px, #a1887f 2px, #d7ccc8 2px, #d7ccc8 8px)`,
+      backgroundSize: '12px 10px',
+    },
+    straw: {
+      backgroundImage: `repeating-linear-gradient(15deg, #f9a825 0px, #f9a825 1px, transparent 1px, transparent 7px), repeating-linear-gradient(-15deg, #fbc02d 0px, #fbc02d 1px, transparent 1px, transparent 9px)`,
+      backgroundSize: '10px 8px',
+    },
+    dirt: {
+      backgroundImage: `radial-gradient(circle, #795548 1px, transparent 1px)`,
+      backgroundSize: '8px 8px',
+    },
+  };
+  return p[pattern] ?? {};
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Bed {
@@ -16,6 +67,10 @@ interface Bed {
   soil_notes?: string; soil_ph?: number;
   clay_pct?: number; compost_pct?: number; sand_pct?: number;
   plant_count?: number;
+  color?: string;
+  background_image?: string;
+  background_pattern?: string;
+  last_weeded?: string;
 }
 interface GridChip {
   id: number; grid_x: number; grid_y: number;
@@ -25,15 +80,20 @@ interface CanvasPlant {
   id: number; name: string; pos_x: number; pos_y: number; radius_ft: number;
   color?: string; display_mode?: string; image_filename?: string; custom_image?: string;
   svg_icon_url?: string; ai_icon_url?: string; library_id?: number; plant_id?: number; spacing_in?: number;
+  status?: string;
+  last_watered?: string; watering_amount?: string;
+  last_fertilized?: string; fertilizer_type?: string; fertilizer_npk?: string;
 }
 interface LibPlant {
   id: number; name: string; type?: string; image_filename?: string; spacing_in?: number;
 }
 interface GardenPlant {
   id: number; name: string; library_id?: number; image_filename?: string;
-  spacing_in?: number; status?: string;
+  spacing_in?: number; status?: string; notes?: string;
   planted_date?: string; transplant_date?: string; expected_harvest?: string;
-  type?: string;
+  type?: string; days_to_harvest?: number;
+  last_watered?: string; watering_amount?: string;
+  last_fertilized?: string; fertilizer_type?: string; fertilizer_npk?: string;
 }
 interface AnnotationShape {
   id: string;
@@ -56,8 +116,10 @@ interface CareData {
   id: number; plant_id?: number; plant_name: string; scientific_name?: string;
   sunlight?: string; water?: string; spacing_in?: number; days_to_harvest?: number;
   planted_date?: string; transplant_date?: string; last_watered?: string;
-  last_fertilized?: string; last_harvest?: string; health_notes?: string;
+  watering_amount?: string; last_fertilized?: string; fertilizer_type?: string; fertilizer_npk?: string;
+  last_harvest?: string; health_notes?: string;
   stage?: string; plant_notes?: string; is_bed: boolean;
+  library_id?: number;
 }
 interface LibraryInfo {
   id: number; name: string; scientific_name?: string; type?: string;
@@ -106,12 +168,36 @@ function BedGrid({
 
   const [hover, setHover] = useState<{cx: number; cy: number; span: number; ok: boolean} | null>(null);
 
+  // Paint mode refs — cleared when dragPlant changes or mouse released
+  const isPainting = useRef(false);
+  const paintedKeys = useRef(new Set<string>());
+  const pendingOcc = useRef(new Set<string>());
+
   function canPlace(cx: number, cy: number, span: number) {
     if (cx + span > cols || cy + span > rows) return false;
     for (let r = cy; r < cy + span; r++)
       for (let c = cx; c < cx + span; c++)
-        if (occupied.has(`${c},${r}`)) return false;
+        if (occupied.has(`${c},${r}`) || pendingOcc.current.has(`${c},${r}`)) return false;
     return true;
+  }
+
+  function tryPaint(cx: number, cy: number) {
+    if (!dragPlant) return;
+    const key = `${cx},${cy}`;
+    if (paintedKeys.current.has(key)) return;
+    paintedKeys.current.add(key);
+    const span = plantSpan((dragPlant as LibPlant | GardenPlant).spacing_in ?? 12, tileIn);
+    if (!canPlace(cx, cy, span)) return;
+    for (let r = cy; r < cy + span; r++)
+      for (let c = cx; c < cx + span; c++)
+        pendingOcc.current.add(`${c},${r}`);
+    onCellClick(bed.id, cx, cy);
+  }
+
+  function stopPainting() {
+    isPainting.current = false;
+    paintedKeys.current.clear();
+    pendingOcc.current.clear();
   }
 
   const STAGE_LABELS: Record<string, string> = { seedling: '🌱', growing: '🌿', harvesting: '🥕', done: '✓' };
@@ -119,7 +205,7 @@ function BedGrid({
   return (
     <div
       className="canvas-bed-grid"
-      style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, ${tilePx}px)`, gridTemplateRows: `repeat(${rows}, ${tilePx}px)`, position: 'relative', backgroundImage: 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: `${tilePx}px ${tilePx}px` }}
+      style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, ${tilePx}px)`, gridTemplateRows: `repeat(${rows}, ${tilePx}px)`, position: 'relative', backgroundImage: 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: `${tilePx}px ${tilePx}px`, userSelect: 'none' }}
       onDragOver={e => {
         if (!dragPlant) return;
         e.preventDefault(); e.stopPropagation();
@@ -138,35 +224,41 @@ function BedGrid({
         if (hover.ok) onCellClick(bed.id, hover.cx, hover.cy);
         setHover(null);
       }}
-      onClick={e => {
-        if (!dragPlant) return;
-        const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-        const cx = Math.floor((e.clientX - rect.left) / zoom / tilePx);
-        const cy = Math.floor((e.clientY - rect.top) / zoom / tilePx);
-        onCellClick(bed.id, cx, cy);
-      }}
+      onMouseUp={() => stopPainting()}
+      onMouseLeave={() => stopPainting()}
     >
       {Array.from({ length: rows }, (_, y) =>
         Array.from({ length: cols }, (_, x) => {
-          const isOcc = occupied.has(`${x},${y}`);
+          const isOcc = occupied.has(`${x},${y}`) || pendingOcc.current.has(`${x},${y}`);
           const inHover = hover && x >= hover.cx && x < hover.cx + hover.span && y >= hover.cy && y < hover.cy + hover.span;
           return (
             <div key={`${x},${y}`}
                  className={`grid-cell${isOcc ? ' cell-occupied' : ''}${inHover ? (hover!.ok ? ' cell-drop-target' : ' cell-drop-bad') : ''}`}
-                 style={{ width: tilePx, height: tilePx }} />
+                 style={{ width: tilePx, height: tilePx }}
+                 onMouseDown={e => {
+                   if (!dragPlant) return;
+                   e.preventDefault();
+                   isPainting.current = true;
+                   tryPaint(x, y);
+                 }}
+                 onMouseEnter={() => {
+                   if (!isPainting.current || !dragPlant) return;
+                   tryPaint(x, y);
+                 }}
+            />
           );
         })
       )}
       {chips.map(chip => {
         const cx = Math.floor(chip.grid_x / tileIn);
         const cy = Math.floor(chip.grid_y / tileIn);
-        const span = plantSpan(chip.spacing_in, tileIn);
-        const imgSrc = chip.image_filename ? `/static/plant_images/${chip.image_filename}` : null;
+        const chipPx = Math.round((chip.spacing_in || 12) * PX_PER_IN);
+        const imgSrc = chip.image_filename ? plantImageUrl(chip.image_filename) : null;
         return (
           <div
             key={chip.id}
             className="grid-plant-chip"
-            style={{ position: 'absolute', left: cx * tilePx, top: cy * tilePx, width: span * tilePx, height: span * tilePx }}
+            style={{ position: 'absolute', left: cx * tilePx, top: cy * tilePx, width: chipPx, height: chipPx }}
             onClick={e => { e.stopPropagation(); onChipClick(chip); }}
           >
             {imgSrc ? (
@@ -192,6 +284,7 @@ export default function Planner() {
   const gardenIdStr = searchParams.get('garden');
   const [gardenId, setGardenId] = useState(gardenIdStr ? parseInt(gardenIdStr) : 0);
 
+  const queryClient = useQueryClient();
   const { data: gardens } = useGardens();
   const { data: garden } = useGarden(gardenId);
 
@@ -229,6 +322,21 @@ export default function Planner() {
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
 
+  // ── Care tools ────────────────────────────────────────────────────────────────
+  const [careToolType, setCareToolType] = useState<'water' | 'fertilize' | 'weed' | null>(null);
+  const [careToolFlash, setCareToolFlash] = useState<number | null>(null);
+  const [highlightLibId, setHighlightLibId] = useState<number | null>(null);
+  const [waterAmount, setWaterAmount] = useState<'light' | 'moderate' | 'heavy'>('moderate');
+  const [fertType, setFertType] = useState('balanced');
+  const [fertNpk, setFertNpk] = useState('');
+  // Bulk care state for info tab
+  const [bulkWaterAmount, setBulkWaterAmount] = useState<'light' | 'moderate' | 'heavy'>('moderate');
+  const [bulkFertType, setBulkFertType] = useState('balanced');
+  const [bulkFertNpk, setBulkFertNpk] = useState('');
+  const [bulkCareSaving, setBulkCareSaving] = useState(false);
+  // Rain logging
+  const [rainAmount, setRainAmount] = useState<'light' | 'moderate' | 'heavy'>('moderate');
+
   // ── Drawing / annotation state ──────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [activeObjectType, setActiveObjectType] = useState<string>('generic');
@@ -254,14 +362,40 @@ export default function Planner() {
 
   // Library plant info panel
   const [libInfo, setLibInfo] = useState<LibraryInfo | null>(null);
+  const [libImageMode, setLibImageMode] = useState(false);
+  const [libImages, setLibImages] = useState<{id: number; filename: string; is_primary: boolean; source: string}[]>([]);
+  const [libEditMode, setLibEditMode] = useState(false);
+  const [libEditForm, setLibEditForm] = useState<{sunlight: string; water: string; spacing_in: string; days_to_germination: string; days_to_harvest: string; notes: string}>({ sunlight: '', water: '', spacing_in: '', days_to_germination: '', days_to_harvest: '', notes: '' });
+
+  // Group info panel
+  const [groupInfoPlants, setGroupInfoPlants] = useState<GardenPlant[] | null>(null);
+  const [editingPlantId, setEditingPlantId] = useState<number | null>(null);
+  const [plantEditForm, setPlantEditForm] = useState<{ status: string; planted_date: string; transplant_date: string; expected_harvest: string; notes: string }>({ status: 'planning', planted_date: '', transplant_date: '', expected_harvest: '', notes: '' });
+  const [plantEditSaved, setPlantEditSaved] = useState(false);
+  const [bulkStatusValue, setBulkStatusValue] = useState<string>('growing');
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   // Bed inline editing
   const [bedEditMode, setBedEditMode] = useState(false);
   const [bedEditForm, setBedEditForm] = useState({ name: '', width_ft: '', height_ft: '', depth_ft: '', location: '', description: '', soil_notes: '', soil_ph: '', clay_pct: '', compost_pct: '', sand_pct: '' });
 
+  // Help modal
+  const [showHelp, setShowHelp] = useState(false);
+
+  // Canvas background color + pattern (persisted on garden)
+  const [canvasBgColor, setCanvasBgColor] = useState('#f0f4ef');
+  const [canvasBgPattern, setCanvasBgPattern] = useState('');
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragBedRef = useRef<{ bedId: number; offsetX: number; offsetY: number } | null>(null);
   const cpDragRef = useRef<{ cpId: number; mode: 'move' | 'resize'; startX: number; startY?: number; startLeft: number; startTop: number; startDiam: number } | null>(null);
+
+  // ── Sync canvas background color + pattern from garden data ─────────────────
+  useEffect(() => {
+    if (garden?.background_color) setCanvasBgColor(garden.background_color);
+    else setCanvasBgColor('#f0f4ef');
+    setCanvasBgPattern(garden?.background_pattern || '');
+  }, [garden?.background_color, garden?.background_pattern]);
 
   // ── Load garden data ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -272,38 +406,63 @@ export default function Planner() {
     loadGardenData();
   }, [gardenId]);
 
-  async function loadGardenData() {
-    if (!gardenId) return;
-
-    // ── Phase 1: fetch beds, canvas plants, garden plants, and annotations in parallel ──
-    const [bedsData, cpData, gpData, annData] = await Promise.all([
-      api('GET', `/api/beds?garden_id=${gardenId}`),
-      api('GET', `/api/gardens/${gardenId}/canvas-plants`),
-      api('GET', `/api/plants?garden_id=${gardenId}`),
-      api('GET', `/api/gardens/${gardenId}/annotations`),
-    ]);
-
-    // Classify beds and render the canvas immediately
-    const canvas: Bed[] = [], sidebar: Bed[] = [];
-    for (const b of bedsData as Bed[]) {
+  function classifyBeds(beds: Bed[]): { canvas: Bed[]; palette: Bed[] } {
+    const canvas: Bed[] = [], palette: Bed[] = [];
+    for (const b of beds) {
       if (b.pos_x != null && b.pos_x >= 0) canvas.push(b);
-      else sidebar.push(b);
+      else palette.push(b);
     }
-    setCanvasBeds(canvas);
-    setPaletteBeds(sidebar);
-    setCanvasPlants(cpData as CanvasPlant[]);
-    setGardenPlants(gpData as GardenPlant[]);
-    setAnnShapes(annData.shapes || []);
+    return { canvas, palette };
+  }
 
-    if (rightPanelOpen) loadPanelData();
-
-    // ── Phase 2: load grid chips in parallel (canvas is already visible) ──
+  async function loadGridChips(beds: Bed[]) {
+    const t0 = performance.now();
     const chipsMap: Record<number, GridChip[]> = {};
-    await Promise.all((bedsData as Bed[]).map(async b => {
+    await Promise.all(beds.map(async b => {
+      const t1 = performance.now();
       const g = await api('GET', `/api/beds/${b.id}/grid`);
+      console.debug(`[planner] grid bed ${b.id} (${b.name}): ${(performance.now() - t1).toFixed(0)}ms`);
       chipsMap[b.id] = g.placed || [];
     }));
     setBedChips(chipsMap);
+    console.info(`[planner] phase2 all grids (${beds.length} beds): ${(performance.now() - t0).toFixed(0)}ms`);
+  }
+
+  async function loadGardenData() {
+    if (!gardenId) return;
+    const t0 = performance.now();
+
+    // ── Fire all 4 requests in parallel ──
+    const t_beds = performance.now();
+    const bedsPromise = api('GET', `/api/beds?garden_id=${gardenId}`)
+      .then(d => { console.debug(`[planner] beds: ${(performance.now() - t_beds).toFixed(0)}ms`); return d; });
+    const t_cp = performance.now();
+    const cpPromise   = api('GET', `/api/gardens/${gardenId}/canvas-plants`)
+      .then(d => { console.debug(`[planner] canvas-plants: ${(performance.now() - t_cp).toFixed(0)}ms`); return d; });
+    const t_gp = performance.now();
+    const gpPromise   = api('GET', `/api/plants?garden_id=${gardenId}`)
+      .then(d => { console.debug(`[planner] garden-plants: ${(performance.now() - t_gp).toFixed(0)}ms`); return d; });
+    const t_ann = performance.now();
+    const annPromise  = api('GET', `/api/gardens/${gardenId}/annotations`)
+      .then(d => { console.debug(`[planner] annotations: ${(performance.now() - t_ann).toFixed(0)}ms`); return d; });
+
+    // ── Render beds as soon as they arrive (don't wait for cp/gp/ann) ──
+    const bedsData = await bedsPromise;
+    const { canvas: cb, palette: pb } = classifyBeds(bedsData as Bed[]);
+    setCanvasBeds(cb);
+    setPaletteBeds(pb);
+
+    // ── Start Phase 2 grid loads immediately (canvas beds are visible) ──
+    loadGridChips(bedsData as Bed[]);
+
+    // ── Apply remaining data as it arrives ──
+    const [cpData, gpData, annData] = await Promise.all([cpPromise, gpPromise, annPromise]);
+    setCanvasPlants(cpData as CanvasPlant[]);
+    setGardenPlants(gpData as GardenPlant[]);
+    setAnnShapes((annData as any).shapes || []);
+
+    console.info(`[planner] phase1 complete: ${(performance.now() - t0).toFixed(0)}ms`);
+    if (rightPanelOpen) loadPanelData();
   }
 
   async function loadPanelData() {
@@ -374,6 +533,14 @@ export default function Planner() {
       setPaletteBeds(prev => [...prev, r.bed]);
       setAddBedForm(f => ({ ...f, name: '' }));
     }
+  }
+
+  // ── Add library plant to garden without placing on canvas ────────────────────
+  async function handleAddToGarden(p: LibPlant) {
+    if (!gardenId) return;
+    await api('POST', '/api/plants', { name: p.name, library_id: p.id, garden_id: gardenId, status: 'planning' });
+    const gp = await api('GET', `/api/plants?garden_id=${gardenId}`);
+    setGardenPlants(gp as GardenPlant[]);
   }
 
   // ── Plant grid placement ──────────────────────────────────────────────────────
@@ -452,10 +619,29 @@ export default function Planner() {
   }
 
   async function handleCanvasPlantClick(cp: CanvasPlant) {
+    // Care tool shortcuts — record care without opening panel
+    if (careToolType === 'water' || careToolType === 'fertilize') {
+      if (!cp.plant_id) return;
+      const today = new Date().toISOString().split('T')[0];
+      const careBody = careToolType === 'water'
+        ? { last_watered: today, watering_amount: waterAmount }
+        : { last_fertilized: today, fertilizer_type: fertType, ...(fertNpk ? { fertilizer_npk: fertNpk } : {}) };
+      await api('POST', `/api/plants/${cp.plant_id}/care`, careBody);
+      const updated = await api('GET', `/api/gardens/${gardenId}/canvas-plants`);
+      setCanvasPlants(updated);
+      setCareToolFlash(cp.id);
+      setTimeout(() => setCareToolFlash(null), 1200);
+      return;
+    }
+    // Normal click: open care panel + show matching group info
     const d = await api('GET', `/api/canvas-plants/${cp.id}`);
     setCarePanel({ ...d, plant_name: d.name, is_bed: false });
     setCareForm({ planted_date: d.planted_date || '', transplant_date: d.transplant_date || '', plant_notes: d.plant_notes || '', last_watered: '', last_fertilized: '', last_harvest: '', health_notes: '', stage: 'seedling' });
     setCareSaved(false);
+    if (cp.library_id) {
+      const group = gardenGroups.find(g => g[0].library_id === cp.library_id);
+      if (group) showGroupInfo(group);
+    }
     if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); }
   }
 
@@ -611,8 +797,170 @@ export default function Planner() {
       companion_plants: d.companion_plants, growing_notes: d.growing_notes,
       days_to_germination: d.days_to_germination, days_to_harvest: d.days_to_harvest,
     });
+    setLibImageMode(false);
+    setLibEditMode(false);
     setRightPanelTab('info');
     if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); }
+  }
+
+  async function openLibImageMode() {
+    if (!libInfo) return;
+    const imgs = await api('GET', `/api/library/${libInfo.id}/images`);
+    setLibImages(Array.isArray(imgs) ? imgs : []);
+    setLibImageMode(true);
+  }
+
+  async function setLibPrimaryImage(imgId: number) {
+    if (!libInfo) return;
+    await api('POST', `/api/library/images/${imgId}/set-primary`);
+    await showLibInfo(libInfo.id);
+    const imgs = await api('GET', `/api/library/${libInfo.id}/images`);
+    setLibImages(Array.isArray(imgs) ? imgs : []);
+    setLibImageMode(true);
+  }
+
+  async function uploadLibImage(file: File) {
+    if (!libInfo) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    await fetch(`/api/library/${libInfo.id}/images`, { method: 'POST', body: fd });
+    await showLibInfo(libInfo.id);
+    const imgs = await api('GET', `/api/library/${libInfo.id}/images`);
+    setLibImages(Array.isArray(imgs) ? imgs : []);
+    setLibImageMode(true);
+  }
+
+  function openLibEdit() {
+    if (!libInfo) return;
+    setLibEditForm({
+      sunlight: libInfo.sunlight || '',
+      water: libInfo.water || '',
+      spacing_in: libInfo.spacing_in != null ? String(libInfo.spacing_in) : '',
+      days_to_germination: libInfo.days_to_germination != null ? String(libInfo.days_to_germination) : '',
+      days_to_harvest: libInfo.days_to_harvest != null ? String(libInfo.days_to_harvest) : '',
+      notes: '',
+    });
+    setLibEditMode(true);
+  }
+
+  async function handleLibEditSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!libInfo) return;
+    const body: Record<string, unknown> = {};
+    if (libEditForm.sunlight)            body.sunlight = libEditForm.sunlight;
+    if (libEditForm.water)               body.water = libEditForm.water;
+    if (libEditForm.spacing_in)          body.spacing_in = parseFloat(libEditForm.spacing_in);
+    if (libEditForm.days_to_germination) body.days_to_germination = parseInt(libEditForm.days_to_germination);
+    if (libEditForm.days_to_harvest)     body.days_to_harvest = parseInt(libEditForm.days_to_harvest);
+    if (libEditForm.notes)               body.notes = libEditForm.notes;
+    await api('POST', `/api/library/${libInfo.id}/patch`, body);
+    await showLibInfo(libInfo.id);
+    setLibEditMode(false);
+  }
+
+  // ── Group info panel ──────────────────────────────────────────────────────────
+  async function showGroupInfo(group: GardenPlant[]) {
+    setGroupInfoPlants(group);
+    setCarePanel(null);
+    setEditingPlantId(null);
+    setPlantEditSaved(false);
+    const rep = group[0];
+    if (rep.library_id) {
+      await showLibInfo(rep.library_id);
+    } else {
+      setLibInfo(null);
+      setLibEditMode(false);
+      setLibImageMode(false);
+    }
+    setRightPanelTab('info');
+    if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); }
+  }
+
+  function startPlantEdit(p: GardenPlant) {
+    setEditingPlantId(p.id);
+    setPlantEditForm({
+      status: p.status || 'planning',
+      planted_date: p.planted_date || '',
+      transplant_date: p.transplant_date || '',
+      expected_harvest: p.expected_harvest || '',
+      notes: p.notes || '',
+    });
+    setPlantEditSaved(false);
+  }
+
+  async function handlePlantEditSave(plantId: number, e: React.FormEvent) {
+    e.preventDefault();
+    await api('PUT', `/api/plants/${plantId}`, {
+      notes: plantEditForm.notes,
+      planted_date: plantEditForm.planted_date || null,
+      transplant_date: plantEditForm.transplant_date || null,
+      expected_harvest: plantEditForm.expected_harvest || null,
+    });
+    await api('POST', `/api/plants/${plantId}/status`, { status: plantEditForm.status });
+    const gp = await api('GET', `/api/plants?garden_id=${gardenId}`) as GardenPlant[];
+    setGardenPlants(gp);
+    if (groupInfoPlants) {
+      const rep = groupInfoPlants[0];
+      const key = rep.library_id != null ? `lib_${rep.library_id}` : `name_${rep.name}`;
+      const updated = gp.filter(p => (p.library_id != null ? `lib_${p.library_id}` : `name_${p.name}`) === key);
+      setGroupInfoPlants(updated.length > 0 ? updated : null);
+    }
+    setEditingPlantId(null);
+    setPlantEditSaved(true);
+    setTimeout(() => setPlantEditSaved(false), 2500);
+  }
+
+  function summarizeStatuses(plants: GardenPlant[]) {
+    const counts: Record<string, number> = {};
+    for (const p of plants) {
+      const s = p.status || 'planning';
+      counts[s] = (counts[s] || 0) + 1;
+    }
+    return Object.entries(counts).map(([s, n]) => `${s} ×${n}`).join(', ');
+  }
+
+  async function handleBulkStatusUpdate() {
+    if (!groupInfoPlants || groupInfoPlants.length === 0) return;
+    setBulkSaving(true);
+    await api('POST', '/api/plants/bulk-status', {
+      ids: groupInfoPlants.map(p => p.id),
+      status: bulkStatusValue,
+    });
+    const gp = await api('GET', `/api/plants?garden_id=${gardenId}`) as GardenPlant[];
+    setGardenPlants(gp);
+    const rep = groupInfoPlants[0];
+    const key = rep.library_id != null ? `lib_${rep.library_id}` : `name_${rep.name}`;
+    const updated = gp.filter(p => (p.library_id != null ? `lib_${p.library_id}` : `name_${p.name}`) === key);
+    setGroupInfoPlants(updated.length > 0 ? updated : null);
+    setBulkSaving(false);
+  }
+
+  async function handleBulkCare(type: 'water' | 'fertilize') {
+    if (!groupInfoPlants?.length) return;
+    setBulkCareSaving(true);
+    const today = new Date().toISOString().split('T')[0];
+    const body: Record<string, string> = type === 'water'
+      ? { last_watered: today, watering_amount: bulkWaterAmount }
+      : { last_fertilized: today, fertilizer_type: bulkFertType, ...(bulkFertNpk ? { fertilizer_npk: bulkFertNpk } : {}) };
+    await api('POST', '/api/plants/bulk-care', { ids: groupInfoPlants.map(p => p.id), ...body });
+    const gp = await api('GET', `/api/plants?garden_id=${gardenId}`) as GardenPlant[];
+    setGardenPlants(gp);
+    const rep = groupInfoPlants[0];
+    const key = rep.library_id != null ? `lib_${rep.library_id}` : `name_${rep.name}`;
+    const updated = gp.filter(p => (p.library_id != null ? `lib_${p.library_id}` : `name_${p.name}`) === key);
+    setGroupInfoPlants(updated.length > 0 ? updated : null);
+    setBulkCareSaving(false);
+  }
+
+  async function handleLogRain() {
+    if (!gardenId) return;
+    await api('POST', `/api/gardens/${gardenId}/bulk-care`, {
+      action: 'water', watering_amount: rainAmount, create_task: false,
+    });
+    const updated = await api('GET', `/api/gardens/${gardenId}/canvas-plants`);
+    setCanvasPlants(updated);
+    const gp = await api('GET', `/api/plants?garden_id=${gardenId}`) as GardenPlant[];
+    setGardenPlants(gp);
   }
 
   // ── Bed inline edit ───────────────────────────────────────────────────────────
@@ -879,12 +1227,17 @@ export default function Planner() {
     setActiveTool(tool);
   }
 
-  // Escape key deactivates draw tool
+  // Escape key deactivates draw tool and care tools
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && activeTool) deactivateDrawTool(); }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        if (activeTool) deactivateDrawTool();
+        if (careToolType) setCareToolType(null);
+      }
+    }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeTool]);
+  }, [activeTool, careToolType]);
 
   // ── Weather helper ────────────────────────────────────────────────────────────
   function wIcon(str: string) {
@@ -942,6 +1295,49 @@ export default function Planner() {
             {gardens?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
           {gardenId && <Link to={`/gardens/${gardenId}`} style={{ fontSize: '0.78rem', color: '#3a6b35', whiteSpace: 'nowrap' }}>✎ Edit</Link>}
+          <button title="Help" onClick={() => setShowHelp(true)} style={{ background: 'none', border: '1px solid #c0d4be', borderRadius: '50%', width: 22, height: 22, cursor: 'pointer', color: '#3a6b35', fontSize: '0.75rem', fontWeight: 700, padding: 0, flexShrink: 0, lineHeight: 1 }}>?</button>
+        </div>
+
+        {/* Canvas background */}
+        <div style={{ fontSize: '0.78rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
+            <span style={{ color: '#7a907a', whiteSpace: 'nowrap' }}>Canvas:</span>
+            <input type="color" value={canvasBgColor}
+              onChange={e => setCanvasBgColor(e.target.value)}
+              onBlur={async () => { if (gardenId) await api('PUT', `/api/gardens/${gardenId}`, { background_color: canvasBgColor }); }}
+              style={{ width: 28, height: 22, padding: 1, border: '1px solid #c0d4be', borderRadius: 3, cursor: 'pointer' }} title="Canvas background color" />
+            <label title="Upload canvas background image" style={{ cursor: 'pointer', color: '#3a6b35', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
+              🖼
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                const file = e.target.files?.[0]; if (!file || !gardenId) return;
+                const fd = new FormData(); fd.append('image', file);
+                await fetch(`/api/gardens/${gardenId}/upload-background`, { method: 'POST', body: fd });
+                queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] });
+              }} />
+            </label>
+            {garden?.background_image && (
+              <button title="Remove canvas image" onClick={async () => { await api('POST', `/api/gardens/${gardenId}/remove-background`, {}); queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] }); }}
+                style={{ background: 'none', border: 'none', color: '#b84040', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}>✕</button>
+            )}
+          </div>
+          {/* Color swatches */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', marginBottom: '0.25rem' }}>
+            {GARDEN_PALETTE.map(c => (
+              <button key={c} title={c}
+                style={{ width: 16, height: 16, background: c, border: canvasBgColor === c ? '2px solid #333' : '1px solid #aaa', borderRadius: 2, cursor: 'pointer', padding: 0 }}
+                onClick={async () => { setCanvasBgColor(c); if (gardenId) await api('PUT', `/api/gardens/${gardenId}`, { background_color: c }); }} />
+            ))}
+          </div>
+          {/* Pattern selector */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
+            {[{ key: '', label: 'None' }, ...PATTERNS].map(p => (
+              <button key={p.key} className={`btn-small${canvasBgPattern === p.key ? '' : ' btn-link'}`}
+                style={{ fontSize: '0.62rem', padding: '1px 4px', background: canvasBgPattern === p.key ? '#3a6b35' : undefined, color: canvasBgPattern === p.key ? '#fff' : undefined }}
+                onClick={async () => { setCanvasBgPattern(p.key); if (gardenId) await api('PUT', `/api/gardens/${gardenId}`, { background_pattern: p.key || null }); }}>
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Zoom */}
@@ -963,6 +1359,63 @@ export default function Planner() {
             <option value="12">12" cells (1 ft)</option>
             <option value="24">24" cells (2 ft)</option>
           </select>
+        </div>
+
+        {/* Care tools */}
+        <div>
+          <div className="sidebar-label" style={{ fontWeight: 600, fontSize: '0.8rem', color: '#3a5c37', marginBottom: '0.3rem' }}>Care</div>
+          <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginBottom: '0.25rem' }}>
+            {([
+              { key: 'water',     label: '💧 Water',     tip: 'Click a plant to record watering today' },
+              { key: 'fertilize', label: '🌿 Fertilize', tip: 'Click a plant to record fertilizing today' },
+              { key: 'weed',      label: '🪴 Weed',      tip: 'Click a bed header to record weeding today' },
+            ] as const).map(({ key, label, tip }) => (
+              <button key={key} title={tip}
+                      className={`btn-small${careToolType === key ? '' : ' btn-link'}`}
+                      style={{ fontSize: '0.7rem', padding: '0.15rem 0.35rem', background: careToolType === key ? '#3a6b35' : undefined, color: careToolType === key ? '#fff' : undefined }}
+                      onClick={() => setCareToolType(prev => prev === key ? null : key)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {careToolType === 'water' && (
+            <div style={{ fontSize: '0.7rem', color: '#7a907a', marginBottom: '0.25rem' }}>
+              <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', marginBottom: '0.2rem' }}>
+                <span>Amount:</span>
+                {(['light', 'moderate', 'heavy'] as const).map(a => (
+                  <button key={a} className={`btn-small${waterAmount === a ? '' : ' btn-link'}`}
+                          style={{ fontSize: '0.65rem', padding: '1px 4px', background: waterAmount === a ? '#4a80b4' : undefined, color: waterAmount === a ? '#fff' : undefined }}
+                          onClick={() => setWaterAmount(a)}>{a}</button>
+                ))}
+              </div>
+              <span style={{ color: '#aaa' }}>Click a plant · Esc to cancel</span>
+            </div>
+          )}
+          {careToolType === 'fertilize' && (
+            <div style={{ fontSize: '0.7rem', color: '#7a907a', marginBottom: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                <span>Type:</span>
+                <select value={fertType} onChange={e => setFertType(e.target.value)}
+                        style={{ font: 'inherit', fontSize: '0.7rem', padding: '1px 2px', border: '1px solid #c0d4be', borderRadius: 3 }}>
+                  <option value="balanced">Balanced</option>
+                  <option value="nitrogen">Nitrogen-heavy</option>
+                  <option value="phosphorus">Phosphorus</option>
+                  <option value="potassium">Potassium</option>
+                  <option value="organic">Organic</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                <span>N-P-K:</span>
+                <input type="text" value={fertNpk} onChange={e => setFertNpk(e.target.value)}
+                       placeholder="e.g. 10-10-10" style={{ font: 'inherit', fontSize: '0.7rem', padding: '1px 4px', border: '1px solid #c0d4be', borderRadius: 3, width: 90 }} />
+              </div>
+              <span style={{ color: '#aaa' }}>Click a plant · Esc to cancel</span>
+            </div>
+          )}
+          {careToolType === 'weed' && (
+            <div style={{ fontSize: '0.7rem', color: '#aaa', marginBottom: '0.25rem' }}>Click a bed header · Esc to cancel</div>
+          )}
         </div>
 
         {/* Draw toolbar */}
@@ -1135,9 +1588,9 @@ export default function Planner() {
                           onDragStart={e => { e.dataTransfer.effectAllowed = 'copy'; setSelectedPlant(rep); }}
                           onClick={() => setSelectedPlant(prev => prev?.id === rep.id ? null : rep)}
                           style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: isSelected ? '#d4edcc' : '#f4f9f4', borderRadius: '4px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                        {rep.image_filename ? <img src={`/static/plant_images/${rep.image_filename}`} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
+                        {rep.image_filename ? <img src={plantImageUrl(rep.image_filename) ?? ''} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rep.name}</span>
-                        {rep.library_id && <button title="Plant info" onClick={e => { e.stopPropagation(); showLibInfo(rep.library_id!); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>}
+                        <button title="Plant info" onClick={e => { e.stopPropagation(); showGroupInfo(group); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>
                       </li>
                     );
                   }
@@ -1151,9 +1604,10 @@ export default function Planner() {
                           onDragStart={e => { e.dataTransfer.effectAllowed = 'copy'; setSelectedPlant(rep); }}
                           onClick={() => setSelectedPlant(prev => prev?.id === rep.id ? null : rep)}
                         >
-                          {rep.image_filename ? <img src={`/static/plant_images/${rep.image_filename}`} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
+                          {rep.image_filename ? <img src={plantImageUrl(rep.image_filename) ?? ''} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rep.name}</span>
                           <span style={{ background: '#3a6b35', color: '#fff', borderRadius: '10px', padding: '0 5px', fontSize: '0.68rem', fontWeight: 700 }}>×{count}</span>
+                          <button title="Plant info" onClick={e => { e.stopPropagation(); showGroupInfo(group); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>
                         </summary>
                         <ul style={{ listStyle: 'none', padding: '0.2rem 0 0.2rem 0.6rem', margin: 0, display: 'flex', flexDirection: 'column', gap: '0.15rem', background: '#f0f6ef' }}>
                           {group.map((p, i) => (
@@ -1207,8 +1661,9 @@ export default function Planner() {
                     onDragStart={e => { e.dataTransfer.effectAllowed = 'copy'; setSelectedPlant(p); }}
                     onClick={() => setSelectedPlant(prev => prev?.id === p.id ? null : p)}
                     style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: selectedPlant?.id === p.id ? '#d4edcc' : '#f4f9f4', borderRadius: '4px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                  {p.image_filename ? <img src={`/static/plant_images/${p.image_filename}`} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
+                  {p.image_filename ? <img src={plantImageUrl(p.image_filename) ?? ''} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                  <button title="Add to garden (no canvas)" onClick={e => { e.stopPropagation(); handleAddToGarden(p); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3a6b35', fontSize: '0.85rem', padding: '0 1px', flexShrink: 0, fontWeight: 700, lineHeight: 1 }}>+</button>
                   <button title="Plant info" onClick={e => { e.stopPropagation(); showLibInfo(p.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>
                 </li>
               ))}
@@ -1229,7 +1684,7 @@ export default function Planner() {
         <div
           id="planner-canvas"
           ref={canvasRef}
-          style={{ position: 'relative', minWidth: '1200px', minHeight: '900px', transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${900 / zoom}px`, backgroundImage: 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: `${PX}px ${PX}px` }}
+          style={{ position: 'relative', minWidth: '1200px', minHeight: '900px', transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${900 / zoom}px`, backgroundColor: canvasBgColor, backgroundImage: garden?.background_image ? `url(/static/garden_backgrounds/${garden.background_image}), radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)` : 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: garden?.background_image ? `cover, ${PX}px ${PX}px` : `${PX}px ${PX}px`, backgroundRepeat: garden?.background_image ? 'no-repeat, repeat' : 'repeat', cursor: careToolType === 'water' ? CURSOR_WATER : careToolType === 'fertilize' ? CURSOR_FERTILIZE : careToolType === 'weed' ? CURSOR_WEED : undefined, ...patternStyle(canvasBgPattern) }}
           onDragOver={e => { handleCanvasDragOver(e); if (selectedPlant) e.preventDefault(); }}
           onDrop={e => {
             if (dragBedRef.current) { handleCanvasDropBed(e); return; }
@@ -1245,10 +1700,25 @@ export default function Planner() {
               draggable
               onDragStart={e => handleBedDragStart(e, bed)}
               onDragEnd={handleBedDragEnd}
-              style={{ position: 'absolute', left: (bed.pos_x ?? 0) * PX, top: (bed.pos_y ?? 0) * PX, width: bed.width_ft * PX, height: bed.height_ft * PX + BED_HEADER_PX, background: '#e8f5e3', border: '2px solid #a8c8a0', borderRadius: '4px', boxSizing: 'border-box' }}
+              style={{ position: 'absolute', left: (bed.pos_x ?? 0) * PX, top: (bed.pos_y ?? 0) * PX, width: bed.width_ft * PX, height: bed.height_ft * PX + BED_HEADER_PX, background: bed.color || '#e8f5e3', backgroundImage: bed.background_image ? `url(/static/bed_images/${bed.background_image})` : undefined, backgroundSize: 'cover', backgroundRepeat: 'no-repeat', border: '2px solid #a8c8a0', borderRadius: '4px', boxSizing: 'border-box', ...(!bed.background_image ? patternStyle(bed.background_pattern) : {}) }}
             >
-              <div className="canvas-bed-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 6px', background: selectedBed?.id === bed.id ? '#a8d8a0' : '#c8e0c0', fontSize: '0.75rem', fontWeight: 600, cursor: 'grab' }}
-                   onClick={e => { e.stopPropagation(); setSelectedBed(bed); setBedEditMode(false); if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); } }}>
+              <div className="canvas-bed-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 6px', background: careToolFlash === -(bed.id) ? '#b8e8a0' : selectedBed?.id === bed.id ? '#a8d8a0' : '#c8e0c0', fontSize: '0.75rem', fontWeight: 600, cursor: careToolType === 'weed' ? 'pointer' : 'grab' }}
+                   onClick={e => {
+                     e.stopPropagation();
+                     if (careToolType === 'weed') {
+                       const today = new Date().toISOString().split('T')[0];
+                       api('PUT', `/api/beds/${bed.id}`, { last_weeded: today }).then(() => {
+                         setCanvasBeds(prev => prev.map(b => b.id === bed.id ? { ...b, last_weeded: today } : b));
+                         setPaletteBeds(prev => prev.map(b => b.id === bed.id ? { ...b, last_weeded: today } : b));
+                         setSelectedBed(prev => prev?.id === bed.id ? { ...prev, last_weeded: today } : prev);
+                       });
+                       setCareToolFlash(-(bed.id));
+                       setTimeout(() => setCareToolFlash(null), 1200);
+                       return;
+                     }
+                     setSelectedBed(bed); setBedEditMode(false);
+                     if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); }
+                   }}>
                 <span>{bed.name}</span>
                 <button className="bed-header-delete" style={{ background: 'none', border: 'none', color: '#b84040', cursor: 'pointer', fontSize: '0.9rem', padding: '0 0.1rem' }} draggable={false}
                         onClick={e => { e.stopPropagation(); handleDeleteBed(bed.id, bed.name); }}>×</button>
@@ -1271,13 +1741,21 @@ export default function Planner() {
             const diamPx = cp.radius_ft * PX * 2;
             const leftPx = cp.pos_x * PX - cp.radius_ft * PX;
             const topPx = cp.pos_y * PX - cp.radius_ft * PX;
-            const imgSrc = cp.custom_image ? `/static/canvas_plant_images/${cp.custom_image}` : (cp.ai_icon_url || cp.svg_icon_url || (cp.image_filename ? `/static/plant_images/${cp.image_filename}` : null));
+            const imgSrc = cp.custom_image ? `/static/canvas_plant_images/${cp.custom_image}` : (cp.ai_icon_url || cp.svg_icon_url || plantImageUrl(cp.image_filename));
             return (
               <div
                 key={cp.id}
                 id={`cp-${cp.id}`}
                 className="canvas-plant-circle"
-                style={{ position: 'absolute', left: leftPx, top: topPx, width: diamPx, height: diamPx, borderRadius: '50%', background: imgSrc ? 'transparent' : (cp.color || '#5a9e54'), border: '2px solid rgba(0,0,0,0.15)', overflow: 'visible', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', userSelect: 'none' }}
+                style={{
+                  position: 'absolute', left: leftPx, top: topPx, width: diamPx, height: diamPx,
+                  borderRadius: '50%', background: imgSrc ? 'transparent' : (cp.color || '#5a9e54'),
+                  border: '2px solid rgba(0,0,0,0.15)', overflow: 'visible',
+                  cursor: (careToolType === 'water' || careToolType === 'fertilize') ? 'cell' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', userSelect: 'none',
+                  boxShadow: highlightLibId != null && cp.library_id === highlightLibId ? '0 0 0 3px #f5a623' : undefined,
+                  transition: 'box-shadow 0.2s',
+                }}
                 onClick={() => handleCanvasPlantClick(cp)}
               >
                 {imgSrc && (
@@ -1285,12 +1763,18 @@ export default function Planner() {
                     <img src={imgSrc} alt={cp.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   </div>
                 )}
-                <span className="canvas-plant-label" style={{ position: 'relative', fontSize: Math.max(9, Math.min(12, diamPx / 4)), color: imgSrc ? '#fff' : '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.5)', textAlign: 'center', padding: '2px', pointerEvents: 'none', maxWidth: diamPx - 8, overflow: 'hidden', wordBreak: 'break-word' }}>
+                <span className="canvas-plant-label" style={{ position: 'relative', fontSize: Math.max(9, Math.min(12, diamPx / 4)), color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.5)', textAlign: 'center', padding: '2px', pointerEvents: 'none', maxWidth: diamPx - 8, overflow: 'hidden', wordBreak: 'break-word' }}>
                   {cp.name}
                 </span>
+                {/* Care action flash overlay */}
+                {careToolFlash === cp.id && (
+                  <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.max(14, diamPx / 3), pointerEvents: 'none', zIndex: 3 }}>
+                    {careToolType === 'fertilize' ? '🌿' : waterAmount === 'light' ? '💧' : waterAmount === 'heavy' ? '💧💧💧' : '💧💧'}
+                  </div>
+                )}
                 {/* Move handle (the whole circle, minus resize handle) */}
-                <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', cursor: 'move' }}
-                     onPointerDown={e => handleCpPointerDown(e, cp, 'move')}
+                <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', cursor: (careToolType === 'water' || careToolType === 'fertilize') ? 'cell' : 'move' }}
+                     onPointerDown={e => { if (careToolType === 'water' || careToolType === 'fertilize') return; handleCpPointerDown(e, cp, 'move'); }}
                      onPointerMove={e => handleCpPointerMove(e, cp)}
                      onPointerUp={e => handleCpPointerUp(e, cp)} />
                 {/* Resize handle */}
@@ -1426,6 +1910,7 @@ export default function Planner() {
                 {(canvasBeds.find(b => b.id === selectedBed.id) ? true : false)
                   ? <span style={{ color: '#3a6b35' }}>✓ On canvas</span>
                   : <span style={{ color: '#9ab49a' }}>Not placed</span>}
+                {selectedBed.last_weeded && <span style={{ gridColumn: '1 / -1' }}>🪴 Weeded {selectedBed.last_weeded}</span>}
               </div>
               {selectedBed.location && <div style={{ fontSize: '0.78rem', color: '#5a7a5a', marginTop: '0.25rem' }}>📍 {selectedBed.location}</div>}
               {selectedBed.description && <div style={{ fontSize: '0.78rem', color: '#5a7a5a', marginTop: '0.25rem' }}>{selectedBed.description}</div>}
@@ -1470,6 +1955,73 @@ export default function Planner() {
                   <label style={{ flex: 1 }}>Compost % <input type="number" step="1" min="0" max="100" value={bedEditForm.compost_pct} onChange={e => setBedEditForm(f => ({ ...f, compost_pct: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
                   <label style={{ flex: 1 }}>Sand % <input type="number" step="1" min="0" max="100" value={bedEditForm.sand_pct} onChange={e => setBedEditForm(f => ({ ...f, sand_pct: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
                 </div>
+                <div style={{ fontWeight: 600, color: '#4a6a47', marginTop: '0.2rem' }}>Appearance</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <label style={{ fontSize: '0.78rem' }}>Color
+                    <input type="color" value={selectedBed?.color || '#e8f5e3'}
+                      onChange={async e => {
+                        const color = e.target.value;
+                        if (!selectedBed) return;
+                        await api('PUT', `/api/beds/${selectedBed.id}`, { color });
+                        setCanvasBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, color } : b));
+                        setPaletteBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, color } : b));
+                        setSelectedBed(prev => prev ? { ...prev, color } : prev);
+                      }}
+                      style={{ marginLeft: '0.3rem', width: 28, height: 22, padding: 1, border: '1px solid #c0d4be', borderRadius: 3, cursor: 'pointer' }} />
+                  </label>
+                  <label title="Upload bed background image" style={{ cursor: 'pointer', color: '#3a6b35', fontSize: '0.78rem' }}>
+                    🖼 Image
+                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                      const file = e.target.files?.[0]; if (!file || !selectedBed) return;
+                      const fd = new FormData(); fd.append('image', file);
+                      const r = await fetch(`/api/beds/${selectedBed.id}/upload-background`, { method: 'POST', body: fd });
+                      const d = await r.json();
+                      if (d.filename) {
+                        setCanvasBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, background_image: d.filename } : b));
+                        setSelectedBed(prev => prev ? { ...prev, background_image: d.filename } : prev);
+                      }
+                    }} />
+                  </label>
+                  {selectedBed?.background_image && (
+                    <button title="Remove bed image" onClick={async () => {
+                      if (!selectedBed) return;
+                      await api('POST', `/api/beds/${selectedBed.id}/remove-background`, {});
+                      setCanvasBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, background_image: undefined } : b));
+                      setSelectedBed(prev => prev ? { ...prev, background_image: undefined } : prev);
+                    }} style={{ background: 'none', border: 'none', color: '#b84040', cursor: 'pointer', fontSize: '0.78rem', padding: 0 }}>✕ Clear</button>
+                  )}
+                </div>
+                {/* Bed color swatches */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', marginTop: '0.2rem' }}>
+                  {GARDEN_PALETTE.map(c => (
+                    <button key={c} title={c}
+                      style={{ width: 16, height: 16, background: c, border: selectedBed?.color === c ? '2px solid #333' : '1px solid #aaa', borderRadius: 2, cursor: 'pointer', padding: 0 }}
+                      onClick={async () => {
+                        if (!selectedBed) return;
+                        await api('PUT', `/api/beds/${selectedBed.id}`, { color: c });
+                        setCanvasBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, color: c } : b));
+                        setPaletteBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, color: c } : b));
+                        setSelectedBed(prev => prev ? { ...prev, color: c } : prev);
+                      }} />
+                  ))}
+                </div>
+                {/* Bed pattern selector */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', marginTop: '0.2rem' }}>
+                  {[{ key: '', label: 'No pattern' }, ...PATTERNS].map(p => (
+                    <button key={p.key} className={`btn-small${selectedBed?.background_pattern === p.key || (!selectedBed?.background_pattern && p.key === '') ? '' : ' btn-link'}`}
+                      style={{ fontSize: '0.62rem', padding: '1px 4px', background: (selectedBed?.background_pattern === p.key || (!selectedBed?.background_pattern && p.key === '')) ? '#3a6b35' : undefined, color: (selectedBed?.background_pattern === p.key || (!selectedBed?.background_pattern && p.key === '')) ? '#fff' : undefined }}
+                      onClick={async () => {
+                        if (!selectedBed) return;
+                        const pattern = p.key || null;
+                        await api('PUT', `/api/beds/${selectedBed.id}`, { background_pattern: pattern });
+                        setCanvasBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, background_pattern: p.key } : b));
+                        setPaletteBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, background_pattern: p.key } : b));
+                        setSelectedBed(prev => prev ? { ...prev, background_pattern: p.key } : prev);
+                      }}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
                 <button type="submit" className="btn-small" style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>Save</button>
               </form>
             </div>
@@ -1477,7 +2029,10 @@ export default function Planner() {
 
           {/* Weather */}
           <div>
-            <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#3a5c37', marginBottom: '0.4rem' }}>Weather</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#3a5c37' }}>Weather</span>
+              <button className="btn-small btn-link" title="Refresh weather" style={{ fontSize: '0.8rem', padding: '1px 4px', lineHeight: 1 }} onClick={() => loadPanelData()}>↻</button>
+            </div>
             {!garden?.latitude ? (
               <p className="muted" style={{ fontSize: '0.78rem' }}>No location set. <Link to={`/gardens/${gardenId}`} style={{ color: '#3a6b35' }}>Set location →</Link></p>
             ) : !w ? (
@@ -1504,6 +2059,20 @@ export default function Planner() {
                     </div>
                   ))}
                 </div>
+                <details style={{ marginTop: '0.4rem' }}>
+                  <summary style={{ fontSize: '0.75rem', color: '#3a6b35', cursor: 'pointer' }}>💧 Log rain as watering</summary>
+                  <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', marginTop: '0.3rem', fontSize: '0.75rem', flexWrap: 'wrap' }}>
+                    <span style={{ color: '#7a907a' }}>Amount:</span>
+                    {(['light', 'moderate', 'heavy'] as const).map(a => (
+                      <button key={a} className={`btn-small${rainAmount === a ? '' : ' btn-link'}`}
+                              style={{ fontSize: '0.68rem', padding: '1px 5px', background: rainAmount === a ? '#4a80b4' : undefined, color: rainAmount === a ? '#fff' : undefined }}
+                              onClick={() => setRainAmount(a)}>{a}</button>
+                    ))}
+                    <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={handleLogRain}>
+                      Apply to all plants
+                    </button>
+                  </div>
+                </details>
               </>
             ) : null}
           </div>
@@ -1539,7 +2108,7 @@ export default function Planner() {
           {/* Plant care */}
           {carePanel && (
             <div style={{ borderTop: '1px solid #d0e0c8', paddingTop: '0.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{carePanel.plant_name}</div>
                   {carePanel.scientific_name && <div style={{ fontSize: '0.78rem', color: '#7a907a', fontStyle: 'italic' }}>{carePanel.scientific_name}</div>}
@@ -1551,6 +2120,30 @@ export default function Planner() {
                 </div>
                 <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setCarePanel(null)}>Close</button>
               </div>
+              {/* Select all like this */}
+              {!carePanel.is_bed && carePanel.library_id && (() => {
+                const libId = carePanel.library_id!;
+                const count = canvasPlants.filter(c => c.library_id === libId).length;
+                return count > 1 ? (
+                  <div style={{ marginBottom: '0.4rem' }}>
+                    <button className="btn-small btn-link" style={{ fontSize: '0.72rem' }}
+                            onClick={() => setHighlightLibId(prev => prev === libId ? null : libId)}>
+                      {highlightLibId === libId ? '✕ Deselect all' : `◎ Select all like this (×${count})`}
+                    </button>
+                  </div>
+                ) : null;
+              })()}
+              {/* Last care dates */}
+              {!carePanel.is_bed && (carePanel.last_watered || carePanel.last_fertilized) && (
+                <div style={{ fontSize: '0.75rem', color: '#5a7a5a', marginBottom: '0.4rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  {carePanel.last_watered && (
+                    <span>💧 {carePanel.last_watered}{carePanel.watering_amount ? ` (${carePanel.watering_amount})` : ''}</span>
+                  )}
+                  {carePanel.last_fertilized && (
+                    <span>🌿 {carePanel.last_fertilized}{carePanel.fertilizer_type ? ` · ${carePanel.fertilizer_type}` : ''}{carePanel.fertilizer_npk ? ` ${carePanel.fertilizer_npk}` : ''}</span>
+                  )}
+                </div>
+              )}
               <form onSubmit={handleCareSave} style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                 <label style={{ fontSize: '0.78rem' }}>Seeded <input type="date" value={careForm.planted_date} onChange={e => setCareForm(f => ({ ...f, planted_date: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
                 <label style={{ fontSize: '0.78rem' }}>Transplanted <input type="date" value={careForm.transplant_date} onChange={e => setCareForm(f => ({ ...f, transplant_date: e.target.value }))} style={{ font: 'inherit', fontSize: '0.78rem', padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: '3px', width: '100%' }} /></label>
@@ -1578,6 +2171,244 @@ export default function Planner() {
             </div>
           )}
 
+          {/* Group plant instances */}
+          {groupInfoPlants && (
+            <div style={{ borderTop: '1px solid #d0e0c8', paddingTop: '0.75rem', marginBottom: '0.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: '#3a5c37' }}>
+                  {groupInfoPlants[0].name}
+                  {groupInfoPlants.length > 1 && (
+                    <span style={{ fontSize: '0.75rem', color: '#7a907a', fontWeight: 400, marginLeft: 6 }}>
+                      ({groupInfoPlants.length} plants)
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                  {groupInfoPlants[0].library_id != null && (() => {
+                    const libId = groupInfoPlants[0].library_id;
+                    const count = canvasPlants.filter(cp => cp.library_id === libId).length;
+                    return count > 0 ? (
+                      <button className="btn-small" style={{ fontSize: '0.65rem', padding: '1px 5px' }}
+                        title="Highlight all instances on the canvas"
+                        onClick={() => setHighlightLibId(highlightLibId === libId ? null : libId)}>
+                        {highlightLibId === libId ? '✓ Selected' : `Select all (×${count})`}
+                      </button>
+                    ) : null;
+                  })()}
+                  <button className="btn-small" style={{ fontSize: '0.72rem' }}
+                    onClick={() => { setGroupInfoPlants(null); setLibInfo(null); setEditingPlantId(null); setLibEditMode(false); setLibImageMode(false); }}>✕</button>
+                </div>
+              </div>
+
+              {/* Bulk controls — only shown for groups */}
+              {groupInfoPlants.length > 1 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '0.5rem', fontSize: '0.75rem', padding: '0.4rem 0.5rem', background: '#f0f7ef', borderRadius: 4 }}>
+                  {/* Status */}
+                  <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                    <span style={{ color: '#7a907a', minWidth: 52 }}>Status:</span>
+                    <select value={bulkStatusValue} onChange={e => setBulkStatusValue(e.target.value)}
+                            style={{ font: 'inherit', fontSize: '0.75rem', padding: '1px 2px', border: '1px solid #c0d4be', borderRadius: 3 }}>
+                      <option value="planning">Planning</option>
+                      <option value="growing">Growing</option>
+                      <option value="harvested">Harvested</option>
+                    </select>
+                    <button className="btn-small" style={{ fontSize: '0.72rem' }}
+                            onClick={handleBulkStatusUpdate} disabled={bulkSaving || bulkCareSaving}>
+                      {bulkSaving ? '…' : 'Apply'}
+                    </button>
+                  </div>
+                  {/* Water all */}
+                  <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                    <span style={{ color: '#7a907a', minWidth: 52 }}>💧 Water:</span>
+                    {(['light', 'moderate', 'heavy'] as const).map(a => (
+                      <button key={a} className={`btn-small${bulkWaterAmount === a ? '' : ' btn-link'}`}
+                              style={{ fontSize: '0.65rem', padding: '1px 5px', background: bulkWaterAmount === a ? '#4a80b4' : undefined, color: bulkWaterAmount === a ? '#fff' : undefined }}
+                              onClick={() => setBulkWaterAmount(a)}>{a}</button>
+                    ))}
+                    <button className="btn-small" style={{ fontSize: '0.72rem' }}
+                            onClick={() => handleBulkCare('water')} disabled={bulkCareSaving || bulkSaving}>
+                      {bulkCareSaving ? '…' : 'Apply'}
+                    </button>
+                  </div>
+                  {/* Fertilize all */}
+                  <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ color: '#7a907a', minWidth: 52 }}>🌿 Feed:</span>
+                    <select value={bulkFertType} onChange={e => setBulkFertType(e.target.value)}
+                            style={{ font: 'inherit', fontSize: '0.72rem', padding: '1px 2px', border: '1px solid #c0d4be', borderRadius: 3 }}>
+                      <option value="balanced">Balanced</option>
+                      <option value="nitrogen">Nitrogen</option>
+                      <option value="phosphorus">Phosphorus</option>
+                      <option value="potassium">Potassium</option>
+                      <option value="organic">Organic</option>
+                      <option value="other">Other</option>
+                    </select>
+                    <input type="text" value={bulkFertNpk} onChange={e => setBulkFertNpk(e.target.value)}
+                           placeholder="N-P-K" style={{ font: 'inherit', fontSize: '0.72rem', padding: '1px 4px', border: '1px solid #c0d4be', borderRadius: 3, width: 64 }} />
+                    <button className="btn-small" style={{ fontSize: '0.72rem' }}
+                            onClick={() => handleBulkCare('fertilize')} disabled={bulkCareSaving || bulkSaving}>
+                      {bulkCareSaving ? '…' : 'Apply'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Individual plant cards — collapsible when group has multiple */}
+              {groupInfoPlants.length > 1 ? (
+                <details open>
+                  <summary style={{ cursor: 'pointer', fontSize: '0.78rem', color: '#5a7a5a', marginBottom: '0.3rem', userSelect: 'none' }}>
+                    {groupInfoPlants.length} plants · {summarizeStatuses(groupInfoPlants)}
+                  </summary>
+                  {groupInfoPlants.map((p, idx) => (
+                    <div key={p.id} style={{ background: '#f0f6ef', borderRadius: 4, padding: '0.4rem 0.5rem', marginBottom: '0.3rem', fontSize: '0.78rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600, color: '#3a5c37' }}>#{idx + 1}</span>
+                        <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.7rem', color: '#5a7a5a', background: '#ddeedd', borderRadius: 3, padding: '1px 5px' }}>
+                            {p.status || 'planning'}
+                          </span>
+                          {editingPlantId === p.id
+                            ? <button className="btn-small" style={{ fontSize: '0.68rem' }} onClick={() => setEditingPlantId(null)}>Cancel</button>
+                            : <button className="btn-small" style={{ fontSize: '0.68rem' }} onClick={() => startPlantEdit(p)}>Edit</button>
+                          }
+                        </div>
+                      </div>
+
+                      {editingPlantId !== p.id && (
+                        <div style={{ marginTop: '0.2rem', color: '#5a7a5a', fontSize: '0.73rem', display: 'flex', flexWrap: 'wrap', gap: '0.2rem 0.5rem' }}>
+                          {p.planted_date && <span>🌱 {p.planted_date}</span>}
+                          {p.transplant_date && <span>↳ {p.transplant_date}</span>}
+                          {p.expected_harvest && <span>🥕 {p.expected_harvest}</span>}
+                          {p.last_watered && <span>💧 {p.last_watered}{p.watering_amount ? ` (${p.watering_amount})` : ''}</span>}
+                          {p.last_fertilized && <span>🌿 {p.last_fertilized}{p.fertilizer_type ? ` · ${p.fertilizer_type}` : ''}{p.fertilizer_npk ? ` ${p.fertilizer_npk}` : ''}</span>}
+                          {p.notes && <span style={{ width: '100%', fontStyle: 'italic', color: '#7a907a' }}>{p.notes}</span>}
+                          {!p.planted_date && !p.transplant_date && !p.expected_harvest && !p.last_watered && !p.last_fertilized && !p.notes && (
+                            <span style={{ color: '#b0c8b0' }}>No dates recorded</span>
+                          )}
+                        </div>
+                      )}
+
+                      {editingPlantId === p.id && (
+                        <form onSubmit={e => handlePlantEditSave(p.id, e)} style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                            Status
+                            <select value={plantEditForm.status} onChange={e => setPlantEditForm(f => ({ ...f, status: e.target.value }))}
+                                    style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '1px 2px', border: '1px solid #c0d4be', borderRadius: 3 }}>
+                              <option value="planning">Planning</option>
+                              <option value="growing">Growing</option>
+                              <option value="harvested">Harvested</option>
+                            </select>
+                          </label>
+                          <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                            Seeded
+                            <input type="date" value={plantEditForm.planted_date}
+                                   onChange={e => setPlantEditForm(f => ({ ...f, planted_date: e.target.value }))}
+                                   style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: 3 }} />
+                          </label>
+                          <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                            Transplanted
+                            <input type="date" value={plantEditForm.transplant_date}
+                                   onChange={e => setPlantEditForm(f => ({ ...f, transplant_date: e.target.value }))}
+                                   style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: 3 }} />
+                          </label>
+                          <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                            Exp. harvest
+                            <input type="date" value={plantEditForm.expected_harvest}
+                                   onChange={e => setPlantEditForm(f => ({ ...f, expected_harvest: e.target.value }))}
+                                   style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: 3 }} />
+                          </label>
+                          <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                            Notes
+                            <textarea rows={2} value={plantEditForm.notes}
+                                      onChange={e => setPlantEditForm(f => ({ ...f, notes: e.target.value }))}
+                                      style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '2px 4px', border: '1px solid #c0d4be', borderRadius: 3, resize: 'vertical', boxSizing: 'border-box' }} />
+                          </label>
+                          <div style={{ display: 'flex', gap: '0.3rem' }}>
+                            <button type="submit" className="btn-small" style={{ fontSize: '0.72rem' }}>Save</button>
+                            <button type="button" className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setEditingPlantId(null)}>Cancel</button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  ))}
+                </details>
+              ) : (
+                groupInfoPlants.map((p) => (
+                  <div key={p.id} style={{ background: '#f0f6ef', borderRadius: 4, padding: '0.4rem 0.5rem', marginBottom: '0.3rem', fontSize: '0.78rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 600, color: '#3a5c37' }}>{p.name}</span>
+                      <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#5a7a5a', background: '#ddeedd', borderRadius: 3, padding: '1px 5px' }}>
+                          {p.status || 'planning'}
+                        </span>
+                        {editingPlantId === p.id
+                          ? <button className="btn-small" style={{ fontSize: '0.68rem' }} onClick={() => setEditingPlantId(null)}>Cancel</button>
+                          : <button className="btn-small" style={{ fontSize: '0.68rem' }} onClick={() => startPlantEdit(p)}>Edit</button>
+                        }
+                      </div>
+                    </div>
+
+                    {editingPlantId !== p.id && (
+                      <div style={{ marginTop: '0.2rem', color: '#5a7a5a', fontSize: '0.73rem', display: 'flex', flexWrap: 'wrap', gap: '0.2rem 0.5rem' }}>
+                        {p.planted_date && <span>🌱 {p.planted_date}</span>}
+                        {p.transplant_date && <span>↳ {p.transplant_date}</span>}
+                        {p.expected_harvest && <span>🥕 {p.expected_harvest}</span>}
+                        {p.last_watered && <span>💧 {p.last_watered}{p.watering_amount ? ` (${p.watering_amount})` : ''}</span>}
+                        {p.last_fertilized && <span>🌿 {p.last_fertilized}{p.fertilizer_type ? ` · ${p.fertilizer_type}` : ''}{p.fertilizer_npk ? ` ${p.fertilizer_npk}` : ''}</span>}
+                        {p.notes && <span style={{ width: '100%', fontStyle: 'italic', color: '#7a907a' }}>{p.notes}</span>}
+                        {!p.planted_date && !p.transplant_date && !p.expected_harvest && !p.last_watered && !p.last_fertilized && !p.notes && (
+                          <span style={{ color: '#b0c8b0' }}>No dates recorded</span>
+                        )}
+                      </div>
+                    )}
+
+                    {editingPlantId === p.id && (
+                      <form onSubmit={e => handlePlantEditSave(p.id, e)} style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                          Status
+                          <select value={plantEditForm.status} onChange={e => setPlantEditForm(f => ({ ...f, status: e.target.value }))}
+                                  style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '1px 2px', border: '1px solid #c0d4be', borderRadius: 3 }}>
+                            <option value="planning">Planning</option>
+                            <option value="growing">Growing</option>
+                            <option value="harvested">Harvested</option>
+                          </select>
+                        </label>
+                        <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                          Seeded
+                          <input type="date" value={plantEditForm.planted_date}
+                                 onChange={e => setPlantEditForm(f => ({ ...f, planted_date: e.target.value }))}
+                                 style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: 3 }} />
+                        </label>
+                        <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                          Transplanted
+                          <input type="date" value={plantEditForm.transplant_date}
+                                 onChange={e => setPlantEditForm(f => ({ ...f, transplant_date: e.target.value }))}
+                                 style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: 3 }} />
+                        </label>
+                        <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                          Exp. harvest
+                          <input type="date" value={plantEditForm.expected_harvest}
+                                 onChange={e => setPlantEditForm(f => ({ ...f, expected_harvest: e.target.value }))}
+                                 style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '0.15rem', border: '1px solid #c0d4be', borderRadius: 3 }} />
+                        </label>
+                        <label style={{ fontSize: '0.75rem', color: '#5a7a5a' }}>
+                          Notes
+                          <textarea rows={2} value={plantEditForm.notes}
+                                    onChange={e => setPlantEditForm(f => ({ ...f, notes: e.target.value }))}
+                                    style={{ width: '100%', font: 'inherit', fontSize: '0.75rem', marginTop: 1, padding: '2px 4px', border: '1px solid #c0d4be', borderRadius: 3, resize: 'vertical', boxSizing: 'border-box' }} />
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.3rem' }}>
+                          <button type="submit" className="btn-small" style={{ fontSize: '0.72rem' }}>Save</button>
+                          <button type="button" className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setEditingPlantId(null)}>Cancel</button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ))
+              )}
+              {plantEditSaved && <div style={{ fontSize: '0.75rem', color: '#3a6b35', marginTop: '0.2rem' }}>Saved.</div>}
+            </div>
+          )}
+
           {/* Library plant info */}
           {libInfo && (
             <div style={{ borderTop: '1px solid #d0e0c8', paddingTop: '0.75rem' }}>
@@ -1587,27 +2418,123 @@ export default function Planner() {
                   {libInfo.scientific_name && <div style={{ fontSize: '0.78rem', color: '#7a907a', fontStyle: 'italic' }}>{libInfo.scientific_name}</div>}
                   {libInfo.type && <div style={{ fontSize: '0.72rem', color: '#9ab49a' }}>{libInfo.type}</div>}
                 </div>
-                <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setLibInfo(null)}>Close</button>
+                <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
+                  <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={openLibEdit} title="Edit plant details">✏</button>
+                  <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={openLibImageMode} title="Manage images">🖼</button>
+                  <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => { setLibInfo(null); setLibEditMode(false); setLibImageMode(false); }}>✕</button>
+                </div>
               </div>
-              {libInfo.image_filename && (
-                <img src={`/static/plant_images/${libInfo.image_filename}`} alt={libInfo.name}
-                     style={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 4, marginBottom: '0.4rem' }} />
-              )}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.75rem', fontSize: '0.78rem', color: '#5a7a5a', marginBottom: '0.4rem' }}>
-                {libInfo.sunlight && <span>☀ {libInfo.sunlight}</span>}
-                {libInfo.water && <span>💧 {libInfo.water}</span>}
-                {libInfo.spacing_in && <span>↔ {libInfo.spacing_in}"</span>}
-                {libInfo.days_to_germination && <span>🌱 {libInfo.days_to_germination}d germ.</span>}
-                {libInfo.days_to_harvest && <span>🥕 {libInfo.days_to_harvest}d harvest</span>}
-              </div>
-              {libInfo.companion_plants && (
-                <div style={{ fontSize: '0.75rem', marginBottom: '0.3rem' }}>
-                  <span style={{ fontWeight: 600, color: '#4a6a47' }}>Companions: </span>
-                  <span style={{ color: '#5a7a5a' }}>{libInfo.companion_plants}</span>
+
+              {/* Image section */}
+              {!libImageMode ? (
+                libInfo.image_filename && (
+                  <img src={plantImageUrl(libInfo.image_filename) ?? ''} alt={libInfo.name}
+                       style={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 4, marginBottom: '0.4rem', cursor: 'pointer' }}
+                       onClick={openLibImageMode} title="Click to manage images" />
+                )
+              ) : (
+                <div style={{ marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#3a5c37' }}>Images</span>
+                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                      <label className="btn-small" style={{ fontSize: '0.72rem', cursor: 'pointer' }} title="Upload new image">
+                        + Upload
+                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadLibImage(f); e.target.value = ''; }} />
+                      </label>
+                      <button className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setLibImageMode(false)}>Done</button>
+                    </div>
+                  </div>
+                  {libImages.length === 0 ? (
+                    <p style={{ fontSize: '0.72rem', color: '#9ab49a' }}>No images yet.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {libImages.map(img => (
+                        <div key={img.id} style={{ position: 'relative', border: img.is_primary ? '2px solid #3a6b35' : '2px solid transparent', borderRadius: 4, overflow: 'hidden', cursor: 'pointer' }}
+                             title={img.is_primary ? 'Primary image' : 'Click to set as primary'}
+                             onClick={() => !img.is_primary && setLibPrimaryImage(img.id)}>
+                          <img src={plantImageUrl(img.filename) ?? ''} alt=""
+                               style={{ width: 52, height: 52, objectFit: 'cover', display: 'block' }} />
+                          {img.is_primary && <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(58,107,53,0.8)', fontSize: '0.6rem', color: '#fff', textAlign: 'center' }}>primary</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-              {libInfo.growing_notes && (
-                <div style={{ fontSize: '0.75rem', color: '#5a7a5a', lineHeight: 1.4 }}>{libInfo.growing_notes}</div>
+
+              {/* Edit form */}
+              {libEditMode ? (
+                <form onSubmit={handleLibEditSave} style={{ marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem 0.5rem', fontSize: '0.75rem', marginBottom: '0.4rem' }}>
+                    <label style={{ color: '#5a7a5a' }}>
+                      Sunlight
+                      <select value={libEditForm.sunlight} onChange={e => setLibEditForm(f => ({ ...f, sunlight: e.target.value }))}
+                              style={{ width: '100%', fontSize: '0.75rem', marginTop: 2, padding: '1px 2px' }}>
+                        <option value="">—</option>
+                        <option value="full sun">Full sun</option>
+                        <option value="partial shade">Partial shade</option>
+                        <option value="full shade">Full shade</option>
+                      </select>
+                    </label>
+                    <label style={{ color: '#5a7a5a' }}>
+                      Water
+                      <select value={libEditForm.water} onChange={e => setLibEditForm(f => ({ ...f, water: e.target.value }))}
+                              style={{ width: '100%', fontSize: '0.75rem', marginTop: 2, padding: '1px 2px' }}>
+                        <option value="">—</option>
+                        <option value="low">Low</option>
+                        <option value="moderate">Moderate</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <label style={{ color: '#5a7a5a' }}>
+                      Spacing (in)
+                      <input type="number" min="1" step="1" value={libEditForm.spacing_in}
+                             onChange={e => setLibEditForm(f => ({ ...f, spacing_in: e.target.value }))}
+                             style={{ width: '100%', fontSize: '0.75rem', marginTop: 2, padding: '1px 2px' }} />
+                    </label>
+                    <label style={{ color: '#5a7a5a' }}>
+                      Germ. days
+                      <input type="number" min="1" step="1" value={libEditForm.days_to_germination}
+                             onChange={e => setLibEditForm(f => ({ ...f, days_to_germination: e.target.value }))}
+                             style={{ width: '100%', fontSize: '0.75rem', marginTop: 2, padding: '1px 2px' }} />
+                    </label>
+                    <label style={{ color: '#5a7a5a' }}>
+                      Harvest days
+                      <input type="number" min="1" step="1" value={libEditForm.days_to_harvest}
+                             onChange={e => setLibEditForm(f => ({ ...f, days_to_harvest: e.target.value }))}
+                             style={{ width: '100%', fontSize: '0.75rem', marginTop: 2, padding: '1px 2px' }} />
+                    </label>
+                  </div>
+                  <label style={{ fontSize: '0.75rem', color: '#5a7a5a', display: 'block', marginBottom: '0.3rem' }}>
+                    Notes
+                    <textarea rows={2} value={libEditForm.notes}
+                              onChange={e => setLibEditForm(f => ({ ...f, notes: e.target.value }))}
+                              style={{ width: '100%', fontSize: '0.75rem', marginTop: 2, padding: '2px 4px', resize: 'vertical', boxSizing: 'border-box' }} />
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.3rem' }}>
+                    <button type="submit" className="btn-small" style={{ fontSize: '0.72rem' }}>Save</button>
+                    <button type="button" className="btn-small" style={{ fontSize: '0.72rem' }} onClick={() => setLibEditMode(false)}>Cancel</button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.75rem', fontSize: '0.78rem', color: '#5a7a5a', marginBottom: '0.4rem' }}>
+                    {libInfo.sunlight && <span>☀ {libInfo.sunlight}</span>}
+                    {libInfo.water && <span>💧 {libInfo.water}</span>}
+                    {libInfo.spacing_in && <span>↔ {libInfo.spacing_in}"</span>}
+                    {libInfo.days_to_germination && <span>🌱 {libInfo.days_to_germination}d germ.</span>}
+                    {libInfo.days_to_harvest && <span>🥕 {libInfo.days_to_harvest}d harvest</span>}
+                  </div>
+                  {libInfo.companion_plants && (
+                    <div style={{ fontSize: '0.75rem', marginBottom: '0.3rem' }}>
+                      <span style={{ fontWeight: 600, color: '#4a6a47' }}>Companions: </span>
+                      <span style={{ color: '#5a7a5a' }}>{libInfo.companion_plants}</span>
+                    </div>
+                  )}
+                  {libInfo.growing_notes && (
+                    <div style={{ fontSize: '0.75rem', color: '#5a7a5a', lineHeight: 1.4 }}>{libInfo.growing_notes}</div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1638,6 +2565,42 @@ export default function Planner() {
               p => p.planted_date || p.transplant_date || p.expected_harvest || p.status === 'planning'
             );
 
+            // Group identical plants (same library_id or name) into one timeline row
+            const timelineGroupMap = new Map<string, GardenPlant[]>();
+            for (const p of plantsWithDates) {
+              const key = p.library_id != null ? `lib_${p.library_id}` : `name_${p.name}`;
+              if (!timelineGroupMap.has(key)) timelineGroupMap.set(key, []);
+              timelineGroupMap.get(key)!.push(p);
+            }
+            function addDaysToDate(dateStr: string, days: number): string {
+              const d = new Date(dateStr + 'T12:00:00');
+              d.setDate(d.getDate() + days);
+              return d.toISOString().slice(0, 10);
+            }
+
+            const timelineGroups = [...timelineGroupMap.values()].map(group => {
+              const seedDates    = group.map(p => p.planted_date).filter(Boolean) as string[];
+              const transDates   = group.map(p => p.transplant_date).filter(Boolean) as string[];
+              const harvestDates = group.map(p => p.expected_harvest).filter(Boolean) as string[];
+              // Auto-compute harvest from planted_date + days_to_harvest if no explicit harvest date
+              const autoHarvest = harvestDates.length === 0
+                ? group.map(p => {
+                    const base = p.planted_date || p.transplant_date;
+                    return base && p.days_to_harvest ? addDaysToDate(base, p.days_to_harvest) : null;
+                  }).filter(Boolean) as string[]
+                : [];
+              const allHarvests = [...harvestDates, ...autoHarvest];
+              return {
+                key:         group[0].library_id != null ? `lib_${group[0].library_id}` : `name_${group[0].name}`,
+                name:        group[0].name,
+                count:       group.length,
+                seedDate:    seedDates.length    ? seedDates.sort()[0]               : null,
+                transDate:   transDates.length   ? transDates.sort()[0]              : null,
+                harvestDate: allHarvests.length  ? allHarvests.sort().at(-1)! : null,
+                autoHarvest: harvestDates.length === 0 && autoHarvest.length > 0,
+              };
+            });
+
             return (
               <div>
                 <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#3a5c37', marginBottom: '0.5rem' }}>Plant Timeline</div>
@@ -1649,40 +2612,42 @@ export default function Planner() {
                 {/* Month header */}
                 <div style={{ display: 'flex', marginLeft: 68, position: 'relative', height: 16, marginBottom: 4, borderBottom: '1px solid #d0e0c8' }}>
                   {months.map(m => (
-                    <span key={m.label + m.pct} style={{ position: 'absolute', left: `${m.pct}%`, fontSize: '0.62rem', color: '#9ab49a', transform: 'translateX(-25%)', whiteSpace: 'nowrap' }}>{m.label}</span>
+                    <span key={m.label + m.pct} style={{ position: 'absolute', left: `${m.pct}%`, fontSize: '0.62rem', color: '#9ab49a', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{m.label}</span>
                   ))}
                   <div style={{ position: 'absolute', left: `${todayPct}%`, top: 0, bottom: 0, width: 1, background: '#e05050' }} />
                 </div>
-                {plantsWithDates.length === 0 ? (
+                {timelineGroups.length === 0 ? (
                   <p className="muted" style={{ fontSize: '0.78rem' }}>No plants with dates yet. Set seeding/harvest dates in plant care.</p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {plantsWithDates.map(p => {
-                      const seedPct   = p.planted_date    ? toPct(p.planted_date)    : null;
-                      const transPct  = p.transplant_date ? toPct(p.transplant_date) : null;
-                      const harvestPct = p.expected_harvest ? toPct(p.expected_harvest) : null;
+                    {timelineGroups.map(g => {
+                      const seedPct    = g.seedDate    ? toPct(g.seedDate)    : null;
+                      const transPct   = g.transDate   ? toPct(g.transDate)   : null;
+                      const harvestPct = g.harvestDate ? toPct(g.harvestDate) : null;
 
-                      const seedEnd = transPct ?? (seedPct !== null ? Math.min(100, seedPct + 12) : null);
-                      const growStart = transPct ?? seedPct;
+                      const seedEnd   = transPct ?? (seedPct !== null ? Math.min(100, seedPct + 12) : null);
+                      const growStart = transPct ?? seedEnd;
 
                       return (
-                        <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 20 }}>
-                          <div title={p.name} style={{ width: 64, fontSize: '0.68rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#3a5c37', flexShrink: 0, textAlign: 'right', paddingRight: 4 }}>{p.name}</div>
+                        <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 20 }}>
+                          <div title={g.name} style={{ width: 64, fontSize: '0.68rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#3a5c37', flexShrink: 0, textAlign: 'right', paddingRight: 4 }}>
+                            {g.name}{g.count > 1 && <span style={{ background: '#3a6b35', color: '#fff', borderRadius: '8px', padding: '0 3px', fontSize: '0.6rem', marginLeft: 2 }}>×{g.count}</span>}
+                          </div>
                           <div style={{ flex: 1, position: 'relative', height: 12, background: '#edf4eb', borderRadius: 3, overflow: 'visible' }}>
                             {/* Seeding bar */}
                             {seedPct !== null && seedEnd !== null && (
-                              <div title={`Seeded: ${p.planted_date}${p.transplant_date ? ' → ' + p.transplant_date : ''}`}
+                              <div title={`Seeded: ${g.seedDate}${g.transDate ? ' → ' + g.transDate : ''}`}
                                 style={{ position: 'absolute', left: `${seedPct}%`, width: `${Math.max(1, seedEnd - seedPct)}%`, height: '100%', background: '#4a80b4', borderRadius: 2, opacity: 0.85 }} />
                             )}
                             {/* Growing bar */}
                             {growStart !== null && harvestPct !== null && harvestPct > growStart && (
-                              <div title={`Growing → harvest: ${p.expected_harvest}`}
-                                style={{ position: 'absolute', left: `${growStart}%`, width: `${Math.max(1, harvestPct - growStart)}%`, height: '100%', background: '#5a9e54', borderRadius: 2, opacity: 0.85 }} />
+                              <div title={`Growing → ${g.autoHarvest ? 'est. ' : ''}harvest: ${g.harvestDate}`}
+                                style={{ position: 'absolute', left: `${growStart}%`, width: `${Math.max(1, harvestPct - growStart)}%`, height: '100%', background: '#5a9e54', borderRadius: 2, opacity: g.autoHarvest ? 0.55 : 0.85 }} />
                             )}
                             {/* Harvest marker */}
                             {harvestPct !== null && (
-                              <div title={`Expected harvest: ${p.expected_harvest}`}
-                                style={{ position: 'absolute', left: `${harvestPct}%`, top: -3, transform: 'translateX(-50%)', fontSize: '0.75rem', lineHeight: 1, zIndex: 2, pointerEvents: 'none' }}>🥕</div>
+                              <div title={`${g.autoHarvest ? 'Est. harvest' : 'Expected harvest'}: ${g.harvestDate}`}
+                                style={{ position: 'absolute', left: `${harvestPct}%`, top: -3, transform: 'translateX(-50%)', fontSize: '0.75rem', lineHeight: 1, zIndex: 2, pointerEvents: 'none', opacity: g.autoHarvest ? 0.6 : 1 }}>🥕</div>
                             )}
                             {/* Today line */}
                             <div style={{ position: 'absolute', left: `${todayPct}%`, top: -2, bottom: -2, width: 1, background: '#e05050', zIndex: 1 }} />
@@ -1791,6 +2756,28 @@ export default function Planner() {
 
           </div>
         </aside>
+      )}
+
+      {/* ── Help Modal ──────────────────────────────────────────────────────── */}
+      {showHelp && (
+        <div onClick={() => setShowHelp(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', maxWidth: 420, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', position: 'relative', maxHeight: '80vh', overflowY: 'auto' }}>
+            <button onClick={() => setShowHelp(false)} style={{ position: 'absolute', top: 10, right: 12, background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#7a907a', lineHeight: 1 }}>×</button>
+            <div style={{ fontWeight: 700, fontSize: '1rem', color: '#3a5c37', marginBottom: '1rem' }}>Garden Planner Help</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', fontSize: '0.82rem', color: '#3a5c37' }}>
+              <div><strong>Placing beds</strong><br />Drag a bed from the sidebar onto the canvas. Placed beds can be dragged to reposition. Unplaced beds show a ⋮⋮ handle.</div>
+              <div><strong>Planting on canvas (circles)</strong><br />Select a plant from Library Plants, then drag it onto the canvas. A coloured circle appears — drag to move, drag the bottom-right corner to resize.</div>
+              <div><strong>Planting in a bed grid</strong><br />Select a plant, then click any empty grid cell inside a bed. Spacing determines how many cells the plant occupies.</div>
+              <div><strong>Plant care & dates</strong><br />Click a plant circle or grid chip to open the Info panel. Set Seeded, Transplanted, and harvest dates there — they appear on the Timeline.</div>
+              <div><strong>Timeline tab</strong><br />Shows each unique plant as one row. Multiple instances of the same plant are merged and labelled with a count badge (×N).</div>
+              <div><strong>Calendar tab</strong><br />Displays tasks for this garden by month. Use "+ Add Task" to schedule reminders.</div>
+              <div><strong>Drawing tools</strong><br />Use Quick objects (Path, Fence, etc.) or the shape tools to annotate your garden. Style controls appear when a tool is active.</div>
+              <div><strong>Add plant to list (no canvas)</strong><br />Click the <strong>+</strong> button next to any Library Plant to add it to "Plants in Garden" without placing it on the canvas. Useful for tracking plants not yet placed.</div>
+              <div><strong>Canvas & bed colours</strong><br />Use the Canvas colour swatch in the sidebar to change the background colour. Upload a background image with the 🖼 button. To change a bed's colour or image, select the bed and click "✎ Edit Bed" in the right panel.</div>
+              <div><strong>Zoom</strong><br />Use the 0.5×–1.5× zoom buttons in the sidebar. The canvas size adjusts automatically.</div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

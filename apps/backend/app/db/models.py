@@ -42,6 +42,8 @@ class Garden(Base):
     watering_frequency_days = Column(Integer, nullable=True, default=7)
     water_source           = Column(String(30), nullable=True)  # rain/hose/drip/sprinkler
     background_image       = Column(String(200), nullable=True)
+    background_color       = Column(String(20), nullable=True)
+    background_pattern     = Column(String(30), nullable=True)   # 'grass'|'mulch'|'wood_chips'|'straw'|'dirt'
     annotations            = Column(Text, nullable=True)
 
     beds         = relationship('GardenBed', backref='garden', lazy=True)
@@ -62,17 +64,21 @@ class GardenBed(Base):
     name        = Column(String(100), nullable=False)
     description = Column(Text)
     location    = Column(String(200))
-    garden_id   = Column(Integer, ForeignKey('garden.id'), nullable=True)
+    garden_id   = Column(Integer, ForeignKey('garden.id'), nullable=True, index=True)
     width_ft    = Column(Float, nullable=False, default=4.0)
     height_ft   = Column(Float, nullable=False, default=8.0)
     depth_ft    = Column(Float, nullable=True)
     pos_x       = Column(Float, nullable=False, default=0.0)
     pos_y       = Column(Float, nullable=False, default=0.0)
-    soil_notes  = Column(Text, nullable=True)
-    soil_ph     = Column(Float, nullable=True)
-    clay_pct    = Column(Float, nullable=True)
-    compost_pct = Column(Float, nullable=True)
-    sand_pct    = Column(Float, nullable=True)
+    soil_notes       = Column(Text, nullable=True)
+    soil_ph          = Column(Float, nullable=True)
+    clay_pct         = Column(Float, nullable=True)
+    compost_pct      = Column(Float, nullable=True)
+    sand_pct         = Column(Float, nullable=True)
+    color               = Column(String(20), nullable=True)
+    background_image    = Column(String(200), nullable=True)
+    background_pattern  = Column(String(30), nullable=True)   # 'grass'|'mulch'|'wood_chips'|'straw'|'dirt'
+    last_weeded         = Column(Date, nullable=True)
 
     bed_plants = relationship('BedPlant', backref='bed', lazy=True, cascade='all, delete-orphan')
     bed_tasks  = relationship('Task', backref='task_bed',
@@ -93,8 +99,13 @@ class Plant(Base):
     transplant_date  = Column(Date)
     expected_harvest = Column(Date)
     status           = Column(String(20), nullable=False, default='planning')
-    library_id       = Column(Integer, ForeignKey('plant_library.id'), nullable=True)
-    garden_id        = Column(Integer, ForeignKey('garden.id'), nullable=True)
+    last_watered     = Column(Date, nullable=True)
+    watering_amount  = Column(String(20), nullable=True)   # 'light' | 'moderate' | 'heavy'
+    last_fertilized  = Column(Date, nullable=True)
+    fertilizer_type  = Column(String(50), nullable=True)   # balanced/nitrogen/phosphorus/potassium/organic/other
+    fertilizer_npk   = Column(String(20), nullable=True)   # e.g. '10-10-10'
+    library_id       = Column(Integer, ForeignKey('plant_library.id'), nullable=True, index=True)
+    garden_id        = Column(Integer, ForeignKey('garden.id'), nullable=True, index=True)
 
     library_entry = relationship('PlantLibrary', backref='plants', lazy=True)
     tasks         = relationship('Task', backref='plant', lazy=True)
@@ -108,15 +119,18 @@ class BedPlant(Base):
     __tablename__ = 'bed_plant'
 
     id             = Column(Integer, primary_key=True)
-    bed_id         = Column(Integer, ForeignKey('garden_bed.id'), nullable=False)
-    plant_id       = Column(Integer, ForeignKey('plant.id'), nullable=False)
+    bed_id         = Column(Integer, ForeignKey('garden_bed.id'), nullable=False, index=True)
+    plant_id       = Column(Integer, ForeignKey('plant.id'), nullable=False, index=True)
     grid_x         = Column(Integer, nullable=True)
     grid_y         = Column(Integer, nullable=True)
-    last_watered   = Column(Date, nullable=True)
-    last_fertilized = Column(Date, nullable=True)
-    last_harvest   = Column(Date, nullable=True)
-    health_notes   = Column(Text, nullable=True)
-    stage          = Column(String(20), nullable=True, default='seedling')
+    last_watered     = Column(Date, nullable=True)
+    watering_amount  = Column(String(20), nullable=True)
+    last_fertilized  = Column(Date, nullable=True)
+    fertilizer_type  = Column(String(50), nullable=True)
+    fertilizer_npk   = Column(String(20), nullable=True)
+    last_harvest     = Column(Date, nullable=True)
+    health_notes     = Column(Text, nullable=True)
+    stage            = Column(String(20), nullable=True, default='seedling')
 
     def __repr__(self):
         return f'<BedPlant bed={self.bed_id} plant={self.plant_id}>'
@@ -219,9 +233,15 @@ class PlantLibrary(Base):
     fruiting_season     = Column(String(50), nullable=True)
     pruning_months      = Column(Text, nullable=True)      # JSON array
 
+    # Custom / cloned plant tracking
+    cloned_from_id = Column(Integer, ForeignKey('plant_library.id'), nullable=True)
+    is_custom      = Column(Boolean, default=False)
+
     images = relationship('PlantLibraryImage', backref='library_entry',
                           lazy=True, cascade='all, delete-orphan',
                           order_by='PlantLibraryImage.created_at')
+    cloned_from = relationship('PlantLibrary', remote_side='PlantLibrary.id',
+                               foreign_keys='PlantLibrary.cloned_from_id')
 
     def __repr__(self):
         return f'<PlantLibrary {self.name}>'
@@ -248,9 +268,9 @@ class CanvasPlant(Base):
     __tablename__ = 'canvas_plant'
 
     id           = Column(Integer, primary_key=True)
-    garden_id    = Column(Integer, ForeignKey('garden.id'), nullable=False)
-    library_id   = Column(Integer, ForeignKey('plant_library.id'), nullable=True)
-    plant_id     = Column(Integer, ForeignKey('plant.id'), nullable=True)
+    garden_id    = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    library_id   = Column(Integer, ForeignKey('plant_library.id'), nullable=True, index=True)
+    plant_id     = Column(Integer, ForeignKey('plant.id'), nullable=True, index=True)
     pos_x        = Column(Float, nullable=False, default=0.0)
     pos_y        = Column(Float, nullable=False, default=0.0)
     radius_ft    = Column(Float, nullable=False, default=1.0)
@@ -288,9 +308,9 @@ class Task(Base):
     completed_date = Column(Date, nullable=True)
     task_type      = Column(String(30), nullable=False, default='other')
     # task_type: seeding, transplanting, weeding, watering, fertilizing, mulching, harvest, other
-    plant_id  = Column(Integer, ForeignKey('plant.id'), nullable=True)
-    garden_id = Column(Integer, ForeignKey('garden.id'), nullable=True)
-    bed_id    = Column(Integer, ForeignKey('garden_bed.id'), nullable=True)
+    plant_id  = Column(Integer, ForeignKey('plant.id'), nullable=True, index=True)
+    garden_id = Column(Integer, ForeignKey('garden.id'), nullable=True, index=True)
+    bed_id    = Column(Integer, ForeignKey('garden_bed.id'), nullable=True, index=True)
 
     def __repr__(self):
         return f'<Task {self.title}>'

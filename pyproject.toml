@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart",
     "sqlalchemy",
     "apscheduler>=3.10",
+    "google-cloud-storage>=2.14",
 ]
 
 [project.optional-dependencies]

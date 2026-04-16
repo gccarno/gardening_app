@@ -1,15 +1,22 @@
 """
 Bed and BedPlant API routes.
 """
+import logging
+import os
+import time
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy.orm import Session, joinedload
 
 from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary
+
+logger = logging.getLogger(__name__)
 from ..db.session import get_db
-from ..services.helpers import get_or_404
+from ..services.helpers import STATIC_DIR, get_or_404
+
+_ALLOWED_IMG_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
 router = APIRouter(prefix='/api', tags=['beds'])
 
@@ -83,7 +90,19 @@ def api_delete_bed(bed_id: int, db: Session = Depends(get_db)):
 
 @router.get('/beds/{bed_id}/grid')
 def api_bed_grid(bed_id: int, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+    t0 = time.monotonic()
+    bed = (
+        db.query(GardenBed)
+        .options(
+            joinedload(GardenBed.bed_plants)
+            .joinedload(BedPlant.plant)
+            .joinedload(Plant.library_entry)
+        )
+        .filter(GardenBed.id == bed_id)
+        .first()
+    )
+    if not bed:
+        raise HTTPException(status_code=404, detail='Not found')
     placed = []
     for bp in bed.bed_plants:
         if bp.grid_x is None or bp.grid_y is None:
@@ -98,6 +117,7 @@ def api_bed_grid(bed_id: int, db: Session = Depends(get_db)):
             'grid_x':         bp.grid_x,
             'grid_y':         bp.grid_y,
         })
+    logger.info('[bed_grid] bed %d: %d placed in %.0fms', bed_id, len(placed), (time.monotonic() - t0) * 1000)
     return {
         'bed': {'id': bed.id, 'name': bed.name,
                 'width_ft': bed.width_ft, 'height_ft': bed.height_ft},
@@ -197,11 +217,19 @@ def api_bedplants_bulk_care(body: dict, db: Session = Depends(get_db)):
         if not bp:
             continue
         if 'last_watered'    in body: bp.last_watered    = _d(body['last_watered'])
+        if 'watering_amount' in body: bp.watering_amount = body.get('watering_amount') or None
         if 'last_fertilized' in body: bp.last_fertilized = _d(body['last_fertilized'])
+        if 'fertilizer_type' in body: bp.fertilizer_type = body.get('fertilizer_type') or None
+        if 'fertilizer_npk'  in body: bp.fertilizer_npk  = body.get('fertilizer_npk') or None
         if 'last_harvest'    in body: bp.last_harvest    = _d(body['last_harvest'])
         if 'health_notes'    in body: bp.health_notes    = body['health_notes'] or None
         if 'stage'           in body: bp.stage           = body['stage'] or None
         if bp.plant:
+            if 'last_watered'    in body: bp.plant.last_watered    = _d(body['last_watered'])
+            if 'watering_amount' in body: bp.plant.watering_amount = body.get('watering_amount') or None
+            if 'last_fertilized' in body: bp.plant.last_fertilized = _d(body['last_fertilized'])
+            if 'fertilizer_type' in body: bp.plant.fertilizer_type = body.get('fertilizer_type') or None
+            if 'fertilizer_npk'  in body: bp.plant.fertilizer_npk  = body.get('fertilizer_npk') or None
             if 'planted_date'    in body: bp.plant.planted_date    = _d(body['planted_date'])
             if 'transplant_date' in body: bp.plant.transplant_date = _d(body['transplant_date'])
             if 'plant_notes'     in body: bp.plant.notes           = body['plant_notes'] or None
@@ -282,18 +310,27 @@ def _serialize_bed(b: GardenBed) -> dict:
         'clay_pct':    b.clay_pct,
         'compost_pct': b.compost_pct,
         'sand_pct':    b.sand_pct,
-        'pos_x':       b.pos_x,
-        'pos_y':       b.pos_y,
-        'plant_count': len(b.bed_plants),
+        'pos_x':            b.pos_x,
+        'pos_y':            b.pos_y,
+        'plant_count':      len(b.bed_plants),
+        'color':               b.color,
+        'background_image':    b.background_image,
+        'background_pattern':  b.background_pattern,
+        'last_weeded':         b.last_weeded.isoformat() if b.last_weeded else None,
     }
 
 
 @router.get('/beds')
 def api_beds_list(garden_id: Optional[int] = None, db: Session = Depends(get_db)):
-    q = db.query(GardenBed)
+    t0 = time.monotonic()
+    q = db.query(GardenBed).options(
+        joinedload(GardenBed.garden),
+        joinedload(GardenBed.bed_plants),
+    )
     if garden_id:
         q = q.filter(GardenBed.garden_id == garden_id)
     beds = q.order_by(GardenBed.name).all()
+    logger.info('[beds_list] %d beds in %.0fms', len(beds), (time.monotonic() - t0) * 1000)
     return [_serialize_bed(b) for b in beds]
 
 
@@ -313,5 +350,54 @@ def api_bed_update(bed_id: int, body: dict, db: Session = Depends(get_db)):
     if 'width_ft'  in body and body['width_ft']:  bed.width_ft  = float(body['width_ft'])
     if 'height_ft' in body and body['height_ft']: bed.height_ft = float(body['height_ft'])
     if 'name'      in body and body['name']:       bed.name      = body['name']
+    if 'color'              in body: bed.color              = body.get('color') or None
+    if 'background_pattern' in body: bed.background_pattern = body.get('background_pattern') or None
+    if 'last_weeded' in body:
+        v = body.get('last_weeded')
+        bed.last_weeded = date.fromisoformat(v) if v else None
     db.commit()
     return _serialize_bed(bed)
+
+
+# ── Bed background image ───────────────────────────────────────────────────────
+
+@router.post('/beds/{bed_id}/upload-background')
+async def upload_bed_background(
+    bed_id: int,
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    bed = get_or_404(db, GardenBed, bed_id)
+    ext = os.path.splitext(image.filename or '')[1].lower()
+    if ext not in _ALLOWED_IMG_EXTS:
+        raise HTTPException(status_code=400, detail='Unsupported file type')
+
+    bg_dir = STATIC_DIR / 'bed_images'
+    bg_dir.mkdir(parents=True, exist_ok=True)
+
+    if bed.background_image:
+        old_path = bg_dir / bed.background_image
+        if old_path.exists():
+            old_path.unlink()
+
+    filename = f'bed_{bed_id}{ext}'
+    dest = bg_dir / filename
+    contents = await image.read()
+    dest.write_bytes(contents)
+
+    bed.background_image = filename
+    db.commit()
+    return {'filename': filename, 'url': f'/static/bed_images/{filename}'}
+
+
+@router.post('/beds/{bed_id}/remove-background')
+def remove_bed_background(bed_id: int, db: Session = Depends(get_db)):
+    bed = get_or_404(db, GardenBed, bed_id)
+    if bed.background_image:
+        bg_dir = STATIC_DIR / 'bed_images'
+        old_path = bg_dir / bed.background_image
+        if old_path.exists():
+            old_path.unlink()
+        bed.background_image = None
+        db.commit()
+    return {'ok': True}
