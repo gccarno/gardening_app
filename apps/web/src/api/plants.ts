@@ -15,6 +15,11 @@ export interface Plant {
   scientific_name?: string;
   sunlight?: string;
   days_to_harvest?: number;
+  days_to_germination?: number;
+  sow_indoor_weeks?: number;
+  direct_sow_offset?: number;
+  transplant_offset?: number;
+  temp_max_f?: number;
   bed_names?: string[];
 }
 

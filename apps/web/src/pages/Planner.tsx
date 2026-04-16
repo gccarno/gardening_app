@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useGardens, useGarden } from '../hooks/useGardens';
 import ChatWidget from '../components/ChatWidget';
 import { plantImageUrl } from '../utils/images';
+import GanttChart, { type GanttRow } from '../components/GanttChart';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PX = 60; // px per foot at zoom=1
@@ -91,7 +92,9 @@ interface GardenPlant {
   id: number; name: string; library_id?: number; image_filename?: string;
   spacing_in?: number; status?: string; notes?: string;
   planted_date?: string; transplant_date?: string; expected_harvest?: string;
-  type?: string; days_to_harvest?: number;
+  type?: string; days_to_harvest?: number; days_to_germination?: number;
+  sow_indoor_weeks?: number; direct_sow_offset?: number;
+  transplant_offset?: number; temp_max_f?: number;
   last_watered?: string; watering_amount?: string;
   last_fertilized?: string; fertilizer_type?: string; fertilizer_npk?: string;
 }
@@ -2543,130 +2546,48 @@ export default function Planner() {
 
           {/* ── Timeline tab ── */}
           {rightPanelTab === 'timeline' && (() => {
-            const today = new Date();
-            const startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            const endDate   = new Date(today.getFullYear(), today.getMonth() + 7, 0);
-            const totalMs   = endDate.getTime() - startDate.getTime();
-
-            function toPct(dateStr: string) {
-              const d = new Date(dateStr + 'T12:00:00');
-              return Math.max(0, Math.min(100, (d.getTime() - startDate.getTime()) / totalMs * 100));
-            }
-
-            const months: { label: string; pct: number }[] = [];
-            const cur = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-            while (cur <= endDate) {
-              months.push({ label: cur.toLocaleDateString('en-US', { month: 'short' }), pct: (cur.getTime() - startDate.getTime()) / totalMs * 100 });
-              cur.setMonth(cur.getMonth() + 1);
-            }
-
-            const todayPct = toPct(today.toISOString().slice(0, 10));
-            const plantsWithDates = gardenPlants.filter(
-              p => p.planted_date || p.transplant_date || p.expected_harvest || p.status === 'planning'
-            );
-
-            // Group identical plants (same library_id or name) into one timeline row
-            const timelineGroupMap = new Map<string, GardenPlant[]>();
-            for (const p of plantsWithDates) {
+            const groupMap = new Map<string, GardenPlant[]>();
+            for (const p of gardenPlants) {
               const key = p.library_id != null ? `lib_${p.library_id}` : `name_${p.name}`;
-              if (!timelineGroupMap.has(key)) timelineGroupMap.set(key, []);
-              timelineGroupMap.get(key)!.push(p);
+              if (!groupMap.has(key)) groupMap.set(key, []);
+              groupMap.get(key)!.push(p);
             }
-            function addDaysToDate(dateStr: string, days: number): string {
-              const d = new Date(dateStr + 'T12:00:00');
-              d.setDate(d.getDate() + days);
-              return d.toISOString().slice(0, 10);
-            }
-
-            const timelineGroups = [...timelineGroupMap.values()].map(group => {
-              const seedDates    = group.map(p => p.planted_date).filter(Boolean) as string[];
-              const transDates   = group.map(p => p.transplant_date).filter(Boolean) as string[];
-              const harvestDates = group.map(p => p.expected_harvest).filter(Boolean) as string[];
-              // Auto-compute harvest from planted_date + days_to_harvest if no explicit harvest date
-              const autoHarvest = harvestDates.length === 0
-                ? group.map(p => {
-                    const base = p.planted_date || p.transplant_date;
-                    return base && p.days_to_harvest ? addDaysToDate(base, p.days_to_harvest) : null;
-                  }).filter(Boolean) as string[]
-                : [];
-              const allHarvests = [...harvestDates, ...autoHarvest];
+            const ganttRows: GanttRow[] = [...groupMap.values()].map(group => {
+              const planted    = group.map(p => p.planted_date).filter(Boolean).sort()[0] ?? null;
+              const transplant = group.map(p => p.transplant_date).filter(Boolean).sort()[0] ?? null;
+              const harvest    = group.map(p => p.expected_harvest).filter(Boolean).sort().at(-1) ?? null;
+              const rep = group[0];
+              // Determine status: if any are growing treat as growing
+              const status = group.some(p => p.status === 'growing') ? 'growing' : (rep.status || 'planning');
               return {
-                key:         group[0].library_id != null ? `lib_${group[0].library_id}` : `name_${group[0].name}`,
-                name:        group[0].name,
-                count:       group.length,
-                seedDate:    seedDates.length    ? seedDates.sort()[0]               : null,
-                transDate:   transDates.length   ? transDates.sort()[0]              : null,
-                harvestDate: allHarvests.length  ? allHarvests.sort().at(-1)! : null,
-                autoHarvest: harvestDates.length === 0 && autoHarvest.length > 0,
+                id: rep.id,
+                name: rep.name,
+                count: group.length,
+                status,
+                planted: planted ?? null,
+                harvest: harvest ?? null,
+                transplant: transplant ?? null,
+                germDays: rep.days_to_germination ?? null,
+                daysToHarvest: rep.days_to_harvest ?? null,
+                sowIndoorWeeks: rep.sow_indoor_weeks ?? null,
+                directSowOffset: rep.direct_sow_offset ?? null,
+                transplantOffset: rep.transplant_offset ?? null,
+                tempMaxF: rep.temp_max_f ?? null,
+                href: `/plants/${rep.id}`,
               };
             });
+
+            const lastFrost = garden?.last_frost_date ? new Date(garden.last_frost_date + 'T00:00:00') : null;
+            const firstFallFrost = garden?.first_frost_date ? new Date(garden.first_frost_date + 'T00:00:00') : null;
 
             return (
               <div>
                 <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#3a5c37', marginBottom: '0.5rem' }}>Plant Timeline</div>
-                <div style={{ fontSize: '0.68rem', color: '#9ab49a', marginBottom: '0.4rem' }}>
-                  <span style={{ display: 'inline-block', width: 10, height: 8, background: '#4a80b4', borderRadius: 2, marginRight: 3 }} />Seeding &nbsp;
-                  <span style={{ display: 'inline-block', width: 10, height: 8, background: '#5a9e54', borderRadius: 2, marginRight: 3 }} />Growing &nbsp;
-                  🥕 Harvest
-                </div>
-                {/* Month header */}
-                <div style={{ display: 'flex', marginLeft: 68, position: 'relative', height: 16, marginBottom: 4, borderBottom: '1px solid #d0e0c8' }}>
-                  {months.map(m => (
-                    <span key={m.label + m.pct} style={{ position: 'absolute', left: `${m.pct}%`, fontSize: '0.62rem', color: '#9ab49a', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{m.label}</span>
-                  ))}
-                  <div style={{ position: 'absolute', left: `${todayPct}%`, top: 0, bottom: 0, width: 1, background: '#e05050' }} />
-                </div>
-                {timelineGroups.length === 0 ? (
-                  <p className="muted" style={{ fontSize: '0.78rem' }}>No plants with dates yet. Set seeding/harvest dates in plant care.</p>
+                {ganttRows.length === 0 ? (
+                  <p className="muted" style={{ fontSize: '0.78rem' }}>No plants yet. Add plants to see the timeline.</p>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {timelineGroups.map(g => {
-                      const seedPct    = g.seedDate    ? toPct(g.seedDate)    : null;
-                      const transPct   = g.transDate   ? toPct(g.transDate)   : null;
-                      const harvestPct = g.harvestDate ? toPct(g.harvestDate) : null;
-
-                      const seedEnd   = transPct ?? (seedPct !== null ? Math.min(100, seedPct + 12) : null);
-                      const growStart = transPct ?? seedEnd;
-
-                      return (
-                        <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 20 }}>
-                          <div title={g.name} style={{ width: 64, fontSize: '0.68rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#3a5c37', flexShrink: 0, textAlign: 'right', paddingRight: 4 }}>
-                            {g.name}{g.count > 1 && <span style={{ background: '#3a6b35', color: '#fff', borderRadius: '8px', padding: '0 3px', fontSize: '0.6rem', marginLeft: 2 }}>×{g.count}</span>}
-                          </div>
-                          <div style={{ flex: 1, position: 'relative', height: 12, background: '#edf4eb', borderRadius: 3, overflow: 'visible' }}>
-                            {/* Seeding bar */}
-                            {seedPct !== null && seedEnd !== null && (
-                              <div title={`Seeded: ${g.seedDate}${g.transDate ? ' → ' + g.transDate : ''}`}
-                                style={{ position: 'absolute', left: `${seedPct}%`, width: `${Math.max(1, seedEnd - seedPct)}%`, height: '100%', background: '#4a80b4', borderRadius: 2, opacity: 0.85 }} />
-                            )}
-                            {/* Growing bar */}
-                            {growStart !== null && harvestPct !== null && harvestPct > growStart && (
-                              <div title={`Growing → ${g.autoHarvest ? 'est. ' : ''}harvest: ${g.harvestDate}`}
-                                style={{ position: 'absolute', left: `${growStart}%`, width: `${Math.max(1, harvestPct - growStart)}%`, height: '100%', background: '#5a9e54', borderRadius: 2, opacity: g.autoHarvest ? 0.55 : 0.85 }} />
-                            )}
-                            {/* Harvest marker */}
-                            {harvestPct !== null && (
-                              <div title={`${g.autoHarvest ? 'Est. harvest' : 'Expected harvest'}: ${g.harvestDate}`}
-                                style={{ position: 'absolute', left: `${harvestPct}%`, top: -3, transform: 'translateX(-50%)', fontSize: '0.75rem', lineHeight: 1, zIndex: 2, pointerEvents: 'none', opacity: g.autoHarvest ? 0.6 : 1 }}>🥕</div>
-                            )}
-                            {/* Today line */}
-                            <div style={{ position: 'absolute', left: `${todayPct}%`, top: -2, bottom: -2, width: 1, background: '#e05050', zIndex: 1 }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <GanttChart rows={ganttRows} filter="all" lastFrost={lastFrost} firstFallFrost={firstFallFrost} />
                 )}
-                {(() => {
-                  const noDateGrowing = gardenPlants.filter(
-                    p => p.status !== 'planning' && !p.planted_date && !p.transplant_date && !p.expected_harvest
-                  ).length;
-                  return noDateGrowing > 0 ? (
-                    <p style={{ fontSize: '0.72rem', color: '#9ab49a', marginTop: '0.5rem' }}>
-                      {noDateGrowing} growing plant(s) have no dates set.
-                    </p>
-                  ) : null;
-                })()}
               </div>
             );
           })()}

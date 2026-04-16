@@ -1,8 +1,11 @@
+import logging
+import logging.handlers
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
@@ -11,6 +14,22 @@ from .db.session import engine
 from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat
 from .routers.weather import run_daily_weather_fetch
 from .jobs.gcs_backup import run_backup as run_gcs_backup
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+_LOG_DIR = Path(__file__).parents[4] / 'logs'
+_LOG_DIR.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s  %(levelname)-8s  %(name)s  %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(
+            _LOG_DIR / 'startup.log', maxBytes=1_000_000, backupCount=3
+        ),
+    ],
+)
+logger = logging.getLogger('garden.main')
 
 _GARDEN_MIGRATIONS = [
     ('first_frost_date',           'ALTER TABLE garden ADD COLUMN first_frost_date DATE'),
@@ -30,6 +49,7 @@ _PLANT_LIBRARY_MIGRATIONS = [
 
 
 def _run_migrations():
+    t0 = time.perf_counter()
     with engine.connect() as conn:
         from sqlalchemy import text
         cols = [row[1] for row in conn.execute(text('PRAGMA table_info(garden)'))]
@@ -37,28 +57,38 @@ def _run_migrations():
             if col not in cols:
                 conn.execute(text(ddl))
                 conn.commit()
-                print(f'[migration] Added garden.{col}')
+                logger.info('[migration] Added garden.%s', col)
         lib_cols = [row[1] for row in conn.execute(text('PRAGMA table_info(plant_library)'))]
         for col, ddl in _PLANT_LIBRARY_MIGRATIONS:
             if col not in lib_cols:
                 conn.execute(text(ddl))
                 conn.commit()
-                print(f'[migration] Added plant_library.{col}')
+                logger.info('[migration] Added plant_library.%s', col)
+    logger.info('[startup] migrations done — %.0fms', (time.perf_counter() - t0) * 1000)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    t_start = time.perf_counter()
+    logger.info('[startup] begin')
+
     _run_migrations()
+
+    t_sched = time.perf_counter()
     scheduler = BackgroundScheduler()
-    # Fetch weather for all gardens daily at 2 AM; also runs once shortly after startup.
+    # Fetch weather for all gardens daily at 2 AM.
     scheduler.add_job(run_daily_weather_fetch, 'cron', hour=2, minute=0)
-    scheduler.add_job(run_daily_weather_fetch, 'date')  # run once at startup
+    # NOTE: removed immediate startup weather fetch — it made external HTTP calls
+    # (open-meteo) on every restart, slowing startup. The nightly cron is sufficient.
     scheduler.add_job(run_gcs_backup, 'cron', hour=3, minute=0)
     scheduler.start()
-    print('[scheduler] Daily weather collection and GCS backup scheduled.')
+    logger.info('[startup] scheduler started — %.0fms', (time.perf_counter() - t_sched) * 1000)
+    logger.info('[startup] app ready — %.0fms total', (time.perf_counter() - t_start) * 1000)
+
     yield
+
     scheduler.shutdown()
-    print('[scheduler] Scheduler stopped.')
+    logger.info('[shutdown] scheduler stopped')
 
 
 app = FastAPI(
@@ -74,6 +104,16 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+
+@app.middleware('http')
+async def log_slow_requests(request: Request, call_next):
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    ms = (time.perf_counter() - t0) * 1000
+    if ms > 200:
+        logger.warning('SLOW %s %s — %.0fms', request.method, request.url.path, ms)
+    return response
 
 app.include_router(gardens.router)
 app.include_router(weather.router)

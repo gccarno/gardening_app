@@ -242,15 +242,36 @@ export default function PlantDetail() {
         <section style={{ marginTop: '1.25rem' }}>
           {howToGrow ? (
             <div className="howto-stages">
-              {HOW_TO_STAGES.filter(([key]) => howToGrow[key]).map(([key, icon, label]) => (
-                <div key={key} className="howto-stage">
-                  <div className="howto-stage-icon">{icon}</div>
-                  <div className="howto-stage-body">
-                    <h3 className="howto-stage-title">{label}</h3>
-                    <p>{howToGrow[key]}</p>
+              {HOW_TO_STAGES.filter(([key]) => howToGrow[key]).map(([key, icon, label]) => {
+                const chips: string[] = [];
+                if (key === 'starting') {
+                  if (entry.days_to_germination) chips.push(`🕐 ~${entry.days_to_germination as number} days to germinate`);
+                  if (entry.sow_indoor_weeks) chips.push(`🪴 Start ${entry.sow_indoor_weeks as number} wks before last frost`);
+                }
+                if (key === 'seedling' && entry.sow_indoor_weeks) {
+                  chips.push('⏱ Harden off 7–14 days before transplanting');
+                }
+                if (key === 'vegetative' && entry.water) {
+                  chips.push(`💧 ${entry.water as string} watering`);
+                }
+                if (key === 'harvest' && entry.days_to_harvest) {
+                  chips.push(`🗓 ~${entry.days_to_harvest as number} days from planting`);
+                }
+                return (
+                  <div key={key} className="howto-stage">
+                    <div className="howto-stage-icon">{icon}</div>
+                    <div className="howto-stage-body">
+                      <h3 className="howto-stage-title">{label}</h3>
+                      {chips.length > 0 && (
+                        <div className="howto-timing-chips">
+                          {chips.map((c, i) => <span key={i} className="howto-timing-chip">{c}</span>)}
+                        </div>
+                      )}
+                      <p>{howToGrow[key]}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : <p className="muted">Growing guide not yet available for this plant.</p>}
         </section>

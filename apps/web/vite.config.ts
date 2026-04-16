@@ -8,11 +8,11 @@ export default defineConfig({
     proxy: {
       // All API calls and static files (images, CSS) go through FastAPI on port 8000
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/static': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

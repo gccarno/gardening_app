@@ -13,6 +13,7 @@ export interface Garden {
   usda_zone?: string;
   zone_temp_range?: string;
   last_frost_date?: string;
+  first_frost_date?: string;
   watering_frequency_days?: number;
   water_source?: string;
   background_image?: string;

@@ -5,104 +5,41 @@ import { usePlants, useCreatePlant, useDeletePlant, useSetPlantStatus } from '..
 import { useTasks, useToggleTask } from '../hooks/useTasks';
 import type { Plant } from '../api/plants';
 import { plantImageUrl } from '../utils/images';
+import GanttChart, { type GanttRow } from '../components/GanttChart';
 
 type Tab = 'planning' | 'growing' | 'reminder' | 'timeline';
 
-function parseDate(s: string | null | undefined): Date | null {
-  return s ? new Date(s + 'T00:00:00') : null;
-}
-function addDays(d: Date, n: number): Date {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r;
-}
-function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
-function fmtDate(d: Date) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
-
-interface GanttRow {
-  id: number; name: string; status: string;
-  planted: string | null; harvest: string | null; transplant: string | null;
-  germDays: number | null; daysToHarvest: number | null;
-}
-
-function GanttChart({ rows, filter }: { rows: GanttRow[]; filter: string }) {
-  const today = new Date();
-  const year = today.getFullYear();
-  const viewMin = new Date(year, 0, 1);
-  const viewMax = new Date(year + 1, 0, 1);
-  const span = viewMax.getTime() - viewMin.getTime();
-  const pct = (d: Date) => clamp((d.getTime() - viewMin.getTime()) / span * 100, 0, 100);
-  const todayPct = pct(today);
-  const months = Array.from({ length: 12 }, (_, m) => ({
-    label: new Date(year, m, 1).toLocaleDateString('en-US', { month: 'short' }),
-    p: pct(new Date(year, m, 1)),
-  }));
-
-  const filtered = rows.filter(p => filter === 'all' || p.status === filter);
-  const groups: { status: string; items: GanttRow[] }[] = [];
-  for (const row of filtered) {
-    const last = groups[groups.length - 1];
-    if (last?.status === row.status) last.items.push(row);
-    else groups.push({ status: row.status, items: [row] });
+// Group plants by library_id or name and return one GanttRow per group
+function groupToGanttRows(plants: Plant[], status: string): GanttRow[] {
+  const map = new Map<string, Plant[]>();
+  for (const p of plants) {
+    const key = p.library_id != null ? `lib_${p.library_id}` : `name_${p.name}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(p);
   }
-
-  return (
-    <div className="gantt-chart">
-      <div className="gantt-inner">
-        <div className="gantt-header">
-          <div className="gantt-header__spacer" />
-          <div className="gantt-header__months" style={{ position: 'relative', flex: 1, height: '24px' }}>
-            {months.map(mk => (
-              <div key={mk.label} className="gantt-header__month-label" style={{ left: mk.p + '%' }}>{mk.label}</div>
-            ))}
-          </div>
-        </div>
-        {groups.map(g => (
-          <div key={g.status}>
-            <div className={`gantt-section-header gantt-section-header--${g.status}`}>
-              {g.status === 'growing' ? 'Growing' : 'Planning'}
-            </div>
-            {g.items.map(p => {
-              const planted = parseDate(p.planted) ?? (p.status === 'planning' ? today : null);
-              const harvest = parseDate(p.harvest);
-              const transplant = parseDate(p.transplant);
-              if (!planted) return null;
-              const germEnd = p.germDays ? addDays(planted, p.germDays) : null;
-              const growStart = transplant || germEnd || planted;
-              let effectiveHarvest = harvest;
-              if (!effectiveHarvest && p.daysToHarvest) effectiveHarvest = addDays(growStart, p.daysToHarvest);
-              const growEnd = effectiveHarvest || today;
-              const planSuffix = p.status === 'planning' ? '-planning' : '';
-              return (
-                <div key={p.id} className={`gantt-row gantt-row--${p.status}`}>
-                  <div className="gantt-label"><Link to={`/plants/${p.id}`}>{p.name}</Link></div>
-                  <div className="gantt-bar-area" style={{ position: 'relative' }}>
-                    {months.map(mk => <div key={mk.label} className="gantt-grid-line" style={{ left: mk.p + '%' }} />)}
-                    {transplant && (
-                      <div className="gantt-bar gantt-bar--indoor"
-                           style={{ left: pct(planted) + '%', width: Math.max(pct(transplant) - pct(planted), 0.5) + '%' }}
-                           title={`Start Indoors: ${fmtDate(planted)} → ${fmtDate(transplant)}`} />
-                    )}
-                    {!transplant && germEnd && (
-                      <div className="gantt-bar gantt-bar--germ"
-                           style={{ left: pct(planted) + '%', width: Math.max(pct(germEnd) - pct(planted), 0.5) + '%' }}
-                           title={`Germination (${p.germDays} days)`} />
-                    )}
-                    <div className={`gantt-bar gantt-bar--growing${planSuffix}`}
-                         style={{ left: pct(growStart) + '%', width: Math.max(pct(growEnd) - pct(growStart), 0.5) + '%' }}
-                         title={effectiveHarvest ? `Growing → Harvest: ${fmtDate(effectiveHarvest)}${harvest ? '' : ' (est.)'}` : 'Growing (no harvest date)'} />
-                    {effectiveHarvest && (
-                      <div className="gantt-harvest-marker" style={{ left: pct(effectiveHarvest) + '%' }}
-                           title={`Harvest: ${fmtDate(effectiveHarvest)}${harvest ? '' : ' (est.)'}`} />
-                    )}
-                    {todayPct > 0 && todayPct < 100 && <div className="gantt-today-line" style={{ left: todayPct + '%' }} />}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return [...map.values()].map(group => {
+    // Use earliest planted/transplant dates, latest harvest
+    const planted   = group.map(p => p.planted_date).filter(Boolean).sort()[0] ?? null;
+    const transplant = group.map(p => p.transplant_date).filter(Boolean).sort()[0] ?? null;
+    const harvest   = group.map(p => p.expected_harvest).filter(Boolean).sort().at(-1) ?? null;
+    const rep = group[0];
+    return {
+      id: rep.id,
+      name: rep.name,
+      count: group.length,
+      status,
+      planted: planted ?? null,
+      harvest: harvest ?? null,
+      transplant: transplant ?? null,
+      germDays: rep.days_to_germination ?? null,
+      daysToHarvest: rep.days_to_harvest ?? null,
+      sowIndoorWeeks: rep.sow_indoor_weeks ?? null,
+      directSowOffset: rep.direct_sow_offset ?? null,
+      transplantOffset: rep.transplant_offset ?? null,
+      tempMaxF: rep.temp_max_f ?? null,
+      href: `/plants/${rep.id}`,
+    };
+  });
 }
 
 export default function PlantList() {
@@ -128,13 +65,14 @@ export default function PlantList() {
   const pendingTasks = tasks?.filter(t => !t.completed) ?? [];
 
   const ganttRows: GanttRow[] = [
-    ...growingPlants.filter(p => p.planted_date || p.transplant_date),
-    ...planningPlants,
-  ].map(p => ({
-    id: p.id, name: p.name, status: p.status || 'planning',
-    planted: p.planted_date ?? null, harvest: p.expected_harvest ?? null,
-    transplant: p.transplant_date ?? null, germDays: null, daysToHarvest: p.days_to_harvest ?? null,
-  }));
+    ...groupToGanttRows(growingPlants, 'growing'),
+    ...groupToGanttRows(planningPlants, 'planning'),
+  ];
+
+  // Use the first garden with frost dates for the timeline reference lines
+  const frostGarden = gardens?.find(g => g.last_frost_date);
+  const lastFrost = frostGarden?.last_frost_date ? new Date(frostGarden.last_frost_date + 'T00:00:00') : null;
+  const firstFallFrost = frostGarden?.first_frost_date ? new Date(frostGarden.first_frost_date + 'T00:00:00') : null;
 
   function handleFormChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     setAddForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -322,10 +260,14 @@ export default function PlantList() {
                 <span className="gantt-swatch gantt-swatch--indoor" /> Start Indoors &ensp;
                 <span className="gantt-swatch gantt-swatch--germ" /> Germination &ensp;
                 <span className="gantt-swatch gantt-swatch--grow" /> Growing &ensp;
+                <span className="gantt-swatch gantt-swatch--fall" /> Fall Window &ensp;
                 <span className="gantt-swatch gantt-swatch--harvest" /> Harvest &ensp;
-                <span className="gantt-swatch gantt-swatch--today" /> Today
+                <span className="gantt-swatch gantt-swatch--today" /> Today &ensp;
+                <span className="gantt-cal-pin gantt-cal-pin--start-indoors gantt-cal-pin--legend" /> 🪴 Start Indoors &ensp;
+                <span className="gantt-cal-pin gantt-cal-pin--direct-sow gantt-cal-pin--legend" /> 🌱 Direct Sow &ensp;
+                <span className="gantt-cal-pin gantt-cal-pin--transplant gantt-cal-pin--legend" /> 🌿 Transplant
               </div>
-              <GanttChart rows={ganttRows} filter={ganttFilter} />
+              <GanttChart rows={ganttRows} filter={ganttFilter} lastFrost={lastFrost} firstFallFrost={firstFallFrost} />
             </>
           ) : (
             <p className="muted">No plants yet. Add a plant and set a planted date to see the timeline.</p>

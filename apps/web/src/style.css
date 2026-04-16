@@ -829,6 +829,18 @@ main.fullwidth { max-width: none; margin: 0; padding: 0; }
   margin: 0 0 0.4rem;
 }
 
+.howto-timing-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+.howto-timing-chip {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #3a5c37;
+  background: #eaf4e7;
+  border: 1px solid #b8d4b6;
+  border-radius: 12px;
+  padding: 0.15rem 0.6rem;
+}
+
 /* Companions */
 .companions-grid {
   display: grid;
@@ -1881,6 +1893,26 @@ details[open] .faq-q::after { content: '▾'; }
 
 .gantt-harvest-marker { position:absolute; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; background:#d4a84b; border-radius:50%; z-index:2; }
 .gantt-today-line { position:absolute; top:-4px; bottom:-4px; width:2px; background:#b84040; z-index:3; pointer-events:none; }
+
+/* Frost reference lines */
+.gantt-frost-line { position:absolute; top:0; width:2px; z-index:4; pointer-events:none; }
+.gantt-frost-line--spring { background:rgba(58,140,90,0.5); border-left:2px dashed rgba(58,140,90,0.7); }
+.gantt-frost-line--fall   { background:rgba(210,120,30,0.5); border-left:2px dashed rgba(210,120,30,0.7); }
+.gantt-frost-label { position:absolute; top:2px; left:4px; font-size:0.65rem; font-weight:700; white-space:nowrap; color:#3a8c5a; background:rgba(255,255,255,0.85); padding:1px 3px; border-radius:3px; }
+.gantt-frost-label--fall { color:#c07820; }
+
+/* Milestone diamond markers */
+.gantt-milestone { position:absolute; top:50%; width:10px; height:10px; transform:translate(-50%,-50%) rotate(45deg); z-index:5; cursor:default; }
+.gantt-milestone--indoor    { background:#7bb8e8; border:1.5px solid #4a8ec8; }
+.gantt-milestone--sow       { background:#5fb8a0; border:1.5px solid #3a9878; }
+.gantt-milestone--transplant { background:#3a8c5a; border:1.5px solid #2a6840; }
+
+/* Fall planting window bar */
+.gantt-bar--fall { background:repeating-linear-gradient(45deg, #d4a84b, #d4a84b 3px, #f0d090 3px, #f0d090 7px); opacity:0.65; }
+.gantt-swatch--fall { background:#d4a84b; opacity:0.65; }
+
+/* Duration labels inside bars */
+.gantt-bar-label { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:0.62rem; font-weight:700; color:rgba(255,255,255,0.9); white-space:nowrap; pointer-events:none; }
 
 /* .gantt-axis and .gantt-axis-label retained for compatibility; replaced by .gantt-header */
 .gantt-axis { position:relative; height:24px; margin-left:140px; border-top:1px solid #d8e8d6; font-size:0.72rem; color:#7a907a; }

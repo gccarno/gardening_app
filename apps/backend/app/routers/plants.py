@@ -79,11 +79,16 @@ def _serialize_plant(p: Plant) -> dict:
         'fertilizer_npk':  p.fertilizer_npk,
         'garden_id':       p.garden_id,
         'library_id':      p.library_id,
-        'image_filename':  p.library_entry.image_filename if p.library_entry else None,
-        'scientific_name': p.library_entry.scientific_name if p.library_entry else None,
-        'sunlight':        p.library_entry.sunlight if p.library_entry else None,
-        'days_to_harvest': p.library_entry.days_to_harvest if p.library_entry else None,
-        'bed_names':       [bp.bed.name for bp in p.bed_plants if bp.bed],
+        'image_filename':      p.library_entry.image_filename      if p.library_entry else None,
+        'scientific_name':     p.library_entry.scientific_name     if p.library_entry else None,
+        'sunlight':            p.library_entry.sunlight            if p.library_entry else None,
+        'days_to_harvest':     p.library_entry.days_to_harvest     if p.library_entry else None,
+        'days_to_germination': p.library_entry.days_to_germination if p.library_entry else None,
+        'sow_indoor_weeks':    p.library_entry.sow_indoor_weeks    if p.library_entry else None,
+        'direct_sow_offset':   p.library_entry.direct_sow_offset   if p.library_entry else None,
+        'transplant_offset':   p.library_entry.transplant_offset   if p.library_entry else None,
+        'temp_max_f':          p.library_entry.temp_max_f          if p.library_entry else None,
+        'bed_names':           [bp.bed.name for bp in p.bed_plants if bp.bed],
     }
 
 
