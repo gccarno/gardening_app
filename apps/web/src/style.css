@@ -1856,7 +1856,7 @@ details[open] .faq-q::after { content: '▾'; }
   font-size:0.82rem; color:#5a7a57; text-decoration:none; }
 .gantt-unscheduled li a:hover { border-color:#5a9e54; color:#2d6b29; }
 
-.gantt-legend { display:flex; align-items:center; gap:1rem; font-size:0.82rem; color:#5a7a57; margin-bottom:1rem; flex-wrap:wrap; }
+.gantt-legend { display:flex; align-items:center; gap:1rem; font-size:0.78rem; color:#5a7a57; margin:0.5rem 0 0.75rem; flex-wrap:wrap; padding:0.4rem 0.5rem; background:#f6fbf4; border-radius:4px; border:1px solid #d8ead6; }
 .gantt-swatch { display:inline-block; width:14px; height:14px; border-radius:3px; vertical-align:middle; margin-right:0.3rem; }
 .gantt-swatch--indoor  { background:#a8d5c2; }
 .gantt-swatch--germ    { background:#5fb8a0; }

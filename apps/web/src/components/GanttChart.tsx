@@ -58,7 +58,12 @@ export default function GanttChart({
   const frostPct = frost ? pct(frost) : null;
   const fallFrostPct = fallFrost ? pct(fallFrost) : null;
 
-  const filtered = rows.filter(p => filter === 'all' || p.status === filter);
+  const filtered = rows
+    .filter(p => filter === 'all' || p.status === filter)
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'growing' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
   const groups: { status: string; items: GanttRow[] }[] = [];
   for (const row of filtered) {
     const last = groups[groups.length - 1];
@@ -79,6 +84,17 @@ export default function GanttChart({
               <div key={mk.label} className="gantt-header__month-label" style={{ left: mk.p + '%' }}>{mk.label}</div>
             ))}
           </div>
+        </div>
+
+        {/* Legend */}
+        <div className="gantt-legend">
+          <span><span className="gantt-swatch gantt-swatch--indoor" />Indoors</span>
+          <span><span className="gantt-swatch gantt-swatch--grow" />Growing</span>
+          <span><span className="gantt-swatch gantt-swatch--fall" />Fall Planting</span>
+          <span><span className="gantt-swatch gantt-swatch--harvest" />Harvest</span>
+          <span><span className="gantt-swatch gantt-swatch--today" />Today</span>
+          {frostPct !== null && <span style={{ color: '#3a8c5a', fontSize: '0.78rem' }}>❄ Spring Frost</span>}
+          {fallFrostPct !== null && <span style={{ color: '#c07820', fontSize: '0.78rem' }}>🍂 Fall Frost</span>}
         </div>
 
         {/* Chart body */}

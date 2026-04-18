@@ -176,6 +176,72 @@ def api_bed_grid_plant(bed_id: int, body: dict, db: Session = Depends(get_db)):
     }
 
 
+@router.post('/beds/{bed_id}/grid-plant-bulk')
+def api_bed_grid_plant_bulk(bed_id: int, body: dict, db: Session = Depends(get_db)):
+    """Place multiple plants at once (best-effort: skips overlapping/out-of-bounds positions)."""
+    bed = get_or_404(db, GardenBed, bed_id)
+    positions  = body.get('positions', [])
+    spacing_in = int(body.get('spacing_in', 12))
+    bed_w_in   = bed.width_ft * 12
+    bed_h_in   = bed.height_ft * 12
+
+    if 'library_id' in body:
+        lib_entry = db.get(PlantLibrary, int(body['library_id']))
+        if not lib_entry:
+            raise HTTPException(status_code=404, detail='library entry not found')
+    elif 'plant_id' in body:
+        source = get_or_404(db, Plant, int(body['plant_id']))
+        lib_entry = source.library_entry
+    else:
+        raise HTTPException(status_code=400, detail='library_id or plant_id required')
+
+    # Build inch-level occupancy set from existing plants
+    occupied: set[tuple[int, int]] = set()
+    for existing in bed.bed_plants:
+        if existing.grid_x is None or existing.grid_y is None:
+            continue
+        ex_entry   = existing.plant.library_entry if existing.plant else None
+        ex_spacing = ex_entry.spacing_in if ex_entry and ex_entry.spacing_in else 12
+        for dy in range(ex_spacing):
+            for dx in range(ex_spacing):
+                occupied.add((existing.grid_x + dx, existing.grid_y + dy))
+
+    placed_results = []
+    skipped = 0
+
+    for pos in positions:
+        gx, gy = int(pos['grid_x']), int(pos['grid_y'])
+        if gx + spacing_in > bed_w_in or gy + spacing_in > bed_h_in:
+            skipped += 1
+            continue
+        if any((gx + dx, gy + dy) in occupied for dx in range(spacing_in) for dy in range(spacing_in)):
+            skipped += 1
+            continue
+
+        plant = _plant_from_library(db, lib_entry.id)
+        db.flush()
+        bp = BedPlant(bed_id=bed_id, plant_id=plant.id, grid_x=gx, grid_y=gy)
+        db.add(bp)
+        db.flush()
+
+        # Mark newly occupied cells so later positions in this batch respect them
+        for dy in range(spacing_in):
+            for dx in range(spacing_in):
+                occupied.add((gx + dx, gy + dy))
+
+        placed_results.append({
+            'id':             bp.id,
+            'grid_x':         gx,
+            'grid_y':         gy,
+            'plant_name':     plant.name,
+            'image_filename': lib_entry.image_filename if lib_entry else None,
+            'spacing_in':     spacing_in,
+        })
+
+    db.commit()
+    return {'ok': True, 'placed': placed_results, 'skipped': skipped}
+
+
 # ── BedPlant CRUD ─────────────────────────────────────────────────────────────
 
 @router.post('/bedplants')

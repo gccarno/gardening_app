@@ -304,6 +304,9 @@ def api_plant_update(plant_id: int, body: dict, db: Session = Depends(get_db)):
     if 'planted_date'    in body:
         v = body.get('planted_date')
         plant.planted_date = date.fromisoformat(v) if v else None
+    if 'transplant_date' in body:
+        v = body.get('transplant_date')
+        plant.transplant_date = date.fromisoformat(v) if v else None
     if 'expected_harvest' in body:
         v = body.get('expected_harvest')
         plant.expected_harvest = date.fromisoformat(v) if v else None

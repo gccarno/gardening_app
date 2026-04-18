@@ -22,6 +22,7 @@ _LOG_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s  %(levelname)-8s  %(name)s  %(message)s',
+    force=True,
     handlers=[
         logging.StreamHandler(),
         logging.handlers.RotatingFileHandler(
