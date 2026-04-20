@@ -1,8 +1,25 @@
+import { useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
+import ThemePanel from './ThemePanel';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const isPlanner = pathname.startsWith('/planner');
+  const [showTheme, setShowTheme] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showTheme) return;
+    function handleClick(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        const btn = document.querySelector('.theme-toggle-btn');
+        if (btn && btn.contains(e.target as Node)) return;
+        setShowTheme(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showTheme]);
 
   return (
     <>
@@ -15,7 +32,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <li><NavLink to="/tasks">Tasks</NavLink></li>
           <li><NavLink to="/library">Library</NavLink></li>
         </ul>
+        <button
+          className="theme-toggle-btn"
+          onClick={() => setShowTheme(v => !v)}
+          title="Customize theme"
+        >🎨</button>
       </nav>
+      {showTheme && (
+        <div ref={panelRef}>
+          <ThemePanel onClose={() => setShowTheme(false)} />
+        </div>
+      )}
 
       <main className={isPlanner ? 'fullwidth' : undefined}>{children}</main>
 

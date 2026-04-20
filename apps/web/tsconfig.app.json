@@ -16,7 +16,10 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": false
+    "noUncheckedSideEffectImports": false,
+    "paths": {
+      "@garden/shared": ["../../packages/shared/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

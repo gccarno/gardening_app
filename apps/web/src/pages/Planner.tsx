@@ -103,10 +103,30 @@ export default function Planner() {
   const [canvasBgColor, setCanvasBgColor] = useState('#f0f4ef');
   const [canvasBgPattern, setCanvasBgPattern] = useState('');
 
+  // ── Overlap + scroll-to-zoom toggles ─────────────────────────────────────────
+  const [allowOverlap, setAllowOverlap] = useState<boolean>(() => localStorage.getItem('plannerAllowOverlap') === 'true');
+  const [scrollToZoom, setScrollToZoom] = useState<boolean>(() => localStorage.getItem('plannerScrollToZoom') === 'true');
+  const scrollToZoomRef = useRef(scrollToZoom);
+  useEffect(() => { scrollToZoomRef.current = scrollToZoom; }, [scrollToZoom]);
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const dragBedRef = useRef<{ bedId: number; offsetX: number; offsetY: number } | null>(null);
   const cpDragRef = useRef<{ cpId: number; mode: 'move' | 'resize'; startX: number; startY?: number; startLeft: number; startTop: number; startDiam: number } | null>(null);
+
+  // ── Undo / redo history ───────────────────────────────────────────────────────
+  type HistoryEntry = { undo: () => Promise<void>; redo: () => Promise<void> };
+  const history = useRef<HistoryEntry[]>([]);
+  const historyIdx = useRef(-1);
+
+  function pushHistory(entry: HistoryEntry) {
+    history.current = history.current.slice(0, historyIdx.current + 1);
+    history.current.push(entry);
+    historyIdx.current = history.current.length - 1;
+  }
+
+  // Clear history when garden changes
+  useEffect(() => { history.current = []; historyIdx.current = -1; }, [gardenId]);
 
   // ── Sync canvas background color + pattern from garden data ─────────────────
   useEffect(() => {
@@ -207,7 +227,7 @@ export default function Planner() {
     const el = canvasWrapperRef.current;
     if (!el) return;
     function onWheel(e: WheelEvent) {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey && !scrollToZoomRef.current) return;
       e.preventDefault();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
       setZoom(prev => {
@@ -365,6 +385,17 @@ export default function Planner() {
         const gp = await api('GET', `/api/plants?garden_id=${gardenId}`) as GardenPlant[];
         setGardenPlants(gp);
       }
+      let placedId = r.canvas_plant.id as number;
+      pushHistory({
+        undo: async () => {
+          await api('POST', `/api/canvas-plants/${placedId}/delete`, {});
+          setCanvasPlants(prev => prev.filter(c => c.id !== placedId));
+        },
+        redo: async () => {
+          const r2 = await api('POST', `/api/gardens/${gardenId}/canvas-plants`, payload);
+          if (r2.ok) { placedId = r2.canvas_plant.id; setCanvasPlants(prev => [...prev, r2.canvas_plant]); }
+        },
+      });
     }
   }, [selectedPlant, gardenId, zoom, gardenPlants]);
 
@@ -374,6 +405,19 @@ export default function Planner() {
     if (r.ok) {
       setCanvasPlants(prev => prev.filter(c => c.id !== cp.id));
       if (carePanel && 'plant_id' in carePanel && carePanel.plant_id === cp.plant_id) setCarePanel(null);
+      const restorePayload = { pos_x: cp.pos_x, pos_y: cp.pos_y, library_id: cp.library_id, radius_ft: cp.radius_ft };
+      let restoredId = -1;
+      pushHistory({
+        undo: async () => {
+          const r2 = await api('POST', `/api/gardens/${gardenId}/canvas-plants`, restorePayload);
+          if (r2.ok) { restoredId = r2.canvas_plant.id; setCanvasPlants(prev => [...prev, r2.canvas_plant]); }
+        },
+        redo: async () => {
+          if (restoredId === -1) return;
+          await api('POST', `/api/canvas-plants/${restoredId}/delete`, {});
+          setCanvasPlants(prev => prev.filter(c => c.id !== restoredId));
+        },
+      });
     }
   }
 
@@ -443,12 +487,37 @@ export default function Planner() {
     if (ref.mode === 'move') {
       const newX = (newLeft + newDiam / 2) / PX;
       const newY = (newTop + newDiam / 2) / PX;
+      const oldX = cp.pos_x, oldY = cp.pos_y;
+      // Skip history if plant didn't actually move
+      if (Math.abs(newX - oldX) < 0.01 && Math.abs(newY - oldY) < 0.01) return;
       await api('POST', `/api/canvas-plants/${cp.id}/position`, { x: newX, y: newY });
       setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, pos_x: newX, pos_y: newY } : c));
+      pushHistory({
+        undo: async () => {
+          await api('POST', `/api/canvas-plants/${cp.id}/position`, { x: oldX, y: oldY });
+          setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, pos_x: oldX, pos_y: oldY } : c));
+        },
+        redo: async () => {
+          await api('POST', `/api/canvas-plants/${cp.id}/position`, { x: newX, y: newY });
+          setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, pos_x: newX, pos_y: newY } : c));
+        },
+      });
     } else {
       const newRadius = newDiam / 2 / PX;
+      const oldRadius = cp.radius_ft;
+      if (Math.abs(newRadius - oldRadius) < 0.01) return;
       await api('POST', `/api/canvas-plants/${cp.id}/radius`, { radius_ft: newRadius });
       setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, radius_ft: newRadius } : c));
+      pushHistory({
+        undo: async () => {
+          await api('POST', `/api/canvas-plants/${cp.id}/radius`, { radius_ft: oldRadius });
+          setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, radius_ft: oldRadius } : c));
+        },
+        redo: async () => {
+          await api('POST', `/api/canvas-plants/${cp.id}/radius`, { radius_ft: newRadius });
+          setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, radius_ft: newRadius } : c));
+        },
+      });
     }
   }
 
@@ -557,12 +626,33 @@ export default function Planner() {
     setActiveTool(tool);
   }
 
-  // Escape key deactivates draw tool and care tools
+  // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         if (activeTool) deactivateDrawTool();
         if (careToolType) setCareToolType(null);
+      }
+      if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        if (historyIdx.current >= 0) {
+          history.current[historyIdx.current].undo();
+          historyIdx.current--;
+        }
+      }
+      if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
+        e.preventDefault();
+        if (historyIdx.current < history.current.length - 1) {
+          historyIdx.current++;
+          history.current[historyIdx.current].redo();
+        }
+      }
+      // Zoom hotkeys — only when not typing in an input
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !e.ctrlKey && !e.altKey) {
+        if (e.key === '+' || e.key === '=') setZoom(prev => Math.min(2, Math.round((prev + 0.1) * 20) / 20));
+        if (e.key === '-') setZoom(prev => Math.max(0.3, Math.round((prev - 0.1) * 20) / 20));
+        if (e.key === '0') setZoom(1);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -676,7 +766,15 @@ export default function Planner() {
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: '#9ab49a' }}>
             <span>0.3×</span><span>1×</span><span>2×</span>
           </div>
-          <div style={{ fontSize: '0.67rem', color: '#b0c4b0', marginTop: '0.15rem' }}>Ctrl+scroll on canvas</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.2rem' }}>
+            <input type="checkbox" id="scrollToZoom" checked={scrollToZoom}
+              onChange={e => { setScrollToZoom(e.target.checked); localStorage.setItem('plannerScrollToZoom', String(e.target.checked)); }}
+              style={{ cursor: 'pointer', accentColor: '#3a6b35', width: 12, height: 12 }} />
+            <label htmlFor="scrollToZoom" style={{ fontSize: '0.68rem', color: '#7a907a', cursor: 'pointer', userSelect: 'none' }}>
+              Scroll to zoom {scrollToZoom ? '' : '(Ctrl+scroll)'}
+            </label>
+          </div>
+          <div style={{ fontSize: '0.67rem', color: '#b0c4b0', marginTop: '0.1rem' }}>+/− keys, 0 to reset</div>
         </div>
 
         {/* Tile size */}
@@ -760,6 +858,12 @@ export default function Planner() {
                 </button>
               ))}
             </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#3a6b35', cursor: 'pointer', userSelect: 'none' }}>
+              <input type="checkbox" checked={allowOverlap}
+                onChange={e => { setAllowOverlap(e.target.checked); localStorage.setItem('plannerAllowOverlap', String(e.target.checked)); }}
+                style={{ cursor: 'pointer', accentColor: '#3a6b35' }} />
+              Allow overlap
+            </label>
             <button className="btn-small" style={{ marginLeft: 'auto' }} onClick={() => { setSelectedPlant(null); setPlantMode('single'); }}>✕ Deselect</button>
           </div>
         )}
@@ -815,6 +919,7 @@ export default function Planner() {
                 dragPlant={selectedPlant}
                 zoom={zoom}
                 plantMode={plantMode}
+                allowOverlap={allowOverlap}
               />
             </div>
           ))}

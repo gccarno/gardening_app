@@ -39,6 +39,7 @@ imggen = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: calls the real Ollama model (requires Ollama running locally)"]
 
 [tool.uv]
 package = false

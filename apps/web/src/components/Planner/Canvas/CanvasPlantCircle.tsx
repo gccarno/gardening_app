@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CanvasPlant, PX } from '../types';
-import { plantImageUrl } from '../../utils/images';
+import { plantImageUrl } from '../../../utils/images';
 
 interface Props {
   cp: CanvasPlant;
@@ -19,6 +19,7 @@ export default function CanvasPlantCircle({
   cp, careToolType, careToolFlash, waterAmount, highlightLibId,
   onPointerDown, onPointerMove, onPointerUp, onClick, onDelete,
 }: Props) {
+  const [isHovered, setIsHovered] = useState(false);
   const diamPx = cp.radius_ft * PX * 2;
   const leftPx = cp.pos_x * PX - cp.radius_ft * PX;
   const topPx  = cp.pos_y * PX - cp.radius_ft * PX;
@@ -31,6 +32,8 @@ export default function CanvasPlantCircle({
     <div
       id={`cp-${cp.id}`}
       className="canvas-plant-circle"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       style={{
         position: 'absolute', left: leftPx, top: topPx, width: diamPx, height: diamPx,
         borderRadius: '50%', background: imgSrc ? 'transparent' : (cp.color || '#5a9e54'),
@@ -47,7 +50,7 @@ export default function CanvasPlantCircle({
           <img src={imgSrc} alt={cp.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
       )}
-      <span className="canvas-plant-label" style={{ position: 'relative', fontSize: Math.max(9, Math.min(12, diamPx / 4)), color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.5)', textAlign: 'center', padding: '2px', pointerEvents: 'none', maxWidth: diamPx - 8, overflow: 'hidden', wordBreak: 'break-word' }}>
+      <span className="canvas-plant-label" style={{ position: 'relative', fontSize: Math.max(9, Math.min(12, diamPx / 4)), color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.5)', textAlign: 'center', padding: '2px', pointerEvents: 'none', maxWidth: diamPx - 8, overflow: 'hidden', wordBreak: 'break-word', opacity: isHovered ? 1 : 0, transition: 'opacity 0.15s' }}>
         {cp.name}
       </span>
       {/* Care action flash overlay */}

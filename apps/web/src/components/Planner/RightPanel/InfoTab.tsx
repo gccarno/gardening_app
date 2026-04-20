@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlannerCtx } from '../PlannerContext';
 import { api, GARDEN_PALETTE, PATTERNS, type GardenPlant } from '../types';
-import { plantImageUrl } from '../../utils/images';
+import { plantImageUrl } from '../../../utils/images';
 
 export default function InfoTab() {
   const {

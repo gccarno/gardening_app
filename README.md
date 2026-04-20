@@ -19,6 +19,7 @@ A local-first web application for planning vegetable and herb gardens. Track bed
   - [Predictive Watering Engine](#predictive-watering-engine)
 - [Data Model](#data-model)
 - [AI & ML System](#ai--ml-system)
+- [Testing](#testing)
 - [API Routes](#api-routes)
 - [Design Decisions](#design-decisions)
 - [Resetting the Database](#resetting-the-database)
@@ -352,7 +353,16 @@ LLM_PROVIDER=ollama      → Local Ollama server (gemma4 default)
 LLM_PROVIDER=huggingface → HuggingFace Inference API
 ```
 
-The agentic tool-use loop in `chat_tools.py` is **Anthropic-first** — only Anthropic's API natively supports the `tool_use` stop reason and structured tool result messages. For other providers, the loop falls back to a plain `complete()` call (single turn, no tool use). Set `CHAT_MODEL` separately from `LLM_MODEL` to use a more capable model for chat.
+Two providers support full multi-round tool use; others fall back to a single-turn plain completion:
+
+| Provider | Tool use | Notes |
+|---|---|---|
+| `ollama` | Yes — `_run_ollama_loop` | OpenAI-compatible tool-calling format; models must support it (gemma4, llama3.1+) |
+| `anthropic` | Yes — native `tool_use` stop reason | Structured tool result messages |
+| `openai` | No — single turn | Falls back to `complete()` |
+| `huggingface` | No — single turn | Falls back to `complete()` |
+
+Set `CHAT_MODEL` separately from `LLM_MODEL` to use a more capable model for chat.
 
 ### Agentic Loop
 
@@ -362,16 +372,18 @@ User message
      ▼
 run_agentic_loop(system, messages, garden, db)
      │
-     ├── Call Claude API with TOOL_SCHEMAS + full conversation history
+     ├── Anthropic: messages.create() with TOOL_SCHEMAS
+     │   ├── stop_reason == 'tool_use' → execute_tool() → append result → repeat
+     │   └── stop_reason == 'end_turn' → return text
      │
-     ├── If stop_reason == 'tool_use':
-     │     execute_tool(name, input, garden, db)  ← direct SQLAlchemy queries
-     │     append tool_result to messages
-     │     └── repeat (up to 5 rounds)
+     ├── Ollama: POST /api/chat with tool schemas (OpenAI format)
+     │   ├── response.tool_calls → execute_tool() → append result → repeat
+     │   └── no tool_calls → return text
      │
-     └── If stop_reason == 'end_turn':
-           return reply text
+     └── Other providers: single complete() call, no tool use
 ```
+
+All tool execution is Python — no HTTP round-trips back to the API. Tools access the full SQLAlchemy session passed from the FastAPI request, keeping transactions consistent.
 
 All tool execution is Python — no HTTP round-trips back to the API. Tools access the full SQLAlchemy session passed from the FastAPI request, keeping transactions consistent.
 
@@ -386,6 +398,27 @@ All tool execution is Python — no HTTP round-trips back to the API. Tools acce
 uv run python ml/data/generate_synthetic.py   # 539K rows (60 users × 8,988 plants)
 uv run python ml/training/train_recommender.py # 5-fold CV → saves recommender.pkl
 ```
+
+---
+
+## Testing
+
+```bash
+# Unit tests — no external dependencies, run offline
+uv run pytest tests/unit/ -v
+
+# Integration tests — require Ollama running with gemma4:e2b
+uv run pytest tests/integration/ -v
+
+# Default run (excludes integration tests)
+uv run pytest -m "not integration"
+```
+
+**Unit tests** (`tests/unit/`) test each of the 12 chat tools and key API endpoints in isolation using an in-memory SQLite database. External calls (Open-Meteo, ChromaDB) are mocked.
+
+**Integration tests** (`tests/integration/`) call `run_agentic_loop` with the real local Ollama model and assert that the model correctly invokes the expected tool for each prompt. Tests skip automatically if Ollama is not running.
+
+Shared fixtures (garden, bed, plant, task, weather log) live in `tests/conftest.py`.
 
 ---
 
@@ -501,8 +534,9 @@ OPENAI_API_KEY=sk-...              # https://platform.openai.com
 OLLAMA_BASE_URL=http://localhost:11434  # local Ollama (no key needed)
 HF_TOKEN=hf_...                    # HuggingFace (optional for public models)
 
-# Which LLM to use for completions (default: anthropic)
-LLM_PROVIDER=anthropic
+# Which LLM to use for completions
+# anthropic | openai | ollama | huggingface
+LLM_PROVIDER=ollama
 
 # Which model to use for the chat assistant
 CHAT_MODEL=claude-sonnet-4-6

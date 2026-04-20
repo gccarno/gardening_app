@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { type LibPlant, type GardenPlant, api } from '../types';
-import { plantImageUrl } from '../../utils/images';
+import { plantImageUrl } from '../../../utils/images';
 
 interface Props {
   gardenId: number;

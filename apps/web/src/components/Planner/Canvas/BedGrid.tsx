@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { type Bed, type GridChip, type LibPlant, type GardenPlant, type PlantMode, PX_PER_IN, computePositions, plantSpan } from '../types';
-import { plantImageUrl } from '../../utils/images';
+import { plantImageUrl } from '../../../utils/images';
 
 interface Props {
   bed: Bed; chips: GridChip[]; tileIn: number;
@@ -10,10 +10,11 @@ interface Props {
   dragPlant: LibPlant | GardenPlant | null;
   zoom: number;
   plantMode: PlantMode;
+  allowOverlap?: boolean;
 }
 
 export default function BedGrid({
-  bed, chips, tileIn, onCellClick, onChipRemove, onChipClick, dragPlant, zoom, plantMode,
+  bed, chips, tileIn, onCellClick, onChipRemove, onChipClick, dragPlant, zoom, plantMode, allowOverlap,
 }: Props) {
   const cols = Math.max(1, Math.round(bed.width_ft * 12 / tileIn));
   const rows = Math.max(1, Math.round(bed.height_ft * 12 / tileIn));
@@ -39,6 +40,7 @@ export default function BedGrid({
 
   function canPlace(cx: number, cy: number, span: number) {
     if (cx + span > cols || cy + span > rows) return false;
+    if (allowOverlap) return true;
     for (let r = cy; r < cy + span; r++)
       for (let c = cx; c < cx + span; c++)
         if (occupied.has(`${c},${r}`) || pendingOcc.current.has(`${c},${r}`)) return false;
@@ -57,10 +59,13 @@ export default function BedGrid({
       const tcx = Math.floor(pos.grid_x / tileIn);
       const tcy = Math.floor(pos.grid_y / tileIn);
       const span = plantSpan(spacingIn, tileIn);
-      let ok = true;
-      for (let r = tcy; r < tcy + span && ok; r++)
-        for (let c = tcx; c < tcx + span && ok; c++)
-          if (occupied.has(`${c},${r}`)) ok = false;
+      let ok = allowOverlap;
+      if (!ok) {
+        ok = true;
+        for (let r = tcy; r < tcy + span && ok; r++)
+          for (let c = tcx; c < tcx + span && ok; c++)
+            if (occupied.has(`${c},${r}`)) ok = false;
+      }
       if (ok) valid.add(`${tcx},${tcy}`);
       else    blocked.add(`${tcx},${tcy}`);
     }
