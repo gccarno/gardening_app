@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Garden Planner</string>
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_gardens">Gardens</string>
+    <string name="nav_plants">Plants</string>
+    <string name="nav_tasks">Tasks</string>
+    <string name="nav_library">Library</string>
+</resources>
