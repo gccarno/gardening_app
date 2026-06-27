@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
 from .db.session import engine
-from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat
+from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat, admin, tips
+from .routers import seed_room, observations, journal, compost
 from .routers.weather import run_daily_weather_fetch
 from .jobs.gcs_backup import run_backup as run_gcs_backup
 
@@ -51,6 +52,9 @@ _PLANT_LIBRARY_MIGRATIONS = [
 
 def _run_migrations():
     t0 = time.perf_counter()
+    # Create any tables that don't yet exist (safe — skips existing tables).
+    from .db.models import Base
+    Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
         from sqlalchemy import text
         cols = [row[1] for row in conn.execute(text('PRAGMA table_info(garden)'))]
@@ -125,6 +129,12 @@ app.include_router(tasks.router)
 app.include_router(canvas.router)
 app.include_router(library.router)
 app.include_router(chat.router)
+app.include_router(admin.router)
+app.include_router(tips.router)
+app.include_router(seed_room.router)
+app.include_router(observations.router)
+app.include_router(journal.router)
+app.include_router(compost.router)
 
 
 @app.get('/api/health')

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useGardens, useDashboard, useWateringStatus, useSetDefaultGarden } from '../hooks/useGardens';
 import ChatWidget from '../components/ChatWidget';
+import { useMutation } from '@tanstack/react-query';
 
 // ── WMO weather code descriptions ─────────────────────────────────────────────
 const WMO: Record<number, string> = {
@@ -119,6 +120,84 @@ function WateringCard({ gardenId }: { gardenId: number }) {
   );
 }
 
+// ── Tip of the Day card ───────────────────────────────────────────────────────
+function TipOfDay() {
+  const [tip, setTip] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/tip-of-the-day')
+      .then(r => r.json())
+      .then(data => setTip(data.tip ?? null))
+      .catch(() => setError(true));
+  }, []);
+
+  return (
+    <div className="info-card tip-of-day-card">
+      <div className="info-card__header">💡 Tip of the Day</div>
+      <div className="info-card__body">
+        {error ? (
+          <span className="muted" style={{ fontSize: '0.82rem' }}>Tip unavailable</span>
+        ) : !tip ? (
+          <span className="muted" style={{ fontSize: '0.85rem' }}>Loading…</span>
+        ) : (
+          <p className="tip-of-day-text">{tip}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Rain log card ─────────────────────────────────────────────────────────────
+function RainLogCard({ gardenId }: { gardenId: number }) {
+  const [rainfall, setRainfall] = useState(0.5);
+  const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [saved, setSaved] = useState(false);
+
+  const logMut = useMutation({
+    mutationFn: () =>
+      fetch(`/api/gardens/${gardenId}/log-rain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rainfall_in: rainfall, entry_date: logDate }),
+      }).then(r => r.json()),
+    onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
+  });
+
+  return (
+    <div className="info-card" id="rain-log-card">
+      <div className="info-card__header">🌧 Log Rainfall</div>
+      <div className="info-card__body">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <label style={{ fontSize: '0.85rem' }}>
+            Amount: <strong>{rainfall.toFixed(2)} in</strong>
+          </label>
+          <input
+            type="range" min="0" max="4" step="0.05"
+            value={rainfall}
+            onChange={e => setRainfall(parseFloat(e.target.value))}
+            style={{ width: '100%' }}
+          />
+          <input
+            type="date"
+            value={logDate}
+            onChange={e => setLogDate(e.target.value)}
+            style={{ fontSize: '0.85rem', padding: '0.2rem 0.4rem' }}
+          />
+          <button
+            className="btn btn--ghost"
+            style={{ fontSize: '0.82rem' }}
+            disabled={logMut.isPending}
+            onClick={() => logMut.mutate()}
+          >
+            {saved ? '✓ Saved' : logMut.isPending ? 'Saving…' : 'Log Rain'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Dashboard page ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { data: gardens, isLoading: gardensLoading } = useGardens();
@@ -187,12 +266,15 @@ export default function Dashboard() {
       {/* Nav tiles */}
       <nav className="nav-tiles" aria-label="Quick navigation">
         {[
-          { to: '/gardens', icon: '🏡', label: 'Gardens',  desc: 'Manage your spaces' },
-          { to: '/planner', icon: '🗺',  label: 'Planner',  desc: '2D drag-and-drop layout' },
-          { to: '/beds',    icon: '🛏',  label: 'Beds',     desc: 'Raised beds & plots' },
-          { to: '/plants',  icon: '🌿',  label: 'Plants',   desc: 'Track what you\'re growing' },
-          { to: '/tasks',   icon: '✅',  label: 'Tasks',    desc: 'Watering, fertilizing & more' },
-          { to: '/library', icon: '📚',  label: 'Library',  desc: 'Plant references' },
+          { to: '/gardens',   icon: '🏡', label: 'Gardens',   desc: 'Manage your spaces' },
+          { to: '/planner',   icon: '🗺',  label: 'Planner',   desc: '2D drag-and-drop layout' },
+          { to: '/beds',      icon: '🛏',  label: 'Beds',      desc: 'Raised beds & plots' },
+          { to: '/plants',    icon: '🌿',  label: 'Plants',    desc: 'Track what you\'re growing' },
+          { to: '/tasks',     icon: '✅',  label: 'Tasks',     desc: 'Watering, fertilizing & more' },
+          { to: '/library',   icon: '📚',  label: 'Library',   desc: 'Plant references' },
+          { to: '/seed-room', icon: '🌱',  label: 'Seed Room', desc: 'Track seeds & seedlings' },
+          { to: '/journal',   icon: '📓',  label: 'Journal',   desc: 'Garden growing log' },
+          { to: '/compost',   icon: '♻️',  label: 'Compost',   desc: 'Track compost bins' },
         ].map(t => (
           <Link key={t.to} to={t.to} className="nav-tile">
             <span className="nav-tile__icon">{t.icon}</span>
@@ -261,8 +343,12 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Watering status */}
+      {/* Tip of the Day */}
+      <TipOfDay />
+
+      {/* Watering status + rain logging */}
       {effectiveId && <WateringCard gardenId={effectiveId} />}
+      {effectiveId && <RainLogCard gardenId={effectiveId} />}
 
       {/* Three-column content */}
       {dash && (

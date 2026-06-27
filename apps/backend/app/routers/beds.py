@@ -51,10 +51,8 @@ def api_create_bed(body: dict, db: Session = Depends(get_db)):
     )
     db.add(bed)
     db.commit()
-    return {'ok': True, 'bed': {
-        'id': bed.id, 'name': bed.name,
-        'width_ft': bed.width_ft, 'height_ft': bed.height_ft,
-    }}
+    db.refresh(bed)
+    return _serialize_bed(bed)
 
 
 @router.post('/beds/{bed_id}/position')
@@ -173,6 +171,8 @@ def api_bed_grid_plant(bed_id: int, body: dict, db: Session = Depends(get_db)):
         'plant_name':     plant.name,
         'image_filename': entry.image_filename if entry else None,
         'spacing_in':     entry.spacing_in if entry and entry.spacing_in else 12,
+        'grid_x':         grid_x,
+        'grid_y':         grid_y,
     }
 
 
@@ -398,6 +398,49 @@ def api_beds_list(garden_id: Optional[int] = None, db: Session = Depends(get_db)
     beds = q.order_by(GardenBed.name).all()
     logger.info('[beds_list] %d beds in %.0fms', len(beds), (time.monotonic() - t0) * 1000)
     return [_serialize_bed(b) for b in beds]
+
+
+@router.get('/beds/{bed_id}/rotation-warnings')
+def api_bed_rotation_warnings(bed_id: int, library_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """
+    Returns botanical families currently growing in this bed.
+    If library_id is given, also flags whether the candidate plant shares a family
+    with any existing bed plant.
+    """
+    bed = get_or_404(db, GardenBed, bed_id)
+    bed_plants = (db.query(BedPlant)
+                  .filter(BedPlant.bed_id == bed_id)
+                  .join(Plant, BedPlant.plant_id == Plant.id)
+                  .join(PlantLibrary, Plant.library_id == PlantLibrary.id)
+                  .all())
+
+    families_in_bed: list[dict] = []
+    seen: set[str] = set()
+    for bp in bed_plants:
+        lib = bp.plant.library_entry if bp.plant else None
+        fam = lib.family if lib else None
+        if fam and fam not in seen:
+            seen.add(fam)
+            families_in_bed.append({'family': fam, 'plant_name': bp.plant.name})
+
+    conflict = False
+    candidate_family = None
+    if library_id:
+        candidate = db.get(PlantLibrary, library_id)
+        if candidate and candidate.family:
+            candidate_family = candidate.family
+            conflict = candidate.family in seen
+
+    return {
+        'bed_id': bed_id,
+        'families_in_bed': families_in_bed,
+        'candidate_family': candidate_family,
+        'conflict': conflict,
+        'warning': (
+            f'Crop rotation: {candidate_family} already growing in this bed.'
+            if conflict else None
+        ),
+    }
 
 
 @router.get('/beds/{bed_id}')

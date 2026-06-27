@@ -104,6 +104,7 @@ class Plant(Base):
     last_fertilized  = Column(Date, nullable=True)
     fertilizer_type  = Column(String(50), nullable=True)   # balanced/nitrogen/phosphorus/potassium/organic/other
     fertilizer_npk   = Column(String(20), nullable=True)   # e.g. '10-10-10'
+    succession_label = Column(String(50), nullable=True)
     library_id       = Column(Integer, ForeignKey('plant_library.id'), nullable=True, index=True)
     garden_id        = Column(Integer, ForeignKey('garden.id'), nullable=True, index=True)
 
@@ -333,3 +334,90 @@ class WeatherLog(Base):
 
     def __repr__(self):
         return f'<WeatherLog garden={self.garden_id} date={self.date}>'
+
+
+class SeedTray(Base):
+    __tablename__ = 'seed_tray'
+
+    id                   = Column(Integer, primary_key=True)
+    garden_id            = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    library_id           = Column(Integer, ForeignKey('plant_library.id'), nullable=True, index=True)
+    plant_name           = Column(String(100), nullable=False)
+    slot_number          = Column(Integer, nullable=False)   # 1-24
+    sow_date             = Column(Date, nullable=True)
+    germination_date     = Column(Date, nullable=True)
+    transplant_ready_date = Column(Date, nullable=True)
+    # stage: sowing → germinating → seedling → hardening → ready
+    stage                = Column(String(20), nullable=False, default='sowing')
+    notes                = Column(Text, nullable=True)
+    created_at           = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    garden        = relationship('Garden', backref='seed_trays', lazy=True)
+    library_entry = relationship('PlantLibrary', backref='seed_trays', lazy=True)
+
+    def __repr__(self):
+        return f'<SeedTray slot={self.slot_number} plant={self.plant_name}>'
+
+
+OBSERVATION_TYPES = [
+    'healthy', 'new_growth', 'flowering', 'harvest_ready',
+    'yellowing', 'wilting', 'pest_damage', 'disease',
+]
+
+
+class PlantObservation(Base):
+    __tablename__ = 'plant_observation'
+
+    id               = Column(Integer, primary_key=True)
+    bed_plant_id     = Column(Integer, ForeignKey('bed_plant.id'), nullable=False, index=True)
+    observation_date = Column(Date, nullable=False)
+    observation_type = Column(String(30), nullable=False)  # see OBSERVATION_TYPES
+    severity         = Column(Integer, nullable=False, default=3)  # 1 (minor) - 5 (severe)
+    notes            = Column(Text, nullable=True)
+    image_filename   = Column(String(200), nullable=True)
+    created_at       = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    bed_plant = relationship('BedPlant', backref='observations', lazy=True)
+
+    def __repr__(self):
+        return f'<PlantObservation bp={self.bed_plant_id} type={self.observation_type}>'
+
+
+class JournalEntry(Base):
+    __tablename__ = 'journal_entry'
+
+    id         = Column(Integer, primary_key=True)
+    garden_id  = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    plant_id   = Column(Integer, ForeignKey('plant.id'), nullable=True, index=True)
+    entry_date = Column(Date, nullable=False)
+    title      = Column(String(200), nullable=False)
+    body       = Column(Text, nullable=True)
+    tags       = Column(Text, nullable=True)        # JSON array of strings
+    image_filename = Column(String(200), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    garden = relationship('Garden', backref='journal_entries', lazy=True)
+    plant  = relationship('Plant', backref='journal_entries', lazy=True)
+
+    def __repr__(self):
+        return f'<JournalEntry {self.title}>'
+
+
+class CompostBin(Base):
+    __tablename__ = 'compost_bin'
+
+    id                   = Column(Integer, primary_key=True)
+    garden_id            = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    name                 = Column(String(100), nullable=False)
+    started_date         = Column(Date, nullable=True)
+    estimated_ready_date = Column(Date, nullable=True)
+    # stage: building → active → curing → ready
+    stage                = Column(String(20), nullable=False, default='building')
+    notes                = Column(Text, nullable=True)
+    materials            = Column(Text, nullable=True)  # JSON array: [{material, date_added, quantity_lbs}]
+    created_at           = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    garden = relationship('Garden', backref='compost_bins', lazy=True)
+
+    def __repr__(self):
+        return f'<CompostBin {self.name}>'

@@ -13,8 +13,12 @@ const TaskList      = lazy(() => import('./pages/TaskList'));
 const TaskDetail    = lazy(() => import('./pages/TaskDetail'));
 const LibraryBrowser = lazy(() => import('./pages/LibraryBrowser'));
 const LibraryDetail = lazy(() => import('./pages/LibraryDetail'));
+const LibraryEdit   = lazy(() => import('./pages/LibraryEdit'));
 const PlantDiff     = lazy(() => import('./pages/PlantDiff'));
 const Planner       = lazy(() => import('./pages/Planner'));
+const SeedRoom      = lazy(() => import('./pages/SeedRoom'));
+const Journal       = lazy(() => import('./pages/Journal'));
+const Compost       = lazy(() => import('./pages/Compost'));
 
 export default function App() {
   return (
@@ -33,8 +37,12 @@ export default function App() {
           <Route path="/tasks/:id"         element={<TaskDetail />} />
           <Route path="/library"           element={<LibraryBrowser />} />
           <Route path="/library/diff"      element={<PlantDiff />} />
+          <Route path="/library/:id/edit"  element={<LibraryEdit />} />
           <Route path="/library/:id"       element={<LibraryDetail />} />
           <Route path="/planner"           element={<Planner />} />
+          <Route path="/seed-room"         element={<SeedRoom />} />
+          <Route path="/journal"           element={<Journal />} />
+          <Route path="/compost"           element={<Compost />} />
         </Routes>
       </Suspense>
     </Layout>

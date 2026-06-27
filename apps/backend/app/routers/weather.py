@@ -1,10 +1,13 @@
 """
 Weather routes: fetch Open-Meteo forecast, fetch/store historical weather, watering status.
 """
+import time
 from datetime import date, timedelta
+from typing import Optional
 
 import requests as http
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..db.models import Garden, WeatherLog
@@ -13,9 +16,15 @@ from ..services.helpers import FROST_DATES, REPO_ROOT, WMO, get_or_404, rainfall
 
 router = APIRouter(prefix='/api', tags=['weather'])
 
+_weather_cache: dict[int, tuple[float, dict]] = {}  # garden_id -> (timestamp, data)
+_WEATHER_CACHE_TTL = 600  # 10 minutes
+
 
 @router.get('/gardens/{garden_id}/weather')
 def api_garden_weather(garden_id: int, db: Session = Depends(get_db)):
+    cached = _weather_cache.get(garden_id)
+    if cached and time.time() - cached[0] < _WEATHER_CACHE_TTL:
+        return cached[1]
     garden = get_or_404(db, Garden, garden_id)
     if not garden.latitude or not garden.longitude:
         raise HTTPException(status_code=404, detail='no_location')
@@ -57,7 +66,7 @@ def api_garden_weather(garden_id: int, db: Session = Depends(get_db)):
             'uv':          daily.get('uv_index_max', [None] * 7)[i],
             'condition':   WMO.get(daily['weather_code'][i], 'Unknown'),
         })
-    return {
+    result = {
         'current': {
             'temp':          cur.get('temperature_2m'),
             'humidity':      cur.get('relative_humidity_2m'),
@@ -74,6 +83,8 @@ def api_garden_weather(garden_id: int, db: Session = Depends(get_db)):
             'station_distance_km': garden.frost_station_distance_km,
         },
     }
+    _weather_cache[garden_id] = (time.time(), result)
+    return result
 
 
 def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
@@ -146,6 +157,39 @@ def api_fetch_weather_history(garden_id: int, db: Session = Depends(get_db)):
 
     return {'ok': True, 'days_saved': days_saved,
             'rainfall_7d': rainfall_summary(db, garden_id, 7)}
+
+
+class RainLogBody(BaseModel):
+    rainfall_in: float
+    entry_date: Optional[str] = None  # YYYY-MM-DD; defaults to today
+
+
+@router.post('/gardens/{garden_id}/log-rain')
+def api_log_rain(garden_id: int, body: RainLogBody, db: Session = Depends(get_db)):
+    get_or_404(db, Garden, garden_id)
+    log_date = date.fromisoformat(body.entry_date) if body.entry_date else date.today()
+    rainfall = max(0.0, min(20.0, body.rainfall_in))
+
+    existing = db.query(WeatherLog).filter_by(garden_id=garden_id, date=log_date).first()
+    if existing:
+        existing.rainfall_in = rainfall
+        existing.source = 'manual'
+    else:
+        db.add(WeatherLog(garden_id=garden_id, date=log_date, rainfall_in=rainfall, source='manual'))
+    db.commit()
+    return {'ok': True, 'date': log_date.isoformat(), 'rainfall_in': rainfall}
+
+
+@router.get('/gardens/{garden_id}/rain-log')
+def api_get_rain_log(garden_id: int, days: int = 14, db: Session = Depends(get_db)):
+    get_or_404(db, Garden, garden_id)
+    cutoff = date.today() - timedelta(days=days)
+    logs = (db.query(WeatherLog)
+            .filter(WeatherLog.garden_id == garden_id, WeatherLog.date >= cutoff)
+            .order_by(WeatherLog.date.desc())
+            .all())
+    return [{'date': l.date.isoformat(), 'rainfall_in': l.rainfall_in, 'source': l.source}
+            for l in logs]
 
 
 @router.get('/gardens/{garden_id}/watering-status')

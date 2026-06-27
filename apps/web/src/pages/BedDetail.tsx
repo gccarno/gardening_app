@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useBed, useBedGrid, useUpdateBed, useDeleteBed, usePlaceInGrid, useSaveBedPlantCare, useRemoveBedPlant } from '../hooks/useBeds';
 import { useLibrary } from '../hooks/useLibrary';
 import { fetchBedPlant } from '../api/beds';
@@ -25,6 +26,13 @@ export default function BedDetail() {
 
   const [selectedLibId, setSelectedLibId] = useState<number | null>(null);
   const [placed, setPlaced] = useState<Record<string, GridPlant>>({});
+
+  const { data: rotationData } = useQuery({
+    queryKey: ['rotation-warnings', bedId, selectedLibId],
+    queryFn: () =>
+      fetch(`/api/beds/${bedId}/rotation-warnings${selectedLibId ? `?library_id=${selectedLibId}` : ''}`).then(r => r.json()),
+    enabled: !!selectedLibId,
+  });
   const [carePanel, setCarePanel] = useState<(BedPlantDetail & { key: string }) | null>(null);
   const [careSaved, setCareSaved] = useState(false);
   const [careForm, setCareForm] = useState({ last_watered: '', last_fertilized: '', health_notes: '' });
@@ -221,6 +229,20 @@ export default function BedDetail() {
               <option key={e.id} value={e.id}>{e.name}{e.type ? ` (${e.type})` : ''}</option>
             ))}
           </select>
+          {rotationData?.conflict && (
+            <div style={{
+              marginTop: '0.6rem', padding: '0.5rem 0.7rem',
+              background: '#fff8e1', border: '1px solid #f0c040',
+              borderRadius: '6px', fontSize: '0.82rem', color: '#7a5a00',
+            }}>
+              ⚠️ {rotationData.warning}
+            </div>
+          )}
+          {rotationData && !rotationData.conflict && rotationData.families_in_bed.length > 0 && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: '#7a907a' }}>
+              Families in bed: {rotationData.families_in_bed.map((f: any) => f.family).join(', ')}
+            </div>
+          )}
           <p className="muted" style={{ marginTop: '0.75rem' }}>1. Select a plant above.</p>
           <p className="muted">2. Click an empty cell to place it.</p>
           <p className="muted">3. Click a placed plant to view/edit its care info.</p>
