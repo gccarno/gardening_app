@@ -158,6 +158,17 @@ def api_canvas_plants_create(garden_id: int, body: dict, db: Session = Depends(g
     return {'ok': True, 'canvas_plant': _serialize_cp(cp)}
 
 
+# ── Bulk operations ───────────────────────────────────────────────────────────
+
+@router.post('/canvas-plants/bulk-delete')
+def api_canvas_plants_bulk_delete(body: dict, db: Session = Depends(get_db)):
+    ids = [int(i) for i in body.get('ids', [])]
+    if ids:
+        db.query(CanvasPlant).filter(CanvasPlant.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
+    return {'ok': True, 'deleted': ids}
+
+
 # ── Detail / Update ───────────────────────────────────────────────────────────
 
 @router.get('/canvas-plants/{cp_id}')

@@ -1,19 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { type LibPlant, type GardenPlant, api } from '../types';
+import { type LibPlant, type GardenPlant, type CanvasPlant, api } from '../types';
 import { plantImageUrl } from '../../../utils/images';
 
 interface Props {
   gardenId: number;
   gardenPlants: GardenPlant[];
+  canvasPlants: CanvasPlant[];
+  selectedCanvasIds: Set<number>;
   selectedPlant: LibPlant | GardenPlant | null;
   setSelectedPlant: React.Dispatch<React.SetStateAction<LibPlant | GardenPlant | null>>;
   showGroupInfo: (group: GardenPlant[]) => Promise<void>;
   showLibInfo: (libraryId: number) => Promise<void>;
   onAddToGarden: (p: LibPlant) => Promise<void>;
+  onToggleByPlantId: (plantId: number) => void;
 }
 
 export default function PlantSearchPanel({
-  gardenId, gardenPlants, selectedPlant, setSelectedPlant, showGroupInfo, showLibInfo, onAddToGarden,
+  gardenId, gardenPlants, canvasPlants, selectedCanvasIds, selectedPlant, setSelectedPlant,
+  showGroupInfo, showLibInfo, onAddToGarden, onToggleByPlantId,
 }: Props) {
   const [libPlants, setLibPlants] = useState<LibPlant[]>([]);
   const [plantSearch, setPlantSearch] = useState('');
@@ -77,14 +81,19 @@ export default function PlantSearchPanel({
               const rep = group[0];
               const count = group.length;
               const isSelected = selectedPlant?.id === rep.id;
+              const hasCanvasSelection = group.some(p => canvasPlants.some(cp => cp.plant_id === p.id && selectedCanvasIds.has(cp.id)));
               if (count === 1) {
                 return (
                   <li key={rep.id}
                       className={`palette-item palette-plant${isSelected ? ' active' : ''}`}
                       draggable
                       onDragStart={e => { e.dataTransfer.effectAllowed = 'copy'; setSelectedPlant(rep); }}
-                      onClick={() => setSelectedPlant(prev => prev?.id === rep.id ? null : rep)}
-                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: isSelected ? '#d4edcc' : '#f4f9f4', borderRadius: '4px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                      onClick={e => {
+                        if (e.ctrlKey || e.metaKey) { e.preventDefault(); onToggleByPlantId(rep.id); return; }
+                        setSelectedPlant(prev => prev?.id === rep.id ? null : rep);
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: hasCanvasSelection ? '#d0edcc' : isSelected ? '#d4edcc' : '#f4f9f4', borderRadius: '4px', fontSize: '0.78rem', cursor: 'pointer', outline: hasCanvasSelection ? '1.5px solid #4CAF50' : undefined }}>
+                    {hasCanvasSelection && <span style={{ fontSize: '0.65rem', color: '#4CAF50', flexShrink: 0 }}>✓</span>}
                     {rep.image_filename ? <img src={plantImageUrl(rep.image_filename) ?? ''} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rep.name}</span>
                     <button title="Plant info" onClick={e => { e.stopPropagation(); showGroupInfo(group); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a907a', fontSize: '0.75rem', padding: '0 1px', flexShrink: 0 }}>ℹ</button>
@@ -95,11 +104,15 @@ export default function PlantSearchPanel({
                 <li key={`grp-${rep.id}`} style={{ borderRadius: '4px', overflow: 'hidden', fontSize: '0.78rem' }}>
                   <details>
                     <summary
-                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: '#f4f9f4', cursor: 'pointer', listStyle: 'none' }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.4rem', background: hasCanvasSelection ? '#d0edcc' : '#f4f9f4', cursor: 'pointer', listStyle: 'none', outline: hasCanvasSelection ? '1.5px solid #4CAF50' : undefined }}
                       draggable
                       onDragStart={e => { e.dataTransfer.effectAllowed = 'copy'; setSelectedPlant(rep); }}
-                      onClick={() => setSelectedPlant(prev => prev?.id === rep.id ? null : rep)}
+                      onClick={e => {
+                        if (e.ctrlKey || e.metaKey) { e.preventDefault(); group.forEach(p => onToggleByPlantId(p.id)); return; }
+                        setSelectedPlant(prev => prev?.id === rep.id ? null : rep);
+                      }}
                     >
+                      {hasCanvasSelection && <span style={{ fontSize: '0.65rem', color: '#4CAF50', flexShrink: 0 }}>✓</span>}
                       {rep.image_filename ? <img src={plantImageUrl(rep.image_filename) ?? ''} alt="" style={{ width: 20, height: 20, objectFit: 'cover', borderRadius: '50%' }} /> : <span>🌱</span>}
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rep.name}</span>
                       <span style={{ background: '#3a6b35', color: '#fff', borderRadius: '10px', padding: '0 5px', fontSize: '0.68rem', fontWeight: 700 }}>×{count}</span>

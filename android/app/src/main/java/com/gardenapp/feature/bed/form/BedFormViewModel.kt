@@ -3,6 +3,7 @@ package com.gardenapp.feature.bed.form
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gardenapp.core.model.Bed
 import com.gardenapp.core.network.NetworkResult
 import com.gardenapp.feature.bed.BedRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -105,7 +106,7 @@ class BedFormViewModel @Inject constructor(
                 }
             }
             when (result) {
-                is NetworkResult.Success -> update { copy(isSaving = false, savedBedId = result.data?.id ?: bedId) }
+                is NetworkResult.Success -> update { copy(isSaving = false, savedBedId = (result.data as? Bed)?.id ?: bedId) }
                 is NetworkResult.Error -> update { copy(isSaving = false, error = result.message) }
                 else -> Unit
             }

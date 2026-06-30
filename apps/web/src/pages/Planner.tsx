@@ -23,6 +23,34 @@ import CanvasPlantCircle from '../components/Planner/Canvas/CanvasPlantCircle';
 import AnnotationOverlay from '../components/Planner/Canvas/AnnotationOverlay';
 import PlantSearchPanel from '../components/Planner/Sidebar/PlantSearchPanel';
 
+// ── Canvas plant grouping ─────────────────────────────────────────────────────
+interface GroupedPlant {
+  representative: CanvasPlant;
+  count: number;
+  ids: number[];
+  libraryId?: number;
+}
+
+function computeGroups(plants: CanvasPlant[], mode: 'species' | 'row'): GroupedPlant[] {
+  const buckets = new Map<string, CanvasPlant[]>();
+  for (const cp of plants) {
+    const key = mode === 'species'
+      ? String(cp.library_id ?? cp.name)
+      : String(Math.round(cp.pos_y * 2));
+    buckets.set(key, [...(buckets.get(key) ?? []), cp]);
+  }
+  return [...buckets.values()].map(group => {
+    const centX = group.reduce((s, p) => s + p.pos_x, 0) / group.length;
+    const centY = group.reduce((s, p) => s + p.pos_y, 0) / group.length;
+    return {
+      representative: { ...group[0], pos_x: centX, pos_y: centY },
+      count: group.length,
+      ids: group.map(p => p.id),
+      libraryId: mode === 'species' ? group[0].library_id : undefined,
+    };
+  });
+}
+
 // ── Main Planner ──────────────────────────────────────────────────────────────
 export default function Planner() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -109,10 +137,21 @@ export default function Planner() {
   const scrollToZoomRef = useRef(scrollToZoom);
   useEffect(() => { scrollToZoomRef.current = scrollToZoom; }, [scrollToZoom]);
 
+  const [iconScale, setIconScale] = useState<number>(() => parseFloat(localStorage.getItem('plannerIconScale') || '1.0'));
+  const [labelMode, setLabelMode] = useState<'hover' | 'always'>(() => (localStorage.getItem('plannerLabelMode') as 'hover' | 'always') || 'hover');
+  const [groupMode, setGroupMode] = useState<'none' | 'species' | 'row'>(() => (localStorage.getItem('plannerGroupMode') as 'none' | 'species' | 'row') || 'none');
+  const [highlightIds, setHighlightIds] = useState<Set<number>>(new Set());
+
+  // ── Multi-select ──────────────────────────────────────────────────────────────
+  const [selectedCanvasIds, setSelectedCanvasIds] = useState<Set<number>>(new Set());
+  const [lassoRect, setLassoRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; plantId: number | null } | null>(null);
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const dragBedRef = useRef<{ bedId: number; offsetX: number; offsetY: number } | null>(null);
-  const cpDragRef = useRef<{ cpId: number; mode: 'move' | 'resize'; startX: number; startY?: number; startLeft: number; startTop: number; startDiam: number } | null>(null);
+  const cpDragRef = useRef<{ cpId: number; mode: 'move' | 'resize'; startX: number; startY?: number; startLeft: number; startTop: number; startDiam: number; groupStart?: Array<{ id: number; left: number; top: number }> } | null>(null);
+  const lassoStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // ── Undo / redo history ───────────────────────────────────────────────────────
   type HistoryEntry = { undo: () => Promise<void>; redo: () => Promise<void> };
@@ -168,6 +207,8 @@ export default function Planner() {
 
   async function loadGardenData() {
     if (!gardenId) return;
+    setSelectedCanvasIds(new Set());
+    setContextMenu(null);
     const t0 = performance.now();
 
     // ── Fire all 4 requests in parallel ──
@@ -221,6 +262,9 @@ export default function Planner() {
   useEffect(() => {
     localStorage.setItem('plannerZoom', String(zoom));
   }, [zoom]);
+  useEffect(() => { localStorage.setItem('plannerIconScale', String(iconScale)); }, [iconScale]);
+  useEffect(() => { localStorage.setItem('plannerLabelMode', labelMode); }, [labelMode]);
+  useEffect(() => { localStorage.setItem('plannerGroupMode', groupMode); }, [groupMode]);
 
   // Ctrl+wheel zoom on canvas wrapper
   useEffect(() => {
@@ -421,7 +465,11 @@ export default function Planner() {
     }
   }
 
-  async function handleCanvasPlantClick(cp: CanvasPlant) {
+  async function handleCanvasPlantClick(cp: CanvasPlant, e?: React.MouseEvent) {
+    // Ctrl+click is handled in CanvasPlantCircle before onClick fires; this is the plain click path
+    if (e && (e.ctrlKey || e.metaKey)) { toggleSelectId(cp.id); return; }
+    // Clicking a non-selected plant clears selection
+    if (selectedCanvasIds.size > 0) { setSelectedCanvasIds(new Set()); }
     // Care tool shortcuts — record care without opening panel
     if (careToolType === 'water' || careToolType === 'fertilize') {
       if (!cp.plant_id) return;
@@ -446,6 +494,152 @@ export default function Planner() {
     if (!rightPanelOpen) { setRightPanelOpen(true); localStorage.setItem('plannerRightPanel', 'open'); }
   }
 
+  function handleGroupClick(group: GroupedPlant) {
+    if (groupMode === 'species' && group.libraryId != null) {
+      setHighlightLibId(group.libraryId);
+      setHighlightIds(new Set());
+    } else {
+      setHighlightIds(new Set(group.ids));
+      setHighlightLibId(null);
+    }
+  }
+
+  async function handleDeleteGroup(ids: number[]) {
+    if (!confirm(`Delete all ${ids.length} plant(s) in this group?`)) return;
+    for (const id of ids) {
+      await api('POST', `/api/canvas-plants/${id}/delete`, {});
+    }
+    setCanvasPlants(prev => prev.filter(c => !ids.includes(c.id)));
+  }
+
+  // ── Multi-select helpers ──────────────────────────────────────────────────────
+  function toggleSelectId(id: number) {
+    setSelectedCanvasIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleByPlantId(plantId: number) {
+    const matching = canvasPlants.filter(cp => cp.plant_id === plantId).map(cp => cp.id);
+    if (matching.length === 0) return;
+    setSelectedCanvasIds(prev => {
+      const next = new Set(prev);
+      const allIn = matching.every(id => next.has(id));
+      matching.forEach(id => allIn ? next.delete(id) : next.add(id));
+      return next;
+    });
+  }
+
+  async function handleBulkDeleteSelected() {
+    const ids = [...selectedCanvasIds];
+    if (ids.length === 0) return;
+    if (ids.length > 5 && !confirm(`Delete ${ids.length} plants?`)) return;
+    await api('POST', '/api/canvas-plants/bulk-delete', { ids });
+    setCanvasPlants(prev => prev.filter(c => !selectedCanvasIds.has(c.id)));
+    setSelectedCanvasIds(new Set());
+    setCarePanel(null);
+  }
+
+  async function handleDuplicateSelected() {
+    const plants = canvasPlants.filter(cp => selectedCanvasIds.has(cp.id));
+    if (plants.length === 0) return;
+    const results = await Promise.all(plants.map(cp =>
+      api('POST', `/api/gardens/${gardenId}/canvas-plants`, { library_id: cp.library_id, pos_x: cp.pos_x + 0.5, pos_y: cp.pos_y + 0.5 })
+    ));
+    const newPlants = results.filter(r => r.ok).map((r: { canvas_plant: CanvasPlant }) => r.canvas_plant);
+    if (newPlants.length > 0) {
+      setCanvasPlants(prev => [...prev, ...newPlants]);
+      setSelectedCanvasIds(new Set(newPlants.map((p: CanvasPlant) => p.id)));
+    }
+  }
+
+  function alignSelected(axis: 'left' | 'center-h' | 'right' | 'top' | 'center-v' | 'bottom' | 'distribute-h' | 'distribute-v') {
+    const plants = canvasPlants.filter(cp => selectedCanvasIds.has(cp.id));
+    if (plants.length < 2) return;
+    let updates: Array<{ id: number; pos_x: number; pos_y: number }> = [];
+    if (axis === 'left') {
+      const minX = Math.min(...plants.map(p => p.pos_x - p.radius_ft));
+      updates = plants.map(p => ({ id: p.id, pos_x: minX + p.radius_ft, pos_y: p.pos_y }));
+    } else if (axis === 'center-h') {
+      const cx = (Math.min(...plants.map(p => p.pos_x)) + Math.max(...plants.map(p => p.pos_x))) / 2;
+      updates = plants.map(p => ({ id: p.id, pos_x: cx, pos_y: p.pos_y }));
+    } else if (axis === 'right') {
+      const maxX = Math.max(...plants.map(p => p.pos_x + p.radius_ft));
+      updates = plants.map(p => ({ id: p.id, pos_x: maxX - p.radius_ft, pos_y: p.pos_y }));
+    } else if (axis === 'top') {
+      const minY = Math.min(...plants.map(p => p.pos_y - p.radius_ft));
+      updates = plants.map(p => ({ id: p.id, pos_x: p.pos_x, pos_y: minY + p.radius_ft }));
+    } else if (axis === 'center-v') {
+      const cy = (Math.min(...plants.map(p => p.pos_y)) + Math.max(...plants.map(p => p.pos_y))) / 2;
+      updates = plants.map(p => ({ id: p.id, pos_x: p.pos_x, pos_y: cy }));
+    } else if (axis === 'bottom') {
+      const maxY = Math.max(...plants.map(p => p.pos_y + p.radius_ft));
+      updates = plants.map(p => ({ id: p.id, pos_x: p.pos_x, pos_y: maxY - p.radius_ft }));
+    } else if (axis === 'distribute-h') {
+      const sorted = [...plants].sort((a, b) => a.pos_x - b.pos_x);
+      const step = (sorted[sorted.length - 1].pos_x - sorted[0].pos_x) / (sorted.length - 1);
+      updates = sorted.map((p, i) => ({ id: p.id, pos_x: sorted[0].pos_x + i * step, pos_y: p.pos_y }));
+    } else if (axis === 'distribute-v') {
+      const sorted = [...plants].sort((a, b) => a.pos_y - b.pos_y);
+      const step = (sorted[sorted.length - 1].pos_y - sorted[0].pos_y) / (sorted.length - 1);
+      updates = sorted.map((p, i) => ({ id: p.id, pos_x: p.pos_x, pos_y: sorted[0].pos_y + i * step }));
+    }
+    setCanvasPlants(prev => prev.map(c => { const u = updates.find(u => u.id === c.id); return u ? { ...c, pos_x: u.pos_x, pos_y: u.pos_y } : c; }));
+    Promise.all(updates.map(u => api('POST', `/api/canvas-plants/${u.id}/position`, { x: u.pos_x, y: u.pos_y })));
+  }
+
+  // ── Lasso drag-select on bare canvas ─────────────────────────────────────────
+  function handleCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (activeTool || e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('.canvas-plant-circle') || target.closest('.canvas-bed')) return;
+    const canvasEl = canvasRef.current;
+    if (!canvasEl) return;
+    const rect = canvasEl.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / zoom;
+    const y = (e.clientY - rect.top) / zoom;
+    lassoStartRef.current = { x, y };
+    setLassoRect({ x1: x, y1: y, x2: x, y2: y });
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function handleCanvasPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!lassoStartRef.current) return;
+    const canvasEl = canvasRef.current;
+    if (!canvasEl) return;
+    const rect = canvasEl.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / zoom;
+    const y = (e.clientY - rect.top) / zoom;
+    setLassoRect({ x1: lassoStartRef.current.x, y1: lassoStartRef.current.y, x2: x, y2: y });
+  }
+
+  function handleCanvasPointerUp() {
+    if (!lassoStartRef.current || !lassoRect) { lassoStartRef.current = null; return; }
+    const dragged = Math.abs(lassoRect.x2 - lassoRect.x1) > 5 / zoom || Math.abs(lassoRect.y2 - lassoRect.y1) > 5 / zoom;
+    if (dragged) {
+      const minX = Math.min(lassoRect.x1, lassoRect.x2);
+      const maxX = Math.max(lassoRect.x1, lassoRect.x2);
+      const minY = Math.min(lassoRect.y1, lassoRect.y2);
+      const maxY = Math.max(lassoRect.y1, lassoRect.y2);
+      const inside = canvasPlants.filter(cp => cp.pos_x >= minX && cp.pos_x <= maxX && cp.pos_y >= minY && cp.pos_y <= maxY);
+      setSelectedCanvasIds(prev => { const next = new Set(prev); inside.forEach(cp => next.add(cp.id)); return next; });
+    } else {
+      setSelectedCanvasIds(new Set());
+      setContextMenu(null);
+    }
+    lassoStartRef.current = null;
+    setLassoRect(null);
+  }
+
+  function handleCanvasContextMenu(e: React.MouseEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const target = e.target as HTMLElement;
+    if (target.closest('.canvas-plant-circle') || target.closest('.canvas-bed')) return;
+    setContextMenu({ x: e.clientX, y: e.clientY, plantId: null });
+  }
+
   // Pointer events for canvas plant drag/resize
   function handleCpPointerDown(e: React.PointerEvent, cp: CanvasPlant, mode: 'move' | 'resize') {
     e.stopPropagation(); e.preventDefault();
@@ -454,7 +648,13 @@ export default function Planner() {
     const diam = cp.radius_ft * PX * 2;
     const leftPx = cp.pos_x * PX - cp.radius_ft * PX;
     const topPx = cp.pos_y * PX - cp.radius_ft * PX;
-    cpDragRef.current = { cpId: cp.id, mode, startX: e.clientX, startY: e.clientY, startLeft: leftPx, startTop: topPx, startDiam: diam };
+    let groupStart: Array<{ id: number; left: number; top: number }> | undefined;
+    if (mode === 'move' && selectedCanvasIds.has(cp.id)) {
+      groupStart = canvasPlants
+        .filter(c => selectedCanvasIds.has(c.id) && c.id !== cp.id)
+        .map(c => ({ id: c.id, left: c.pos_x * PX - c.radius_ft * PX, top: c.pos_y * PX - c.radius_ft * PX }));
+    }
+    cpDragRef.current = { cpId: cp.id, mode, startX: e.clientX, startY: e.clientY, startLeft: leftPx, startTop: topPx, startDiam: diam, groupStart };
   }
 
   function handleCpPointerMove(e: React.PointerEvent, cp: CanvasPlant) {
@@ -466,6 +666,12 @@ export default function Planner() {
       const dy = (e.clientY - ref.startY!) / zoom;
       const el = document.getElementById(`cp-${cp.id}`);
       if (el) { el.style.left = `${Math.max(0, ref.startLeft + dx)}px`; el.style.top = `${Math.max(0, ref.startTop + dy)}px`; }
+      if (ref.groupStart) {
+        for (const g of ref.groupStart) {
+          const el2 = document.getElementById(`cp-${g.id}`);
+          if (el2) { el2.style.left = `${Math.max(0, g.left + dx)}px`; el2.style.top = `${Math.max(0, g.top + dy)}px`; }
+        }
+      }
     } else {
       const dx = (e.clientX - ref.startX) / zoom;
       const newDiam = Math.max(PX * 0.5, ref.startDiam + dx * 2);
@@ -488,10 +694,24 @@ export default function Planner() {
       const newX = (newLeft + newDiam / 2) / PX;
       const newY = (newTop + newDiam / 2) / PX;
       const oldX = cp.pos_x, oldY = cp.pos_y;
+      const dxFt = newX - oldX;
+      const dyFt = newY - oldY;
       // Skip history if plant didn't actually move
-      if (Math.abs(newX - oldX) < 0.01 && Math.abs(newY - oldY) < 0.01) return;
+      if (Math.abs(dxFt) < 0.01 && Math.abs(dyFt) < 0.01) return;
       await api('POST', `/api/canvas-plants/${cp.id}/position`, { x: newX, y: newY });
-      setCanvasPlants(prev => prev.map(c => c.id === cp.id ? { ...c, pos_x: newX, pos_y: newY } : c));
+      // Compute and persist group updates
+      const groupUpdates = (ref.groupStart ?? []).map(g => {
+        const gcp = canvasPlants.find(c => c.id === g.id);
+        return gcp ? { id: g.id, newX: gcp.pos_x + dxFt, newY: gcp.pos_y + dyFt } : null;
+      }).filter(Boolean) as Array<{ id: number; newX: number; newY: number }>;
+      setCanvasPlants(prev => {
+        let next = prev.map(c => c.id === cp.id ? { ...c, pos_x: newX, pos_y: newY } : c);
+        for (const g of groupUpdates) next = next.map(c => c.id === g.id ? { ...c, pos_x: g.newX, pos_y: g.newY } : c);
+        return next;
+      });
+      if (groupUpdates.length > 0) {
+        await Promise.all(groupUpdates.map(g => api('POST', `/api/canvas-plants/${g.id}/position`, { x: g.newX, y: g.newY })));
+      }
       pushHistory({
         undo: async () => {
           await api('POST', `/api/canvas-plants/${cp.id}/position`, { x: oldX, y: oldY });
@@ -629,9 +849,13 @@ export default function Planner() {
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
       if (e.key === 'Escape') {
         if (activeTool) deactivateDrawTool();
         if (careToolType) setCareToolType(null);
+        setSelectedCanvasIds(new Set());
+        setContextMenu(null);
       }
       if (e.ctrlKey && e.key === 'z') {
         e.preventDefault();
@@ -647,9 +871,19 @@ export default function Planner() {
           history.current[historyIdx.current].redo();
         }
       }
+      if (e.ctrlKey && e.key === 'a' && !typing) {
+        e.preventDefault();
+        setSelectedCanvasIds(new Set(canvasPlants.map(cp => cp.id)));
+      }
+      if (e.ctrlKey && e.key === 'd' && !typing) {
+        e.preventDefault();
+        handleDuplicateSelected();
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !typing) {
+        if (selectedCanvasIds.size > 0) { e.preventDefault(); handleBulkDeleteSelected(); }
+      }
       // Zoom hotkeys — only when not typing in an input
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !e.ctrlKey && !e.altKey) {
+      if (!typing && !e.ctrlKey && !e.altKey) {
         if (e.key === '+' || e.key === '=') setZoom(prev => Math.min(2, Math.round((prev + 0.1) * 20) / 20));
         if (e.key === '-') setZoom(prev => Math.max(0.3, Math.round((prev - 0.1) * 20) / 20));
         if (e.key === '0') setZoom(1);
@@ -657,7 +891,15 @@ export default function Planner() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeTool, careToolType]);
+  }, [activeTool, careToolType, selectedCanvasIds, canvasPlants]);
+
+  // Dismiss context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    function onDown() { setContextMenu(null); }
+    window.addEventListener('pointerdown', onDown);
+    return () => window.removeEventListener('pointerdown', onDown);
+  }, [!!contextMenu]);
 
   if (!gardenId && gardens && gardens.length === 0) {
     return (
@@ -825,11 +1067,14 @@ export default function Planner() {
         <PlantSearchPanel
           gardenId={gardenId}
           gardenPlants={gardenPlants}
+          canvasPlants={canvasPlants}
+          selectedCanvasIds={selectedCanvasIds}
           selectedPlant={selectedPlant}
           setSelectedPlant={setSelectedPlant}
           showGroupInfo={showGroupInfo}
           showLibInfo={showLibInfo}
           onAddToGarden={handleAddToGarden}
+          onToggleByPlantId={toggleByPlantId}
         />
         {/* Resize handle */}
         <div onMouseDown={handleSidebarResize}
@@ -840,6 +1085,73 @@ export default function Planner() {
 
       {/* ── Canvas ───────────────────────────────────────────────────────────── */}
       <div ref={canvasWrapperRef} style={{ flex: 1, overflow: 'auto', position: 'relative', backgroundColor: canvasBgColor, backgroundImage: 'radial-gradient(circle, rgba(80,120,80,0.45) 1.5px, transparent 1.5px)', backgroundSize: `${PX * zoom}px ${PX * zoom}px` }}>
+        {/* ── View controls bar ──────────────────────────────────────────────── */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 11, background: '#e8f2e5', borderBottom: '1px solid #b8d4b0', fontSize: '0.78rem' }}>
+          <div style={{ padding: '0.25rem 0.75rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#3a5c37' }}>
+              <span style={{ fontWeight: 500 }}>Icon size:</span>
+              <input type="range" min="0.5" max="3" step="0.25" value={iconScale}
+                style={{ width: 80, accentColor: '#3a6b35' }}
+                onChange={e => setIconScale(parseFloat(e.target.value))} />
+              <span style={{ color: '#7a907a', minWidth: 28 }}>{iconScale.toFixed(2)}×</span>
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ color: '#3a5c37', fontWeight: 500 }}>Labels:</span>
+              {(['hover', 'always'] as const).map(m => (
+                <button key={m} onClick={() => setLabelMode(m)}
+                  style={{ fontSize: '0.72rem', padding: '0.1rem 0.4rem', border: '1px solid #3a6b35', borderRadius: 3, cursor: 'pointer', background: labelMode === m ? '#3a6b35' : 'transparent', color: labelMode === m ? '#fff' : '#3a6b35' }}>
+                  {m === 'hover' ? 'Hover' : 'Always'}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ color: '#3a5c37', fontWeight: 500 }}>Group by:</span>
+              {([{ mode: 'none', label: 'Off' }, { mode: 'species', label: 'Species' }, { mode: 'row', label: 'Row' }] as const).map(({ mode, label }) => (
+                <button key={mode}
+                  onClick={() => { setGroupMode(mode); if (mode === 'none') setHighlightIds(new Set()); }}
+                  style={{ fontSize: '0.72rem', padding: '0.1rem 0.4rem', border: '1px solid #3a6b35', borderRadius: 3, cursor: 'pointer', background: groupMode === mode ? '#3a6b35' : 'transparent', color: groupMode === mode ? '#fff' : '#3a6b35' }}>
+                  {label}
+                </button>
+              ))}
+              {groupMode !== 'none' && (
+                <span style={{ color: '#b06010', fontSize: '0.68rem' }}>(drag/care disabled)</span>
+              )}
+            </div>
+          </div>
+
+          {/* ── Selection toolbar (shown when plants are selected) ── */}
+          {selectedCanvasIds.size > 0 && (
+            <div style={{ padding: '0.25rem 0.75rem', borderTop: '1px solid #b8d4b0', background: '#d4edcc', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 600, color: '#2d5a1b', fontSize: '0.8rem' }}>{selectedCanvasIds.size} plant{selectedCanvasIds.size > 1 ? 's' : ''} selected</span>
+              <span style={{ color: '#9ab49a', fontSize: '0.7rem' }}>Ctrl+click to add/remove · Drag to move all</span>
+              {selectedCanvasIds.size >= 2 && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                  <span style={{ color: '#3a5c37', fontSize: '0.72rem', fontWeight: 500 }}>Align:</span>
+                  {([
+                    { k: 'left', t: '⫿ Left' }, { k: 'center-h', t: '⊟ H-center' }, { k: 'right', t: '⫾ Right' },
+                    { k: 'top', t: '⊤ Top' }, { k: 'center-v', t: '⊞ V-center' }, { k: 'bottom', t: '⊥ Bottom' },
+                    { k: 'distribute-h', t: '↔ Dist-H' }, { k: 'distribute-v', t: '↕ Dist-V' },
+                  ] as const).map(({ k, t }) => (
+                    <button key={k} title={t} onClick={() => alignSelected(k)}
+                      style={{ fontSize: '0.68rem', padding: '0.1rem 0.35rem', border: '1px solid #3a6b35', borderRadius: 3, cursor: 'pointer', background: 'transparent', color: '#3a6b35', whiteSpace: 'nowrap' }}>
+                      {t}
+                    </button>
+                  ))}
+                </span>
+              )}
+              <div style={{ display: 'flex', gap: '0.3rem', marginLeft: 'auto' }}>
+                <button onClick={handleDuplicateSelected} title="Ctrl+D" style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', border: '1px solid #3a6b35', borderRadius: 3, cursor: 'pointer', background: '#3a6b35', color: '#fff' }}>⎘ Duplicate</button>
+                <button onClick={async () => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const plantIds = canvasPlants.filter(cp => selectedCanvasIds.has(cp.id) && cp.plant_id).map(cp => cp.plant_id!);
+                  if (plantIds.length) await api('POST', '/api/plants/bulk-care', { ids: plantIds, last_watered: today, watering_amount: waterAmount });
+                }} style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', border: '1px solid #5a9e54', borderRadius: 3, cursor: 'pointer', background: '#5a9e54', color: '#fff' }}>💧 Water</button>
+                <button onClick={handleBulkDeleteSelected} title="Delete" style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', border: '1px solid #b84040', borderRadius: 3, cursor: 'pointer', background: '#b84040', color: '#fff' }}>🗑 Delete</button>
+                <button onClick={() => setSelectedCanvasIds(new Set())} style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', border: '1px solid #888', borderRadius: 3, cursor: 'pointer', background: 'transparent', color: '#555' }}>✕ Clear</button>
+              </div>
+            </div>
+          )}
+        </div>
         {selectedPlant && (
           <div style={{ position: 'sticky', top: 0, zIndex: 10, background: '#d4edcc', padding: '0.3rem 0.75rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid #a8d4a0', flexWrap: 'wrap' }}>
             <strong>Selected:</strong> {selectedPlant.name}
@@ -870,12 +1182,16 @@ export default function Planner() {
         <div
           id="planner-canvas"
           ref={canvasRef}
-          style={{ position: 'relative', minWidth: '1200px', minHeight: '900px', transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${900 / zoom}px`, backgroundImage: garden?.background_image ? `url(/static/garden_backgrounds/${garden.background_image})` : undefined, backgroundSize: garden?.background_image ? 'cover' : undefined, backgroundRepeat: garden?.background_image ? 'no-repeat' : undefined, cursor: careToolType === 'water' ? CURSOR_WATER : careToolType === 'fertilize' ? CURSOR_FERTILIZE : careToolType === 'weed' ? CURSOR_WEED : undefined, ...patternStyle(canvasBgPattern) }}
+          style={{ position: 'relative', minWidth: '1200px', minHeight: '900px', transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${900 / zoom}px`, backgroundImage: garden?.background_image ? `url(/static/garden_backgrounds/${garden.background_image})` : undefined, backgroundSize: garden?.background_image ? 'cover' : undefined, backgroundRepeat: garden?.background_image ? 'no-repeat' : undefined, cursor: careToolType === 'water' ? CURSOR_WATER : careToolType === 'fertilize' ? CURSOR_FERTILIZE : careToolType === 'weed' ? CURSOR_WEED : lassoRect ? 'crosshair' : undefined, ...patternStyle(canvasBgPattern) }}
           onDragOver={e => { handleCanvasDragOver(e); if (selectedPlant) e.preventDefault(); }}
           onDrop={e => {
             if (dragBedRef.current) { handleCanvasDropBed(e); return; }
             if (selectedPlant) handleCanvasDrop(e);
           }}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
+          onContextMenu={handleCanvasContextMenu}
         >
           {/* Canvas beds */}
           {canvasBeds.map(bed => (
@@ -925,21 +1241,41 @@ export default function Planner() {
           ))}
 
           {/* Canvas plant circles */}
-          {canvasPlants.map(cp => (
-            <CanvasPlantCircle
-              key={cp.id}
-              cp={cp}
-              careToolType={careToolType}
-              careToolFlash={careToolFlash}
-              waterAmount={waterAmount}
-              highlightLibId={highlightLibId}
-              onPointerDown={(e, mode) => handleCpPointerDown(e, cp, mode)}
-              onPointerMove={e => handleCpPointerMove(e, cp)}
-              onPointerUp={e => handleCpPointerUp(e, cp)}
-              onClick={() => handleCanvasPlantClick(cp)}
-              onDelete={() => handleDeleteCanvasPlant(cp)}
-            />
-          ))}
+          {groupMode === 'none'
+            ? canvasPlants.map(cp => (
+                <CanvasPlantCircle key={cp.id} cp={cp}
+                  iconScale={iconScale} labelMode={labelMode}
+                  groupCount={1} isGrouped={false}
+                  careToolType={careToolType} careToolFlash={careToolFlash}
+                  waterAmount={waterAmount}
+                  highlightLibId={highlightLibId} highlightIds={highlightIds}
+                  isSelected={selectedCanvasIds.has(cp.id)}
+                  onPointerDown={(e, mode) => handleCpPointerDown(e, cp, mode)}
+                  onPointerMove={e => handleCpPointerMove(e, cp)}
+                  onPointerUp={e => handleCpPointerUp(e, cp)}
+                  onClick={e => handleCanvasPlantClick(cp, e)}
+                  onDelete={() => handleDeleteCanvasPlant(cp)}
+                  onToggleSelect={() => toggleSelectId(cp.id)}
+                  onContextMenu={e => setContextMenu({ x: e.clientX, y: e.clientY, plantId: cp.id })}
+                />
+              ))
+            : computeGroups(canvasPlants, groupMode).map(group => (
+                <CanvasPlantCircle key={`group-${group.ids.join('-')}`}
+                  cp={group.representative}
+                  iconScale={iconScale} labelMode={labelMode}
+                  groupCount={group.count} isGrouped={true}
+                  careToolType={null} careToolFlash={null}
+                  waterAmount={waterAmount}
+                  highlightLibId={highlightLibId} highlightIds={highlightIds}
+                  isSelected={false}
+                  onPointerDown={() => {}} onPointerMove={() => {}} onPointerUp={() => {}}
+                  onClick={() => handleGroupClick(group)}
+                  onDelete={() => handleDeleteGroup(group.ids)}
+                  onToggleSelect={() => {}}
+                  onContextMenu={() => {}}
+                />
+              ))
+          }
           {/* ── SVG annotation overlay ────────────────────────────────────────── */}
           <AnnotationOverlay
             activeTool={activeTool} activeObjectType={activeObjectType}
@@ -949,6 +1285,21 @@ export default function Planner() {
             annShapes={annShapes}
             onShapesChange={setAnnShapes}
           />
+
+          {/* ── Lasso selection rectangle ─────────────────────────────────────── */}
+          {lassoRect && (
+            <div style={{
+              position: 'absolute',
+              left: Math.min(lassoRect.x1, lassoRect.x2),
+              top: Math.min(lassoRect.y1, lassoRect.y2),
+              width: Math.abs(lassoRect.x2 - lassoRect.x1),
+              height: Math.abs(lassoRect.y2 - lassoRect.y1),
+              border: '1.5px dashed #4CAF50',
+              background: 'rgba(76,175,80,0.08)',
+              pointerEvents: 'none',
+              zIndex: 12,
+            }} />
+          )}
         </div>
       </div>
 
@@ -1056,6 +1407,69 @@ export default function Planner() {
 
       {/* ── Help Modal ──────────────────────────────────────────────────────── */}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+
+      {/* ── Context menu ────────────────────────────────────────────────────── */}
+      {contextMenu && (() => {
+        const cp = contextMenu.plantId != null ? canvasPlants.find(c => c.id === contextMenu.plantId) : null;
+        const multiSel = selectedCanvasIds.size > 1 && contextMenu.plantId != null && selectedCanvasIds.has(contextMenu.plantId);
+        const btnStyle: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '0.4rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem', color: '#1a3018' };
+        return (
+          <div
+            onPointerDown={e => e.stopPropagation()}
+            style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, background: '#fff', border: '1px solid #c0d4be', borderRadius: 6, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', zIndex: 9999, minWidth: 168, overflow: 'hidden', fontSize: '0.82rem' }}
+          >
+            {multiSel ? (
+              <>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={() => { setContextMenu(null); handleDuplicateSelected(); }}>⎘ Duplicate {selectedCanvasIds.size} plants</button>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const today = new Date().toISOString().split('T')[0];
+                    const ids = canvasPlants.filter(c => selectedCanvasIds.has(c.id) && c.plant_id).map(c => c.plant_id!);
+                    if (ids.length) await api('POST', '/api/plants/bulk-care', { ids, last_watered: today, watering_amount: waterAmount });
+                  }}>💧 Water {selectedCanvasIds.size} plants</button>
+                <hr style={{ margin: '0.2rem 0', borderColor: '#e0ece0' }} />
+                <button style={{ ...btnStyle, color: '#b84040' }} onMouseEnter={e => (e.currentTarget.style.background='#fff0f0')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={() => { setContextMenu(null); handleBulkDeleteSelected(); }}>🗑 Delete {selectedCanvasIds.size} plants</button>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={() => { setContextMenu(null); setSelectedCanvasIds(new Set()); }}>✕ Clear selection</button>
+              </>
+            ) : cp ? (
+              <>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={() => { setContextMenu(null); handleCanvasPlantClick(cp); }}>ℹ Info / Care</button>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const r = await api('POST', `/api/gardens/${gardenId}/canvas-plants`, { library_id: cp.library_id, pos_x: cp.pos_x + 0.5, pos_y: cp.pos_y + 0.5 });
+                    if (r.ok) setCanvasPlants(prev => [...prev, r.canvas_plant]);
+                  }}>⎘ Duplicate</button>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={async () => {
+                    setContextMenu(null);
+                    if (!cp.plant_id) return;
+                    const today = new Date().toISOString().split('T')[0];
+                    await api('POST', `/api/plants/${cp.plant_id}/care`, { last_watered: today, watering_amount: waterAmount });
+                    setCareToolFlash(cp.id); setTimeout(() => setCareToolFlash(null), 1200);
+                  }}>💧 Water now</button>
+                <hr style={{ margin: '0.2rem 0', borderColor: '#e0ece0' }} />
+                <button style={{ ...btnStyle, color: '#b84040' }} onMouseEnter={e => (e.currentTarget.style.background='#fff0f0')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={() => { setContextMenu(null); handleDeleteCanvasPlant(cp); }}>🗑 Delete</button>
+              </>
+            ) : (
+              <>
+                <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  onClick={() => { setContextMenu(null); setSelectedCanvasIds(new Set(canvasPlants.map(c => c.id))); }}>☐ Select all ({canvasPlants.length})</button>
+                {selectedCanvasIds.size > 0 && (
+                  <button style={btnStyle} onMouseEnter={e => (e.currentTarget.style.background='#f0f8ef')} onMouseLeave={e => (e.currentTarget.style.background='none')}
+                    onClick={() => { setContextMenu(null); setSelectedCanvasIds(new Set()); }}>✕ Clear selection</button>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })()}
     </div>
   </PlannerCtx.Provider>
   );

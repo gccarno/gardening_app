@@ -1,5 +1,6 @@
 package com.gardenapp.feature.bed.detail
 
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -49,18 +50,28 @@ class BedDetailViewModel @Inject constructor(
 
     private var searchJob: Job? = null
 
-    init { loadGrid() }
+    init {
+        Log.d(TAG, "init bedId=$bedId")
+        loadGrid()
+    }
 
     fun loadGrid() {
         viewModelScope.launch {
+            Log.d(TAG, "loadGrid bedId=$bedId")
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             when (val r = repository.getBedGrid(bedId)) {
-                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(
-                    bed = r.data.bed, placed = r.data.placed, isLoading = false,
-                )
-                is NetworkResult.Error -> _uiState.value = _uiState.value.copy(
-                    isLoading = false, error = r.message,
-                )
+                is NetworkResult.Success -> {
+                    Log.d(TAG, "loadGrid ok bed='${r.data.bed.name}' placed=${r.data.placed.size}")
+                    _uiState.value = _uiState.value.copy(
+                        bed = r.data.bed, placed = r.data.placed, isLoading = false,
+                    )
+                }
+                is NetworkResult.Error -> {
+                    Log.e(TAG, "loadGrid error: ${r.message}")
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false, error = r.message,
+                    )
+                }
                 else -> Unit
             }
         }
@@ -123,11 +134,12 @@ class BedDetailViewModel @Inject constructor(
     fun onLibraryEntrySelected(entry: LibraryListEntry) {
         val cell = _uiState.value.showPickerForCell ?: return
         val spacingIn = entry.spacingIn?.toInt()?.coerceAtLeast(6) ?: 12
+        Log.d(TAG, "placePlant cell=${cell} libraryId=${entry.id} spacing=$spacingIn")
         _uiState.value = _uiState.value.copy(showPickerForCell = null, isPlacing = true)
         viewModelScope.launch {
             when (val r = repository.placePlant(bedId, cell.first, cell.second, entry.id, spacingIn)) {
                 is NetworkResult.Success -> {
-                    // Add to local state immediately; full reload refreshes ordering
+                    Log.d(TAG, "placePlant ok id=${r.data.id} name='${r.data.plantName}'")
                     val newPlant = GridPlant(
                         id = r.data.id, gridX = cell.first, gridY = cell.second,
                         plantId = r.data.plantId, plantName = r.data.plantName,
@@ -139,12 +151,14 @@ class BedDetailViewModel @Inject constructor(
                         message = "${entry.name} placed",
                     )
                 }
-                is NetworkResult.Error ->
+                is NetworkResult.Error -> {
+                    Log.e(TAG, "placePlant error: ${r.message}")
                     _uiState.value = _uiState.value.copy(
                         isPlacing = false,
                         error = if (r.message?.contains("409") == true || r.message?.contains("overlap") == true)
                             "That cell is already occupied" else r.message,
                     )
+                }
                 else -> Unit
             }
         }
@@ -199,4 +213,8 @@ class BedDetailViewModel @Inject constructor(
     fun dismissCareSheet() { _uiState.value = _uiState.value.copy(careSheetPlant = null) }
     fun dismissMessage() { _uiState.value = _uiState.value.copy(message = null) }
     fun dismissError() { _uiState.value = _uiState.value.copy(error = null) }
+
+    companion object {
+        private const val TAG = "BedDetailVM"
+    }
 }

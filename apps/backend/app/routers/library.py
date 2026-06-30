@@ -185,6 +185,13 @@ def api_library_clone(entry_id: int, body: dict, db: Session = Depends(get_db)):
     return {'id': new_entry.id, 'name': new_entry.name}
 
 
+_JSON_FIELDS = {
+    'good_neighbors', 'bad_neighbors', 'how_to_grow', 'faqs', 'nutrition',
+    'bloom_months', 'fruit_months', 'growth_months', 'attracts',
+    'propagation_methods', 'pruning_months',
+}
+
+
 @router.post('/library/{entry_id}/patch')
 def api_library_patch(entry_id: int, body: dict, db: Session = Depends(get_db)):
     """Patch any patchable fields on a plant library entry."""
@@ -193,6 +200,9 @@ def api_library_patch(entry_id: int, body: dict, db: Session = Depends(get_db)):
     if unknown:
         raise HTTPException(status_code=400, detail=f'Unknown or non-patchable fields: {sorted(unknown)}')
     for field, value in body.items():
+        if field in _JSON_FIELDS and value is not None and not isinstance(value, str):
+            import json as _json_mod
+            value = _json_mod.dumps(value)
         setattr(lib, field, value)
     db.commit()
     return {'ok': True}

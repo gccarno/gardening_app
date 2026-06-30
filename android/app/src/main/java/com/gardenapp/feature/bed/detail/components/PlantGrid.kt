@@ -1,6 +1,5 @@
 package com.gardenapp.feature.bed.detail.components
 
-import androidx.compose.foundation.gestures.detectLongPressGesture
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -97,11 +96,11 @@ fun PlantGrid(
                     }
                 }
                 .pointerInput(placed, cols, rows) {
-                    detectLongPressGesture { offset ->
+                    detectTapGestures(onLongPress = { offset ->
                         val col = (offset.x / cellPx).toInt().coerceIn(0, cols - 1)
                         val row = (offset.y / cellPx).toInt().coerceIn(0, rows - 1)
                         onCellLongPress(col * 12, row * 12)
-                    }
+                    })
                 },
         )
     }

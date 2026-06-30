@@ -22,7 +22,7 @@ export default function PlantDetail() {
 
   const [tab, setTab] = useState<Tab>('my-plant');
   const [form, setForm] = useState({
-    name: '', type: '', planted_date: '', expected_harvest: '', notes: '',
+    name: '', type: '', planted_date: '', expected_harvest: '', notes: '', succession_label: '',
   });
 
   useEffect(() => {
@@ -33,6 +33,7 @@ export default function PlantDetail() {
         planted_date: plant.planted_date ?? '',
         expected_harvest: plant.expected_harvest ?? '',
         notes: plant.notes ?? '',
+        succession_label: plant.succession_label ?? '',
       });
     }
   }, [plant]);
@@ -46,6 +47,7 @@ export default function PlantDetail() {
       planted_date: form.planted_date || undefined,
       expected_harvest: form.expected_harvest || undefined,
       notes: form.notes || undefined,
+      succession_label: form.succession_label || undefined,
     });
   }
 
@@ -119,6 +121,11 @@ export default function PlantDetail() {
             <label>Planted Date <input type="date" value={form.planted_date} onChange={e => setForm(f => ({ ...f, planted_date: e.target.value }))} /></label>
             <label>Expected Harvest <input type="date" value={form.expected_harvest} onChange={e => setForm(f => ({ ...f, expected_harvest: e.target.value }))} /></label>
             <label>Notes <textarea rows={3} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></label>
+            <label>Succession Wave
+              <input type="text" value={form.succession_label}
+                onChange={e => setForm(f => ({ ...f, succession_label: e.target.value }))}
+                placeholder="e.g. Wave 1, Spring, Early" />
+            </label>
             <button type="submit" disabled={updateMut.isPending}>Save Changes</button>
           </form>
 

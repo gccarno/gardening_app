@@ -10,6 +10,7 @@ import com.gardenapp.core.model.PlantDetail
 
 private val STATUSES = listOf("planning", "seeded", "germinated", "seedling", "transplanted", "growing", "harvested", "dormant")
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyPlantTab(
     plant: PlantDetail,

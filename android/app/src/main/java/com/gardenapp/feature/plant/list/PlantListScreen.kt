@@ -121,7 +121,7 @@ private fun PlantRow(plant: Plant, onClick: () -> Unit, onDelete: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showConfirm = false },
             title = { Text("Remove plant?") },
-            text = { Text("Delete "${plant.name}"?") },
+            text = { Text("Delete \"${plant.name}\"?") },
             confirmButton = { TextButton(onClick = { showConfirm = false; onDelete() }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { showConfirm = false }) { Text("Cancel") } },
         )

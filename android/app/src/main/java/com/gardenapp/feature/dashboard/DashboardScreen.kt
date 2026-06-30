@@ -125,6 +125,7 @@ fun DashboardScreen(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun GardenSelector(
     gardens: List<Pair<Int, String>>,
     selectedId: Int?,

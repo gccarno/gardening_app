@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchPlants, fetchPlant, createPlant, updatePlant,
-  deletePlant, setPlantStatus, type Plant,
+  deletePlant, setPlantStatus, bulkDeletePlants, bulkStatusPlants, bulkCarePlants,
+  type Plant,
 } from '../api/plants';
 
 export function usePlants(params?: { garden_id?: number; status?: string }) {
@@ -50,6 +51,32 @@ export function useSetPlantStatus() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) => setPlantStatus(id, status),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plants'] }),
+  });
+}
+
+export function useBulkDeletePlants() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: number[]) => bulkDeletePlants(ids),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plants'] }),
+  });
+}
+
+export function useBulkStatusPlants() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, status }: { ids: number[]; status: string }) =>
+      bulkStatusPlants(ids, status),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plants'] }),
+  });
+}
+
+export function useBulkCarePlants() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, care }: { ids: number[]; care: Record<string, string | null> }) =>
+      bulkCarePlants(ids, care),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plants'] }),
   });
 }

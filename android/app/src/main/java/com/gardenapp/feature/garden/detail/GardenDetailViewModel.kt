@@ -8,6 +8,7 @@ import com.gardenapp.core.model.WeatherData
 import com.gardenapp.core.network.NetworkResult
 import com.gardenapp.feature.garden.GardenRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,17 +42,17 @@ class GardenDetailViewModel @Inject constructor(
     fun load() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            when (val r = repository.getGarden(gardenId)) {
-                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(garden = r.data)
-                is NetworkResult.Error -> _uiState.value = _uiState.value.copy(error = r.message)
-                else -> Unit
-            }
-            // Load weather in parallel (non-blocking on garden)
-            when (val w = repository.getWeather(gardenId)) {
-                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(weather = w.data)
-                else -> Unit // weather is optional; don't show error
-            }
-            _uiState.value = _uiState.value.copy(isLoading = false)
+            val gardenDeferred = async { repository.getGarden(gardenId) }
+            val weatherDeferred = async { repository.getWeather(gardenId) }
+            val gardenResult = gardenDeferred.await()
+            val weatherResult = weatherDeferred.await()
+            _uiState.value = _uiState.value.copy(
+                garden = (gardenResult as? NetworkResult.Success)?.data
+                    ?: _uiState.value.garden,
+                weather = (weatherResult as? NetworkResult.Success)?.data,
+                error = (gardenResult as? NetworkResult.Error)?.message,
+                isLoading = false,
+            )
         }
     }
 

@@ -9,8 +9,10 @@ import com.gardenapp.core.model.Garden
 import com.gardenapp.core.model.WeatherData
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
@@ -81,17 +83,19 @@ class GardenRepository @Inject constructor(
         // Check cache first (TTL 30 min)
         val cached = weatherDao.getWeatherCache(gardenId)
         if (cached != null && !cached.isStale()) {
-            return NetworkResult.Success(json.decodeFromString(cached.data))
+            withContext(Dispatchers.Default) { NetworkResult.Success(json.decodeFromString<WeatherData>(cached.data)) }
+        } else {
+            val weather = api.getGardenWeather(gardenId)
+            val encoded = withContext(Dispatchers.Default) { json.encodeToString(weather) }
+            weatherDao.upsertWeatherCache(
+                WeatherCacheEntity(gardenId = gardenId, data = encoded)
+            )
+            NetworkResult.Success(weather)
         }
-        val weather = api.getGardenWeather(gardenId)
-        weatherDao.upsertWeatherCache(
-            WeatherCacheEntity(gardenId = gardenId, data = json.encodeToString(weather))
-        )
-        NetworkResult.Success(weather)
     } catch (e: Exception) {
         // Try stale cache on error
         val stale = weatherDao.getWeatherCache(gardenId)
-        if (stale != null) NetworkResult.Success(json.decodeFromString(stale.data))
+        if (stale != null) withContext(Dispatchers.Default) { NetworkResult.Success(json.decodeFromString<WeatherData>(stale.data)) }
         else NetworkResult.Error(e.message ?: "Weather unavailable")
     }
 

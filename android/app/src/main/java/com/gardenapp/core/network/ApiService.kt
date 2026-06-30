@@ -88,7 +88,7 @@ interface ApiService {
     suspend fun getBed(@Path("id") id: Int): Bed
 
     @POST("beds")
-    suspend fun createBed(@Body body: Map<String, @JvmSuppressWildcards Any?>): JsonElement
+    suspend fun createBed(@Body body: Map<String, @JvmSuppressWildcards Any?>): Bed
 
     @PUT("beds/{id}")
     suspend fun updateBed(

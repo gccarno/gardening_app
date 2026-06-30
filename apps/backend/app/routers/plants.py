@@ -89,6 +89,7 @@ def _serialize_plant(p: Plant) -> dict:
         'transplant_offset':   p.library_entry.transplant_offset   if p.library_entry else None,
         'temp_max_f':          p.library_entry.temp_max_f          if p.library_entry else None,
         'bed_names':           [bp.bed.name for bp in p.bed_plants if bp.bed],
+        'succession_label':    p.succession_label,
     }
 
 
@@ -128,6 +129,7 @@ def api_plants_create(body: dict, db: Session = Depends(get_db)):
         library_id=body.get('library_id') or None,
         planted_date=date.fromisoformat(planted) if planted else None,
         expected_harvest=date.fromisoformat(harvest) if harvest else None,
+        succession_label=body.get('succession_label') or None,
     )
     db.add(plant)
     db.commit()
@@ -295,6 +297,20 @@ def api_plants_bulk_care(body: dict, db: Session = Depends(get_db)):
     return {'ok': True, 'updated': updated}
 
 
+# NOTE: must be registered BEFORE /{plant_id} routes
+@router.post('/plants/bulk-delete')
+def api_plants_bulk_delete(body: dict, db: Session = Depends(get_db)):
+    ids = body.get('ids', [])
+    deleted = 0
+    for plant_id in ids:
+        plant = db.get(Plant, plant_id)
+        if plant:
+            db.delete(plant)
+            deleted += 1
+    db.commit()
+    return {'ok': True, 'deleted': deleted}
+
+
 @router.put('/plants/{plant_id}')
 def api_plant_update(plant_id: int, body: dict, db: Session = Depends(get_db)):
     plant = get_or_404(db, Plant, plant_id)
@@ -310,6 +326,8 @@ def api_plant_update(plant_id: int, body: dict, db: Session = Depends(get_db)):
     if 'expected_harvest' in body:
         v = body.get('expected_harvest')
         plant.expected_harvest = date.fromisoformat(v) if v else None
+    if 'succession_label' in body:
+        plant.succession_label = body.get('succession_label') or None
     db.commit()
     return _serialize_plant(plant)
 

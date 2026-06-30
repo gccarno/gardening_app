@@ -1,5 +1,6 @@
 package com.gardenapp.feature.canvas
 
+import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -36,7 +37,7 @@ class CanvasPlannerViewModel @Inject constructor(
     private val repository: CanvasPlannerRepository,
 ) : ViewModel() {
 
-    private val gardenId: Int = checkNotNull(savedStateHandle["gardenId"])
+    private val gardenId: Int = checkNotNull(savedStateHandle.get<String>("gardenId")?.toInt())
 
     private val _uiState = MutableStateFlow(CanvasPlannerUiState(gardenId = gardenId))
     val uiState: StateFlow<CanvasPlannerUiState> = _uiState
@@ -45,31 +46,42 @@ class CanvasPlannerViewModel @Inject constructor(
     private val redoStack = ArrayDeque<CanvasSnapshot>()
 
     init {
+        Log.d(TAG, "init gardenId=$gardenId")
         load()
     }
 
     fun load() {
         viewModelScope.launch {
+            Log.d(TAG, "load() gardenId=$gardenId")
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             val bedsResult = repository.loadBeds(gardenId)
             val plantsResult = repository.loadCanvasPlants(gardenId)
 
             if (bedsResult is NetworkResult.Success) {
                 val all = bedsResult.data
+                Log.d(TAG, "load() beds=${all.size} placed=${all.count { it.posX != null }}")
                 _uiState.value = _uiState.value.copy(
                     sidebarBeds = all,
                     placedBeds = all.filter { it.posX != null && it.posY != null },
                 )
             } else if (bedsResult is NetworkResult.Error) {
+                Log.e(TAG, "load() beds error: ${bedsResult.message}")
                 _uiState.value = _uiState.value.copy(error = bedsResult.message)
             }
 
             if (plantsResult is NetworkResult.Success) {
+                Log.d(TAG, "load() canvasPlants=${plantsResult.data.size}")
                 _uiState.value = _uiState.value.copy(canvasPlants = plantsResult.data)
+            } else if (plantsResult is NetworkResult.Error) {
+                Log.e(TAG, "load() canvas plants error: ${plantsResult.message}")
             }
 
             _uiState.value = _uiState.value.copy(isLoading = false)
         }
+    }
+
+    companion object {
+        private const val TAG = "CanvasVM"
     }
 
     fun setTransform(transform: ViewTransform) {

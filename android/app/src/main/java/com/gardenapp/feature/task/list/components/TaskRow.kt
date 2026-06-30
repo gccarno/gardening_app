@@ -123,15 +123,20 @@ fun TaskRow(
 
 @Composable
 private fun dueDateColor(dueDate: String): androidx.compose.ui.graphics.Color {
-    return try {
+    val state = try {
         val date = java.time.LocalDate.parse(dueDate)
         val today = java.time.LocalDate.now()
         when {
-            date.isBefore(today) -> MaterialTheme.colorScheme.error
-            date == today -> MaterialTheme.colorScheme.primary
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
+            date.isBefore(today) -> -1
+            date == today -> 0
+            else -> 1
         }
     } catch (e: Exception) {
-        MaterialTheme.colorScheme.onSurfaceVariant
+        1
+    }
+    return when (state) {
+        -1 -> MaterialTheme.colorScheme.error
+        0 -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 }

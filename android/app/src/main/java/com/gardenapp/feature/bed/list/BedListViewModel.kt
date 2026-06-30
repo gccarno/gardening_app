@@ -1,5 +1,6 @@
 package com.gardenapp.feature.bed.list
 
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,20 +32,31 @@ class BedListViewModel @Inject constructor(
     val uiState: StateFlow<BedListUiState> = _uiState.asStateFlow()
 
     init {
+        Log.d(TAG, "init gardenId=$gardenId")
         if (gardenId != null) {
             repository.bedsForGarden(gardenId)
-                .onEach { beds -> _uiState.value = _uiState.value.copy(beds = beds) }
+                .onEach { beds ->
+                    Log.d(TAG, "bedsForGarden emit count=${beds.size}")
+                    _uiState.value = _uiState.value.copy(beds = beds)
+                }
                 .launchIn(viewModelScope)
             refresh()
+        } else {
+            Log.e(TAG, "init gardenId is null — beds will not load")
         }
     }
 
     fun refresh() {
         val id = gardenId ?: return
         viewModelScope.launch {
+            Log.d(TAG, "refresh gardenId=$id")
             _uiState.value = _uiState.value.copy(isRefreshing = true, error = null)
-            if (repository.refreshBeds(id) is NetworkResult.Error) {
+            val result = repository.refreshBeds(id)
+            if (result is NetworkResult.Error) {
+                Log.e(TAG, "refresh error: ${result.message}")
                 _uiState.value = _uiState.value.copy(error = "Could not refresh beds")
+            } else if (result is NetworkResult.Success) {
+                Log.d(TAG, "refresh ok count=${result.data.size}")
             }
             _uiState.value = _uiState.value.copy(isRefreshing = false)
         }
@@ -59,4 +71,8 @@ class BedListViewModel @Inject constructor(
     }
 
     fun dismissError() { _uiState.value = _uiState.value.copy(error = null) }
+
+    companion object {
+        private const val TAG = "BedListVM"
+    }
 }

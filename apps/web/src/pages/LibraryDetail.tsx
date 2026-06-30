@@ -152,6 +152,12 @@ export default function LibraryDetail() {
             <button onClick={handleAddToPlanning} disabled={addingPlant || !selectedGarden}>
               {addingPlant ? 'Adding…' : '+ Add to Planning'}
             </button>
+            <Link
+              to={`/library/${entryId}/edit`}
+              style={{ background: '#f0f7ef', border: '1px solid #b0c8ae', color: '#3a5c37', padding: '0.38rem 0.75rem', borderRadius: '4px', cursor: 'pointer', font: 'inherit', textDecoration: 'none' }}
+            >
+              Edit
+            </Link>
             <button
               onClick={() => { setCloneName(`${entry.name as string} (Clone)`); setCloneMsg(''); setShowCloneModal(true); }}
               style={{ background: '#f0f7ef', border: '1px solid #b0c8ae', color: '#3a5c37', padding: '0.38rem 0.75rem', borderRadius: '4px', cursor: 'pointer', font: 'inherit' }}
