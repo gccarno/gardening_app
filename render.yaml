@@ -1,0 +1,27 @@
+# Render blueprint — deploys the FastAPI backend + built React SPA as one
+# free-tier web service. See DEPLOYMENT.md for the full setup walkthrough.
+services:
+  - type: web
+    name: garden-app
+    runtime: python
+    plan: free
+    buildCommand: |
+      pip install uv
+      uv sync --frozen --no-dev
+      npm ci
+      npm run build --workspace apps/web
+    startCommand: uv run uvicorn apps.backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL          # Neon connection string (postgresql+psycopg://...)
+        sync: false
+      - key: GCS_STATIC_BUCKET     # public bucket holding the static image tree
+        sync: false
+      - key: JOB_TOKEN             # shared secret for /api/admin/run-* cron endpoints
+        generateValue: true
+      - key: ENABLE_SCHEDULER      # in-process cron never fires on free tier
+        value: '0'
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/gcs-service-account.json
+      - key: PYTHON_VERSION
+        value: '3.11'

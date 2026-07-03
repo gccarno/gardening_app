@@ -171,6 +171,11 @@ def run_backup(dry_run: bool = False) -> None:
     Exits early (warning only) if GCS_BUCKET_NAME is not configured so the
     server starts normally in dev environments without GCS credentials.
     """
+    if (os.environ.get('DATABASE_URL') or '').startswith('postgresql'):
+        log.info('[gcs_backup] Running on Postgres — SQLite snapshot backup skipped. '
+                 'Neon provides point-in-time restore; see DEPLOYMENT.md for pg_dump backups.')
+        return
+
     if not _BUCKET_NAME:
         log.warning('[gcs_backup] GCS_BUCKET_NAME not set — skipping backup.')
         return

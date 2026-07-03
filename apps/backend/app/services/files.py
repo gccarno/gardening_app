@@ -2,13 +2,12 @@
 File and image handling helpers shared across routers.
 """
 import hashlib
-import os
-from pathlib import Path
 
 import requests as http
 from sqlalchemy.orm import Session
 
-from .helpers import STATIC_DIR, ext_from_content_type
+from .helpers import ext_from_content_type
+from .storage import save_static
 
 
 def save_plant_image(
@@ -36,9 +35,7 @@ def save_plant_image(
         plant_library_id=entry.id, source=source
     ).count()
     filename = f'{entry.id}_{source}_{count + 1}{ext}'
-    dest = STATIC_DIR / 'plant_images' / filename
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(img_bytes)
+    save_static(f'plant_images/{filename}', img_bytes)
 
     has_primary = db.query(PlantLibraryImage).filter_by(
         plant_library_id=entry.id, is_primary=True
