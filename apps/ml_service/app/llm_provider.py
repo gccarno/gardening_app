@@ -54,6 +54,42 @@ def _model(provider: str) -> str:
     return _MODEL or _DEFAULTS[provider]
 
 
+VISION_MODEL = os.environ.get('VISION_MODEL', 'claude-haiku-4-5-20251001')
+
+
+def complete_vision(system: str, user: str, image_b64: str,
+                    media_type: str = 'image/jpeg') -> str:
+    """
+    Send a system prompt + user message + one base64 image to a vision model.
+
+    Currently Anthropic-only (used by photo plant/pest identification).
+    Raises RuntimeError with a user-facing message if not configured.
+    """
+    import anthropic
+    key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not key:
+        raise RuntimeError(
+            'Photo identification is not configured. '
+            'Add ANTHROPIC_API_KEY to your .env file (see DEPLOYMENT.md).'
+        )
+    client = anthropic.Anthropic(api_key=key)
+    resp = client.messages.create(
+        model=VISION_MODEL,
+        max_tokens=1024,
+        system=system,
+        messages=[{
+            'role': 'user',
+            'content': [
+                {'type': 'image',
+                 'source': {'type': 'base64', 'media_type': media_type,
+                            'data': image_b64}},
+                {'type': 'text', 'text': user},
+            ],
+        }],
+    )
+    return resp.content[0].text
+
+
 def _anthropic(system: str, user: str) -> str:
     import anthropic
     key = os.environ.get('ANTHROPIC_API_KEY', '')
