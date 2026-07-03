@@ -36,6 +36,10 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        // android.util.Log etc. return defaults in JVM unit tests instead of throwing
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 val composeBom = "2024.09.00"
@@ -96,6 +100,9 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk:1.13.13")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:$composeBom"))
