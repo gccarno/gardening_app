@@ -44,7 +44,12 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
 
     current_plants: list[str] = []
     if garden:
-        for p in garden.plants:
+        from sqlalchemy.orm import joinedload
+        plants = (db.query(Plant)
+                  .options(joinedload(Plant.library_entry))
+                  .filter(Plant.garden_id == garden.id)
+                  .all())
+        for p in plants:
             current_plants.append(p.library_entry.name if p.library_entry else p.name)
 
     # Top 3 recommendations for assistant context
@@ -188,7 +193,12 @@ def api_recommendations(
 
     current_plant_names: list[str] = []
     if garden:
-        for p in garden.plants:
+        from sqlalchemy.orm import joinedload
+        garden_plants = (db.query(Plant)
+                         .options(joinedload(Plant.library_entry))
+                         .filter(Plant.garden_id == garden.id)
+                         .all())
+        for p in garden_plants:
             if p.library_entry:
                 current_plant_names.append(p.library_entry.name)
 

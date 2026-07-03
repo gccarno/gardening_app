@@ -10,11 +10,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session, joinedload
 
-from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary
+from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary, User
 
 logger = logging.getLogger(__name__)
 from ..db.session import get_db
-from ..services.helpers import STATIC_DIR, get_or_404
+from ..services.auth import (
+    get_current_user, member_garden_ids, require_garden, require_resource,
+)
+from ..services.helpers import get_or_404
+from ..services.storage import delete_static, save_static
+from sqlalchemy import or_
 
 _ALLOWED_IMG_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
@@ -37,16 +42,23 @@ def _plant_from_library(db: Session, library_id: int):
 # ── Bed CRUD ──────────────────────────────────────────────────────────────────
 
 @router.post('/beds')
-def api_create_bed(body: dict, db: Session = Depends(get_db)):
+def api_create_bed(body: dict,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
     if not body or not body.get('name'):
         raise HTTPException(status_code=400, detail='name required')
     garden_id = body.get('garden_id')
     if not garden_id:
         raise HTTPException(status_code=400, detail='garden_id required')
+    require_garden(db, user, int(garden_id), 'editor')
+    width_ft  = float(body.get('width_ft', 4.0))
+    height_ft = float(body.get('height_ft', 8.0))
+    if width_ft <= 0 or height_ft <= 0:
+        raise HTTPException(status_code=400, detail='width_ft and height_ft must be positive')
     bed = GardenBed(
         name=body['name'],
-        width_ft=float(body.get('width_ft', 4.0)),
-        height_ft=float(body.get('height_ft', 8.0)),
+        width_ft=width_ft,
+        height_ft=height_ft,
         garden_id=int(garden_id),
     )
     db.add(bed)
@@ -56,8 +68,10 @@ def api_create_bed(body: dict, db: Session = Depends(get_db)):
 
 
 @router.post('/beds/{bed_id}/position')
-def api_bed_position(bed_id: int, body: dict, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def api_bed_position(bed_id: int, body: dict,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     if body is None or 'x' not in body or 'y' not in body:
         raise HTTPException(status_code=400, detail='x and y required')
     bed.pos_x = float(body['x'])
@@ -67,18 +81,23 @@ def api_bed_position(bed_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.post('/beds/{bed_id}/assign-garden')
-def api_bed_assign_garden(bed_id: int, body: dict, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def api_bed_assign_garden(bed_id: int, body: dict,
+                          user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     if not body or 'garden_id' not in body:
         raise HTTPException(status_code=400, detail='garden_id required')
+    require_garden(db, user, int(body['garden_id']), 'editor')
     bed.garden_id = int(body['garden_id'])
     db.commit()
     return {'ok': True}
 
 
 @router.post('/beds/{bed_id}/delete')
-def api_delete_bed(bed_id: int, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def api_delete_bed(bed_id: int,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     db.delete(bed)
     db.commit()
     return {'ok': True}
@@ -87,8 +106,11 @@ def api_delete_bed(bed_id: int, db: Session = Depends(get_db)):
 # ── Bed grid ──────────────────────────────────────────────────────────────────
 
 @router.get('/beds/{bed_id}/grid')
-def api_bed_grid(bed_id: int, db: Session = Depends(get_db)):
+def api_bed_grid(bed_id: int,
+                 user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
     t0 = time.monotonic()
+    require_resource(db, user, GardenBed, bed_id, 'viewer')
     bed = (
         db.query(GardenBed)
         .options(
@@ -124,8 +146,10 @@ def api_bed_grid(bed_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/beds/{bed_id}/grid-plant')
-def api_bed_grid_plant(bed_id: int, body: dict, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def api_bed_grid_plant(bed_id: int, body: dict,
+                       user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     if not body or 'grid_x' not in body or 'grid_y' not in body:
         raise HTTPException(status_code=400, detail='grid_x and grid_y required')
     grid_x     = int(body['grid_x'])
@@ -177,9 +201,11 @@ def api_bed_grid_plant(bed_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.post('/beds/{bed_id}/grid-plant-bulk')
-def api_bed_grid_plant_bulk(bed_id: int, body: dict, db: Session = Depends(get_db)):
+def api_bed_grid_plant_bulk(bed_id: int, body: dict,
+                            user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
     """Place multiple plants at once (best-effort: skips overlapping/out-of-bounds positions)."""
-    bed = get_or_404(db, GardenBed, bed_id)
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     positions  = body.get('positions', [])
     spacing_in = int(body.get('spacing_in', 12))
     bed_w_in   = bed.width_ft * 12
@@ -245,9 +271,12 @@ def api_bed_grid_plant_bulk(bed_id: int, body: dict, db: Session = Depends(get_d
 # ── BedPlant CRUD ─────────────────────────────────────────────────────────────
 
 @router.post('/bedplants')
-def api_create_bedplant(body: dict, db: Session = Depends(get_db)):
+def api_create_bedplant(body: dict,
+                        user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
     if not body or 'bed_id' not in body:
         raise HTTPException(status_code=400, detail='bed_id required')
+    require_resource(db, user, GardenBed, int(body['bed_id']), 'editor')
     if 'library_id' in body:
         plant = _plant_from_library(db, int(body['library_id']))
         if not plant:
@@ -271,7 +300,9 @@ def api_create_bedplant(body: dict, db: Session = Depends(get_db)):
 
 # NOTE: bulk-care must be registered BEFORE /{bp_id} to avoid "bulk-care" matching as int ID
 @router.post('/bedplants/bulk-care')
-def api_bedplants_bulk_care(body: dict, db: Session = Depends(get_db)):
+def api_bedplants_bulk_care(body: dict,
+                            user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
     ids     = body.get('ids', [])
     updated = 0
 
@@ -279,9 +310,10 @@ def api_bedplants_bulk_care(body: dict, db: Session = Depends(get_db)):
         return date.fromisoformat(val) if val else None
 
     for bp_id in ids:
-        bp = db.get(BedPlant, bp_id)
-        if not bp:
-            continue
+        try:
+            bp = require_resource(db, user, BedPlant, bp_id, 'editor')
+        except HTTPException:
+            continue  # best-effort: skip missing/unauthorized ids
         if 'last_watered'    in body: bp.last_watered    = _d(body['last_watered'])
         if 'watering_amount' in body: bp.watering_amount = body.get('watering_amount') or None
         if 'last_fertilized' in body: bp.last_fertilized = _d(body['last_fertilized'])
@@ -305,8 +337,10 @@ def api_bedplants_bulk_care(body: dict, db: Session = Depends(get_db)):
 
 
 @router.get('/bedplants/{bp_id}')
-def api_bedplant_detail(bp_id: int, db: Session = Depends(get_db)):
-    bp    = get_or_404(db, BedPlant, bp_id)
+def api_bedplant_detail(bp_id: int,
+                        user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    bp    = require_resource(db, user, BedPlant, bp_id, 'viewer')
     entry = bp.plant.library_entry if bp.plant else None
     plant = bp.plant
     return {
@@ -331,8 +365,10 @@ def api_bedplant_detail(bp_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/bedplants/{bp_id}/care')
-def api_bedplant_care(bp_id: int, body: dict, db: Session = Depends(get_db)):
-    bp = get_or_404(db, BedPlant, bp_id)
+def api_bedplant_care(bp_id: int, body: dict,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    bp = require_resource(db, user, BedPlant, bp_id, 'editor')
 
     def _d(val):
         return date.fromisoformat(val) if val else None
@@ -351,8 +387,10 @@ def api_bedplant_care(bp_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.post('/bedplants/{bp_id}/delete')
-def api_delete_bedplant(bp_id: int, db: Session = Depends(get_db)):
-    bp = get_or_404(db, BedPlant, bp_id)
+def api_delete_bedplant(bp_id: int,
+                        user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    bp = require_resource(db, user, BedPlant, bp_id, 'editor')
     db.delete(bp)
     db.commit()
     return {'ok': True}
@@ -387,27 +425,36 @@ def _serialize_bed(b: GardenBed) -> dict:
 
 
 @router.get('/beds')
-def api_beds_list(garden_id: Optional[int] = None, db: Session = Depends(get_db)):
+def api_beds_list(garden_id: Optional[int] = None,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
     t0 = time.monotonic()
     q = db.query(GardenBed).options(
         joinedload(GardenBed.garden),
         joinedload(GardenBed.bed_plants),
     )
     if garden_id:
+        require_garden(db, user, garden_id, 'viewer')
         q = q.filter(GardenBed.garden_id == garden_id)
+    else:
+        member_ids = member_garden_ids(db, user)
+        q = q.filter(or_(GardenBed.garden_id.in_(member_ids),
+                         GardenBed.garden_id.is_(None)))
     beds = q.order_by(GardenBed.name).all()
     logger.info('[beds_list] %d beds in %.0fms', len(beds), (time.monotonic() - t0) * 1000)
     return [_serialize_bed(b) for b in beds]
 
 
 @router.get('/beds/{bed_id}/rotation-warnings')
-def api_bed_rotation_warnings(bed_id: int, library_id: Optional[int] = None, db: Session = Depends(get_db)):
+def api_bed_rotation_warnings(bed_id: int, library_id: Optional[int] = None,
+                              user: User = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
     """
     Returns botanical families currently growing in this bed.
     If library_id is given, also flags whether the candidate plant shares a family
     with any existing bed plant.
     """
-    bed = get_or_404(db, GardenBed, bed_id)
+    bed = require_resource(db, user, GardenBed, bed_id, 'viewer')
     bed_plants = (db.query(BedPlant)
                   .filter(BedPlant.bed_id == bed_id)
                   .join(Plant, BedPlant.plant_id == Plant.id)
@@ -444,20 +491,30 @@ def api_bed_rotation_warnings(bed_id: int, library_id: Optional[int] = None, db:
 
 
 @router.get('/beds/{bed_id}')
-def api_bed_get(bed_id: int, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def api_bed_get(bed_id: int,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'viewer')
     return _serialize_bed(bed)
 
 
 @router.put('/beds/{bed_id}')
-def api_bed_update(bed_id: int, body: dict, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def api_bed_update(bed_id: int, body: dict,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     for f in ('name', 'location', 'description', 'soil_notes'):
         if f in body: setattr(bed, f, body[f] or None)
     for f in ('soil_ph', 'clay_pct', 'compost_pct', 'sand_pct', 'depth_ft'):
         if f in body: setattr(bed, f, float(body[f]) if body[f] is not None else None)
-    if 'width_ft'  in body and body['width_ft']:  bed.width_ft  = float(body['width_ft'])
-    if 'height_ft' in body and body['height_ft']: bed.height_ft = float(body['height_ft'])
+    if 'width_ft'  in body and body['width_ft']:
+        if float(body['width_ft']) <= 0:
+            raise HTTPException(status_code=400, detail='width_ft must be positive')
+        bed.width_ft = float(body['width_ft'])
+    if 'height_ft' in body and body['height_ft']:
+        if float(body['height_ft']) <= 0:
+            raise HTTPException(status_code=400, detail='height_ft must be positive')
+        bed.height_ft = float(body['height_ft'])
     if 'name'      in body and body['name']:       bed.name      = body['name']
     if 'color'              in body: bed.color              = body.get('color') or None
     if 'background_pattern' in body: bed.background_pattern = body.get('background_pattern') or None
@@ -474,25 +531,20 @@ def api_bed_update(bed_id: int, body: dict, db: Session = Depends(get_db)):
 async def upload_bed_background(
     bed_id: int,
     image: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    bed = get_or_404(db, GardenBed, bed_id)
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     ext = os.path.splitext(image.filename or '')[1].lower()
     if ext not in _ALLOWED_IMG_EXTS:
         raise HTTPException(status_code=400, detail='Unsupported file type')
 
-    bg_dir = STATIC_DIR / 'bed_images'
-    bg_dir.mkdir(parents=True, exist_ok=True)
-
     if bed.background_image:
-        old_path = bg_dir / bed.background_image
-        if old_path.exists():
-            old_path.unlink()
+        delete_static(f'bed_images/{bed.background_image}')
 
     filename = f'bed_{bed_id}{ext}'
-    dest = bg_dir / filename
     contents = await image.read()
-    dest.write_bytes(contents)
+    save_static(f'bed_images/{filename}', contents)
 
     bed.background_image = filename
     db.commit()
@@ -500,13 +552,12 @@ async def upload_bed_background(
 
 
 @router.post('/beds/{bed_id}/remove-background')
-def remove_bed_background(bed_id: int, db: Session = Depends(get_db)):
-    bed = get_or_404(db, GardenBed, bed_id)
+def remove_bed_background(bed_id: int,
+                          user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
     if bed.background_image:
-        bg_dir = STATIC_DIR / 'bed_images'
-        old_path = bg_dir / bed.background_image
-        if old_path.exists():
-            old_path.unlink()
+        delete_static(f'bed_images/{bed.background_image}')
         bed.background_image = None
         db.commit()
     return {'ok': True}

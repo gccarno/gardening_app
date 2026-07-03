@@ -10,7 +10,7 @@ from sqlalchemy import (
     Boolean, Column, Date, DateTime, Float, ForeignKey,
     Integer, String, Text, UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import DeclarativeBase, backref, relationship
 
 
 class Base(DeclarativeBase):
@@ -110,7 +110,8 @@ class Plant(Base):
 
     library_entry = relationship('PlantLibrary', backref='plants', lazy=True)
     tasks         = relationship('Task', backref='plant', lazy=True)
-    bed_plants    = relationship('BedPlant', backref='plant', lazy=True)
+    bed_plants    = relationship('BedPlant', backref='plant', lazy=True,
+                                 cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Plant {self.name}>'
@@ -377,7 +378,11 @@ class PlantObservation(Base):
     image_filename   = Column(String(200), nullable=True)
     created_at       = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    bed_plant = relationship('BedPlant', backref='observations', lazy=True)
+    bed_plant = relationship(
+        'BedPlant',
+        backref=backref('observations', cascade='all, delete-orphan'),
+        lazy=True,
+    )
 
     def __repr__(self):
         return f'<PlantObservation bp={self.bed_plant_id} type={self.observation_type}>'
@@ -421,3 +426,56 @@ class CompostBin(Base):
 
     def __repr__(self):
         return f'<CompostBin {self.name}>'
+
+
+# ── Auth & sharing ────────────────────────────────────────────────────────────
+
+GARDEN_ROLES = ['viewer', 'editor', 'owner']
+
+
+class User(Base):
+    __tablename__ = 'app_user'  # 'user' is a reserved word in Postgres
+
+    id            = Column(Integer, primary_key=True)
+    email         = Column(String(255), nullable=False, unique=True, index=True)
+    display_name  = Column(String(100), nullable=True)
+    password_hash = Column(String(255), nullable=False)
+    created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    tokens      = relationship('AuthToken', backref='user',
+                               cascade='all, delete-orphan', lazy=True)
+    memberships = relationship('GardenMember', backref='user',
+                               cascade='all, delete-orphan', lazy=True)
+
+    def __repr__(self):
+        return f'<User {self.email}>'
+
+
+class AuthToken(Base):
+    """Opaque bearer token, stored as a SHA-256 hash. Delete row to revoke."""
+    __tablename__ = 'auth_token'
+
+    id           = Column(Integer, primary_key=True)
+    user_id      = Column(Integer, ForeignKey('app_user.id'), nullable=False, index=True)
+    token_hash   = Column(String(64), nullable=False, unique=True, index=True)
+    created_at   = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+
+
+class GardenMember(Base):
+    __tablename__ = 'garden_member'
+    __table_args__ = (UniqueConstraint('garden_id', 'user_id', name='uq_garden_member'),)
+
+    id        = Column(Integer, primary_key=True)
+    garden_id = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    user_id   = Column(Integer, ForeignKey('app_user.id'), nullable=False, index=True)
+    role      = Column(String(10), nullable=False, default='viewer')  # see GARDEN_ROLES
+
+    garden = relationship(
+        'Garden',
+        backref=backref('members', cascade='all, delete-orphan'),
+        lazy=True,
+    )
+
+    def __repr__(self):
+        return f'<GardenMember g={self.garden_id} u={self.user_id} {self.role}>'

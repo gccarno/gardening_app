@@ -9,8 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import Garden, JournalEntry
+from ..db.models import Garden, JournalEntry, User
 from ..db.session import get_db
+from ..services.auth import get_current_user, require_garden, require_resource
 from ..services.helpers import get_or_404
 
 router = APIRouter(prefix='/api', tags=['journal'])
@@ -53,8 +54,8 @@ class JournalUpdate(BaseModel):
 
 
 @router.get('/gardens/{garden_id}/journal')
-def api_journal_list(garden_id: int, page: int = 1, per_page: int = 20, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_journal_list(garden_id: int, page: int = 1, per_page: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'viewer')
     q = (db.query(JournalEntry)
          .filter(JournalEntry.garden_id == garden_id)
          .order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc()))
@@ -64,8 +65,8 @@ def api_journal_list(garden_id: int, page: int = 1, per_page: int = 20, db: Sess
 
 
 @router.post('/gardens/{garden_id}/journal')
-def api_journal_create(garden_id: int, body: JournalCreate, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_journal_create(garden_id: int, body: JournalCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'editor')
     entry = JournalEntry(
         garden_id=garden_id,
         plant_id=body.plant_id,
@@ -81,14 +82,14 @@ def api_journal_create(garden_id: int, body: JournalCreate, db: Session = Depend
 
 
 @router.get('/journal/{entry_id}')
-def api_journal_get(entry_id: int, db: Session = Depends(get_db)):
-    entry = get_or_404(db, JournalEntry, entry_id)
+def api_journal_get(entry_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    entry = require_resource(db, user, JournalEntry, entry_id, 'viewer')
     return _serialize(entry)
 
 
 @router.put('/journal/{entry_id}')
-def api_journal_update(entry_id: int, body: JournalUpdate, db: Session = Depends(get_db)):
-    entry = get_or_404(db, JournalEntry, entry_id)
+def api_journal_update(entry_id: int, body: JournalUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    entry = require_resource(db, user, JournalEntry, entry_id, 'editor')
     if body.entry_date is not None:
         entry.entry_date = date.fromisoformat(body.entry_date)
     if body.title is not None:
@@ -104,8 +105,8 @@ def api_journal_update(entry_id: int, body: JournalUpdate, db: Session = Depends
 
 
 @router.delete('/journal/{entry_id}')
-def api_journal_delete(entry_id: int, db: Session = Depends(get_db)):
-    entry = get_or_404(db, JournalEntry, entry_id)
+def api_journal_delete(entry_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    entry = require_resource(db, user, JournalEntry, entry_id, 'editor')
     db.delete(entry)
     db.commit()
     return {'ok': True}

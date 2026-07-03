@@ -10,8 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary
+from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary, User
 from ..db.session import get_db
+from ..services.auth import (
+    get_current_user, member_garden_ids, require_garden, require_resource,
+)
 from ..services.helpers import FROST_DATES, get_or_404
 
 router = APIRouter(prefix='/api', tags=['plants'])
@@ -99,10 +102,12 @@ def _serialize_plant(p: Plant) -> dict:
 def api_plants_list(
     garden_id: Optional[int] = None,
     status: Optional[str] = None,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     q = db.query(Plant)
     if garden_id:
+        require_garden(db, user, garden_id, 'viewer')
         in_bed_ids = (
             db.query(BedPlant.plant_id)
             .join(GardenBed, BedPlant.bed_id == GardenBed.id)
@@ -110,6 +115,9 @@ def api_plants_list(
             .distinct()
         )
         q = q.filter(or_(Plant.garden_id == garden_id, Plant.id.in_(in_bed_ids)))
+    else:
+        member_ids = member_garden_ids(db, user)
+        q = q.filter(or_(Plant.garden_id.in_(member_ids), Plant.garden_id.is_(None)))
     if status:
         q = q.filter(Plant.status == status)
     plants = q.order_by(Plant.name).all()
@@ -117,7 +125,11 @@ def api_plants_list(
 
 
 @router.post('/plants')
-def api_plants_create(body: dict, db: Session = Depends(get_db)):
+def api_plants_create(body: dict,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    if body.get('garden_id'):
+        require_garden(db, user, int(body['garden_id']), 'editor')
     planted = body.get('planted_date')
     harvest = body.get('expected_harvest')
     plant = Plant(
@@ -136,9 +148,72 @@ def api_plants_create(body: dict, db: Session = Depends(get_db)):
     return _serialize_plant(plant)
 
 
+@router.get('/plants/sync-preview')
+def api_plants_sync_preview(user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """Returns care date discrepancies between Plant records and their BedPlant records."""
+    changes = []
+    member_ids = member_garden_ids(db, user)
+    plants = (db.query(Plant)
+              .filter(or_(Plant.garden_id.in_(member_ids), Plant.garden_id.is_(None)))
+              .all())
+    for plant in plants:
+        if not plant.bed_plants:
+            continue
+        bed_names = [bp.bed.name for bp in plant.bed_plants if bp.bed]
+
+        pw = plant.last_watered
+        bw = max((bp.last_watered for bp in plant.bed_plants if bp.last_watered), default=None)
+        if pw != bw:
+            if bw is None:
+                proposed, direction = pw, 'plant_to_bed'
+            elif pw is None:
+                proposed, direction = bw, 'bed_to_plant'
+            elif bw > pw:
+                proposed, direction = bw, 'bed_to_plant'
+            else:
+                proposed, direction = pw, 'plant_to_bed'
+            changes.append({
+                'plant_id':       plant.id,
+                'plant_name':     plant.name,
+                'field':          'last_watered',
+                'plant_value':    pw.isoformat() if pw else None,
+                'bed_value':      bw.isoformat() if bw else None,
+                'proposed_value': proposed.isoformat() if proposed else None,
+                'direction':      direction,
+                'bed_names':      bed_names,
+            })
+
+        pf = plant.last_fertilized
+        bf = max((bp.last_fertilized for bp in plant.bed_plants if bp.last_fertilized), default=None)
+        if pf != bf:
+            if bf is None:
+                proposed, direction = pf, 'plant_to_bed'
+            elif pf is None:
+                proposed, direction = bf, 'bed_to_plant'
+            elif bf > pf:
+                proposed, direction = bf, 'bed_to_plant'
+            else:
+                proposed, direction = pf, 'plant_to_bed'
+            changes.append({
+                'plant_id':       plant.id,
+                'plant_name':     plant.name,
+                'field':          'last_fertilized',
+                'plant_value':    pf.isoformat() if pf else None,
+                'bed_value':      bf.isoformat() if bf else None,
+                'proposed_value': proposed.isoformat() if proposed else None,
+                'direction':      direction,
+                'bed_names':      bed_names,
+            })
+
+    return {'changes': changes}
+
+
 @router.get('/plants/{plant_id}')
-def api_plant_get(plant_id: int, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_plant_get(plant_id: int,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'viewer')
     entry = plant.library_entry
     today = date.today()
 
@@ -249,18 +324,49 @@ def api_plant_get(plant_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.post('/plants/sync')
+def api_plants_sync(body: dict,
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Apply accepted sync changes — sets both Plant and all its BedPlants to proposed_value."""
+    changes = body.get('changes', [])
+    applied = 0
+    for change in changes:
+        try:
+            plant = require_resource(db, user, Plant, change.get('plant_id'), 'editor')
+        except HTTPException:
+            continue  # best-effort: skip missing/unauthorized ids
+        field    = change.get('field')
+        proposed = change.get('proposed_value')
+        val      = date.fromisoformat(proposed) if proposed else None
+        if field == 'last_watered':
+            plant.last_watered = val
+            for bp in plant.bed_plants:
+                bp.last_watered = val
+        elif field == 'last_fertilized':
+            plant.last_fertilized = val
+            for bp in plant.bed_plants:
+                bp.last_fertilized = val
+        applied += 1
+    db.commit()
+    return {'ok': True, 'applied': applied}
+
+
 # NOTE: bulk-status must be registered BEFORE /{plant_id} routes
 @router.post('/plants/bulk-status')
-def api_plants_bulk_status(body: dict, db: Session = Depends(get_db)):
+def api_plants_bulk_status(body: dict,
+                           user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
     ids        = body.get('ids', [])
     new_status = body.get('status')
     if new_status not in ('planning', 'growing', 'harvested'):
         raise HTTPException(400, 'Invalid status')
     updated = 0
     for plant_id in ids:
-        plant = db.get(Plant, plant_id)
-        if not plant:
-            continue
+        try:
+            plant = require_resource(db, user, Plant, plant_id, 'editor')
+        except HTTPException:
+            continue  # best-effort: skip missing/unauthorized ids
         plant.status = new_status
         if new_status == 'growing' and not plant.planted_date:
             plant.planted_date = date.today()
@@ -271,7 +377,9 @@ def api_plants_bulk_status(body: dict, db: Session = Depends(get_db)):
 
 # NOTE: must be registered BEFORE /{plant_id} routes
 @router.post('/plants/bulk-care')
-def api_plants_bulk_care(body: dict, db: Session = Depends(get_db)):
+def api_plants_bulk_care(body: dict,
+                         user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
     ids = body.get('ids', [])
 
     def _d(val):
@@ -286,9 +394,10 @@ def api_plants_bulk_care(body: dict, db: Session = Depends(get_db)):
 
     updated = 0
     for plant_id in ids:
-        plant = db.get(Plant, plant_id)
-        if not plant:
-            continue
+        try:
+            plant = require_resource(db, user, Plant, plant_id, 'editor')
+        except HTTPException:
+            continue  # best-effort: skip missing/unauthorized ids
         _apply_care(plant)
         for bp in plant.bed_plants:
             _apply_care(bp)
@@ -299,21 +408,27 @@ def api_plants_bulk_care(body: dict, db: Session = Depends(get_db)):
 
 # NOTE: must be registered BEFORE /{plant_id} routes
 @router.post('/plants/bulk-delete')
-def api_plants_bulk_delete(body: dict, db: Session = Depends(get_db)):
+def api_plants_bulk_delete(body: dict,
+                           user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
     ids = body.get('ids', [])
     deleted = 0
     for plant_id in ids:
-        plant = db.get(Plant, plant_id)
-        if plant:
-            db.delete(plant)
-            deleted += 1
+        try:
+            plant = require_resource(db, user, Plant, plant_id, 'editor')
+        except HTTPException:
+            continue  # best-effort: skip missing/unauthorized ids
+        db.delete(plant)
+        deleted += 1
     db.commit()
     return {'ok': True, 'deleted': deleted}
 
 
 @router.put('/plants/{plant_id}')
-def api_plant_update(plant_id: int, body: dict, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_plant_update(plant_id: int, body: dict,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'editor')
     if 'name'            in body: plant.name            = body['name']
     if 'type'            in body: plant.type            = body.get('type') or None
     if 'notes'           in body: plant.notes           = body.get('notes') or None
@@ -333,16 +448,20 @@ def api_plant_update(plant_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.delete('/plants/{plant_id}')
-def api_plant_delete_rest(plant_id: int, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_plant_delete_rest(plant_id: int,
+                          user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'editor')
     db.delete(plant)
     db.commit()
     return {'ok': True}
 
 
 @router.post('/plants/{plant_id}/status')
-def api_plant_set_status(plant_id: int, body: dict, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_plant_set_status(plant_id: int, body: dict,
+                         user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'editor')
     new_status = body.get('status')
     if new_status in ('planning', 'growing', 'harvested'):
         plant.status = new_status
@@ -355,8 +474,10 @@ def api_plant_set_status(plant_id: int, body: dict, db: Session = Depends(get_db
 # ── Legacy endpoints (kept for planner compatibility) ─────────────────────────
 
 @router.get('/plants/{plant_id}/detail')
-def api_plant_detail(plant_id: int, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_plant_detail(plant_id: int,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'viewer')
     entry = plant.library_entry
     bp    = plant.bed_plants[0] if plant.bed_plants else None
     return {
@@ -380,8 +501,10 @@ def api_plant_detail(plant_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/plants/{plant_id}/care')
-def api_plant_care(plant_id: int, body: dict, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_plant_care(plant_id: int, body: dict,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'editor')
 
     def _d(val):
         return date.fromisoformat(val) if val else None
@@ -407,8 +530,10 @@ def api_plant_care(plant_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.post('/plants/{plant_id}/delete')
-def api_delete_plant(plant_id: int, db: Session = Depends(get_db)):
-    plant = get_or_404(db, Plant, plant_id)
+def api_delete_plant(plant_id: int,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    plant = require_resource(db, user, Plant, plant_id, 'editor')
     db.delete(plant)
     db.commit()
     return {'ok': True}

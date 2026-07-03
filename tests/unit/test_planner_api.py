@@ -22,8 +22,8 @@ from apps.backend.app.routers.library import api_library_detail
 
 # ── 1. GET /beds/{bed_id}/grid — empty bed ────────────────────────────────────
 
-def test_get_bed_grid_empty(db, bed):
-    result = api_bed_grid(bed.id, db=db)
+def test_get_bed_grid_empty(db, bed, user):
+    result = api_bed_grid(bed.id, user=user, db=db)
     assert result['bed']['id'] == bed.id
     assert result['bed']['width_ft'] == 4.0
     assert result['bed']['height_ft'] == 8.0
@@ -32,13 +32,13 @@ def test_get_bed_grid_empty(db, bed):
 
 # ── 2. POST /beds/{bed_id}/grid-plant — success from library ─────────────────
 
-def test_post_bed_grid_plant_from_library(db, bed, library_plant):
+def test_post_bed_grid_plant_from_library(db, bed, library_plant, user):
     result = api_bed_grid_plant(bed.id, body={
         'grid_x': 0,
         'grid_y': 0,
         'spacing_in': 12,
         'library_id': library_plant.id,
-    }, db=db)
+    }, user=user, db=db)
 
     assert result['ok'] is True
     assert result['plant_name'] == 'Tomato'
@@ -53,7 +53,7 @@ def test_post_bed_grid_plant_from_library(db, bed, library_plant):
 
 # ── 3. POST /beds/{bed_id}/grid-plant — out of bounds ────────────────────────
 
-def test_post_bed_grid_plant_out_of_bounds(db, bed, library_plant):
+def test_post_bed_grid_plant_out_of_bounds(db, bed, library_plant, user):
     # A 4 ft wide bed = 48 inches. Placing at x=47 with spacing=12 → 47+12=59 > 48 → 400
     with pytest.raises(HTTPException) as exc_info:
         api_bed_grid_plant(bed.id, body={
@@ -61,38 +61,38 @@ def test_post_bed_grid_plant_out_of_bounds(db, bed, library_plant):
             'grid_y': 0,
             'spacing_in': 12,
             'library_id': library_plant.id,
-        }, db=db)
+        }, user=user, db=db)
     assert exc_info.value.status_code == 400
 
 
 # ── 4. POST /beds/{bed_id}/grid-plant — overlap detection ────────────────────
 
-def test_post_bed_grid_plant_overlap(db, bed, library_plant):
+def test_post_bed_grid_plant_overlap(db, bed, library_plant, user):
     # Place first plant at (0, 0) with 12" spacing
     api_bed_grid_plant(bed.id, body={
         'grid_x': 0, 'grid_y': 0, 'spacing_in': 12,
         'library_id': library_plant.id,
-    }, db=db)
+    }, user=user, db=db)
 
     # Second plant at same location should fail with 409
     with pytest.raises(HTTPException) as exc_info:
         api_bed_grid_plant(bed.id, body={
             'grid_x': 0, 'grid_y': 0, 'spacing_in': 12,
             'library_id': library_plant.id,
-        }, db=db)
+        }, user=user, db=db)
     assert exc_info.value.status_code == 409
 
 
 # ── 5. PUT /beds/{bed_id} — update bed info ───────────────────────────────────
 
-def test_put_bed_update(db, bed):
+def test_put_bed_update(db, bed, user):
     result = api_bed_update(bed.id, body={
         'name': 'Updated Bed',
         'width_ft': 6.0,
         'height_ft': 10.0,
         'soil_ph': 6.5,
         'soil_notes': 'Sandy loam',
-    }, db=db)
+    }, user=user, db=db)
 
     assert result['name'] == 'Updated Bed'
     assert result['width_ft'] == 6.0

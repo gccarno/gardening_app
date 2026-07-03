@@ -10,12 +10,14 @@ import time
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session, joinedload
 
-from ..db.models import CanvasPlant, Garden, Plant, PlantLibrary
+from ..db.models import CanvasPlant, Garden, Plant, PlantLibrary, User
 
 logger = logging.getLogger(__name__)
 from ..db.session import get_db
+from ..services.auth import get_current_user, require_garden, require_resource
 from ..services.helpers import STATIC_DIR, get_or_404
 from ..services.files import save_plant_image
+from ..services.storage import delete_static, read_static, save_static
 
 router = APIRouter(prefix='/api', tags=['canvas'])
 
@@ -97,9 +99,9 @@ def _serialize_cp(cp: CanvasPlant, svg_files: set | None = None, ai_files: set |
 # ── List / Create ─────────────────────────────────────────────────────────────
 
 @router.get('/gardens/{garden_id}/canvas-plants')
-def api_canvas_plants_list(garden_id: int, db: Session = Depends(get_db)):
+def api_canvas_plants_list(garden_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     t0 = time.monotonic()
-    get_or_404(db, Garden, garden_id)
+    require_garden(db, user, garden_id, 'viewer')
     cps = (
         db.query(CanvasPlant)
         .filter_by(garden_id=garden_id)
@@ -122,8 +124,8 @@ def api_canvas_plants_list(garden_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/gardens/{garden_id}/canvas-plants')
-def api_canvas_plants_create(garden_id: int, body: dict, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_canvas_plants_create(garden_id: int, body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'editor')
     library_id = body.get('library_id')
     plant_id   = body.get('plant_id')
     pos_x      = float(body.get('pos_x', 0))
@@ -161,24 +163,29 @@ def api_canvas_plants_create(garden_id: int, body: dict, db: Session = Depends(g
 # ── Bulk operations ───────────────────────────────────────────────────────────
 
 @router.post('/canvas-plants/bulk-delete')
-def api_canvas_plants_bulk_delete(body: dict, db: Session = Depends(get_db)):
-    ids = [int(i) for i in body.get('ids', [])]
-    if ids:
-        db.query(CanvasPlant).filter(CanvasPlant.id.in_(ids)).delete(synchronize_session=False)
-        db.commit()
-    return {'ok': True, 'deleted': ids}
+def api_canvas_plants_bulk_delete(body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    deleted = []
+    for i in body.get('ids', []):
+        try:
+            cp = require_resource(db, user, CanvasPlant, int(i), 'editor')
+        except HTTPException:
+            continue  # best-effort: skip missing/unauthorized ids
+        db.delete(cp)
+        deleted.append(int(i))
+    db.commit()
+    return {'ok': True, 'deleted': deleted}
 
 
 # ── Detail / Update ───────────────────────────────────────────────────────────
 
 @router.get('/canvas-plants/{cp_id}')
-def api_canvas_plant_detail(cp_id: int, db: Session = Depends(get_db)):
-    return _serialize_cp(get_or_404(db, CanvasPlant, cp_id))
+def api_canvas_plant_detail(cp_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _serialize_cp(require_resource(db, user, CanvasPlant, cp_id, 'viewer'))
 
 
 @router.post('/canvas-plants/{cp_id}/position')
-def api_canvas_plant_position(cp_id: int, body: dict, db: Session = Depends(get_db)):
-    cp = get_or_404(db, CanvasPlant, cp_id)
+def api_canvas_plant_position(cp_id: int, body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cp = require_resource(db, user, CanvasPlant, cp_id, 'editor')
     cp.pos_x = float(body.get('x', cp.pos_x))
     cp.pos_y = float(body.get('y', cp.pos_y))
     db.commit()
@@ -186,16 +193,16 @@ def api_canvas_plant_position(cp_id: int, body: dict, db: Session = Depends(get_
 
 
 @router.post('/canvas-plants/{cp_id}/radius')
-def api_canvas_plant_radius(cp_id: int, body: dict, db: Session = Depends(get_db)):
-    cp = get_or_404(db, CanvasPlant, cp_id)
+def api_canvas_plant_radius(cp_id: int, body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cp = require_resource(db, user, CanvasPlant, cp_id, 'editor')
     cp.radius_ft = max(0.1, float(body.get('radius_ft', cp.radius_ft)))
     db.commit()
     return {'ok': True}
 
 
 @router.post('/canvas-plants/{cp_id}/appearance')
-def api_canvas_plant_appearance(cp_id: int, body: dict, db: Session = Depends(get_db)):
-    cp = get_or_404(db, CanvasPlant, cp_id)
+def api_canvas_plant_appearance(cp_id: int, body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cp = require_resource(db, user, CanvasPlant, cp_id, 'editor')
     if 'color'        in body: cp.color        = body['color']        or cp.color
     if 'display_mode' in body: cp.display_mode = body['display_mode'] or cp.display_mode
     if 'label'        in body: cp.label        = body['label']        or None
@@ -207,24 +214,20 @@ def api_canvas_plant_appearance(cp_id: int, body: dict, db: Session = Depends(ge
 async def api_canvas_plant_upload_image(
     cp_id: int,
     image: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    cp  = get_or_404(db, CanvasPlant, cp_id)
+    cp  = require_resource(db, user, CanvasPlant, cp_id, 'editor')
     ext = os.path.splitext(image.filename or '')[1].lower()
     if ext not in _ALLOWED_EXTS:
         raise HTTPException(status_code=400, detail='Unsupported file type')
 
-    img_dir = STATIC_DIR / 'canvas_plant_images'
-    img_dir.mkdir(parents=True, exist_ok=True)
-
     if cp.custom_image:
-        old_path = img_dir / cp.custom_image
-        if old_path.exists():
-            old_path.unlink()
+        delete_static(f'canvas_plant_images/{cp.custom_image}')
 
     filename = f'cp_{cp_id}{ext}'
     contents = await image.read()
-    (img_dir / filename).write_bytes(contents)
+    save_static(f'canvas_plant_images/{filename}', contents)
 
     cp.custom_image = filename
     cp.display_mode = 'image'
@@ -233,28 +236,25 @@ async def api_canvas_plant_upload_image(
 
 
 @router.post('/canvas-plants/{cp_id}/save-image-to-library')
-def api_canvas_plant_save_image_to_library(cp_id: int, db: Session = Depends(get_db)):
-    cp = get_or_404(db, CanvasPlant, cp_id)
+def api_canvas_plant_save_image_to_library(cp_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cp = require_resource(db, user, CanvasPlant, cp_id, 'editor')
     if not cp.custom_image or not cp.library_id:
         raise HTTPException(status_code=400, detail='No custom image or library entry')
     lib = get_or_404(db, PlantLibrary, cp.library_id)
-    src = STATIC_DIR / 'canvas_plant_images' / cp.custom_image
-    if not src.exists():
+    img_bytes = read_static(f'canvas_plant_images/{cp.custom_image}')
+    if img_bytes is None:
         raise HTTPException(status_code=404, detail='Image file not found')
-    ext       = os.path.splitext(cp.custom_image)[1]
-    img_bytes = src.read_bytes()
+    ext = os.path.splitext(cp.custom_image)[1]
     img_row, _ = save_plant_image(db, lib, img_bytes, 'manual', ext=ext, make_primary=True)
     db.commit()
     return {'ok': True, 'library_image': img_row.filename}
 
 
 @router.post('/canvas-plants/{cp_id}/delete')
-def api_canvas_plant_delete(cp_id: int, db: Session = Depends(get_db)):
-    cp = get_or_404(db, CanvasPlant, cp_id)
+def api_canvas_plant_delete(cp_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cp = require_resource(db, user, CanvasPlant, cp_id, 'editor')
     if cp.custom_image:
-        img_path = STATIC_DIR / 'canvas_plant_images' / cp.custom_image
-        if img_path.exists():
-            img_path.unlink()
+        delete_static(f'canvas_plant_images/{cp.custom_image}')
     db.delete(cp)
     db.commit()
     return {'ok': True}

@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import Garden, PlantLibrary, SeedTray
+from ..db.models import Garden, PlantLibrary, SeedTray, User
 from ..db.session import get_db
+from ..services.auth import get_current_user, require_garden, require_resource
 from ..services.helpers import get_or_404
 
 router = APIRouter(prefix='/api', tags=['seed_room'])
@@ -56,8 +57,8 @@ class SeedTrayUpdate(BaseModel):
 
 
 @router.get('/gardens/{garden_id}/seed-room')
-def api_seed_room_list(garden_id: int, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_seed_room_list(garden_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'viewer')
     trays = (db.query(SeedTray)
              .filter(SeedTray.garden_id == garden_id)
              .order_by(SeedTray.slot_number)
@@ -66,8 +67,8 @@ def api_seed_room_list(garden_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/gardens/{garden_id}/seed-room')
-def api_seed_room_create(garden_id: int, body: SeedTrayCreate, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_seed_room_create(garden_id: int, body: SeedTrayCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'editor')
     if not 1 <= body.slot_number <= 24:
         raise HTTPException(status_code=400, detail='slot_number must be 1–24')
     existing = db.query(SeedTray).filter_by(garden_id=garden_id, slot_number=body.slot_number).first()
@@ -91,14 +92,14 @@ def api_seed_room_create(garden_id: int, body: SeedTrayCreate, db: Session = Dep
 
 
 @router.get('/seed-room/{tray_id}')
-def api_seed_room_get(tray_id: int, db: Session = Depends(get_db)):
-    tray = get_or_404(db, SeedTray, tray_id)
+def api_seed_room_get(tray_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    tray = require_resource(db, user, SeedTray, tray_id, 'viewer')
     return _serialize(tray)
 
 
 @router.put('/seed-room/{tray_id}')
-def api_seed_room_update(tray_id: int, body: SeedTrayUpdate, db: Session = Depends(get_db)):
-    tray = get_or_404(db, SeedTray, tray_id)
+def api_seed_room_update(tray_id: int, body: SeedTrayUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    tray = require_resource(db, user, SeedTray, tray_id, 'editor')
     if body.plant_name is not None:
         tray.plant_name = body.plant_name
     if body.sow_date is not None:
@@ -118,8 +119,8 @@ def api_seed_room_update(tray_id: int, body: SeedTrayUpdate, db: Session = Depen
 
 
 @router.post('/seed-room/{tray_id}/advance-stage')
-def api_seed_room_advance(tray_id: int, db: Session = Depends(get_db)):
-    tray = get_or_404(db, SeedTray, tray_id)
+def api_seed_room_advance(tray_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    tray = require_resource(db, user, SeedTray, tray_id, 'editor')
     if tray.stage not in NEXT_STAGE:
         raise HTTPException(status_code=400, detail='already_at_final_stage')
     tray.stage = NEXT_STAGE[tray.stage]
@@ -128,8 +129,8 @@ def api_seed_room_advance(tray_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete('/seed-room/{tray_id}')
-def api_seed_room_delete(tray_id: int, db: Session = Depends(get_db)):
-    tray = get_or_404(db, SeedTray, tray_id)
+def api_seed_room_delete(tray_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    tray = require_resource(db, user, SeedTray, tray_id, 'editor')
     db.delete(tray)
     db.commit()
     return {'ok': True}

@@ -9,8 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import CompostBin, Garden
+from ..db.models import CompostBin, Garden, User
 from ..db.session import get_db
+from ..services.auth import get_current_user, require_garden, require_resource
 from ..services.helpers import get_or_404
 
 router = APIRouter(prefix='/api', tags=['compost'])
@@ -62,8 +63,8 @@ class MaterialAdd(BaseModel):
 
 
 @router.get('/gardens/{garden_id}/compost')
-def api_compost_list(garden_id: int, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_compost_list(garden_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'viewer')
     bins = (db.query(CompostBin)
             .filter(CompostBin.garden_id == garden_id)
             .order_by(CompostBin.created_at.desc())
@@ -72,8 +73,8 @@ def api_compost_list(garden_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/gardens/{garden_id}/compost')
-def api_compost_create(garden_id: int, body: BinCreate, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_compost_create(garden_id: int, body: BinCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'editor')
     started = date.fromisoformat(body.started_date) if body.started_date else date.today()
     estimated_ready = started + timedelta(days=105)  # ~3.5 months typical
     bin_ = CompostBin(
@@ -92,8 +93,8 @@ def api_compost_create(garden_id: int, body: BinCreate, db: Session = Depends(ge
 
 
 @router.put('/compost/{bin_id}')
-def api_compost_update(bin_id: int, body: BinUpdate, db: Session = Depends(get_db)):
-    bin_ = get_or_404(db, CompostBin, bin_id)
+def api_compost_update(bin_id: int, body: BinUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    bin_ = require_resource(db, user, CompostBin, bin_id, 'editor')
     if body.name is not None:
         bin_.name = body.name
     if body.started_date is not None:
@@ -111,8 +112,8 @@ def api_compost_update(bin_id: int, body: BinUpdate, db: Session = Depends(get_d
 
 
 @router.post('/compost/{bin_id}/add-material')
-def api_compost_add_material(bin_id: int, body: MaterialAdd, db: Session = Depends(get_db)):
-    bin_ = get_or_404(db, CompostBin, bin_id)
+def api_compost_add_material(bin_id: int, body: MaterialAdd, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    bin_ = require_resource(db, user, CompostBin, bin_id, 'editor')
     materials = []
     if bin_.materials:
         try:
@@ -130,8 +131,8 @@ def api_compost_add_material(bin_id: int, body: MaterialAdd, db: Session = Depen
 
 
 @router.post('/compost/{bin_id}/advance-stage')
-def api_compost_advance(bin_id: int, db: Session = Depends(get_db)):
-    bin_ = get_or_404(db, CompostBin, bin_id)
+def api_compost_advance(bin_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    bin_ = require_resource(db, user, CompostBin, bin_id, 'editor')
     if bin_.stage not in NEXT_STAGE:
         raise HTTPException(status_code=400, detail='already_at_final_stage')
     bin_.stage = NEXT_STAGE[bin_.stage]
@@ -140,8 +141,8 @@ def api_compost_advance(bin_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete('/compost/{bin_id}')
-def api_compost_delete(bin_id: int, db: Session = Depends(get_db)):
-    bin_ = get_or_404(db, CompostBin, bin_id)
+def api_compost_delete(bin_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    bin_ = require_resource(db, user, CompostBin, bin_id, 'editor')
     db.delete(bin_)
     db.commit()
     return {'ok': True}

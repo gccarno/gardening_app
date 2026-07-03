@@ -1,19 +1,21 @@
 import logging
 import logging.handlers
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, RedirectResponse
 
 from .db.session import engine
 from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat, admin, tips
-from .routers import seed_room, observations, journal, compost
+from .routers import auth, identify, seed_room, observations, journal, compost
 from .routers.weather import run_daily_weather_fetch
+from .services.auth import get_current_user
 from .jobs.gcs_backup import run_backup as run_gcs_backup
 
 # ── Logging setup ────────────────────────────────────────────────────────────
@@ -53,22 +55,27 @@ _PLANT_LIBRARY_MIGRATIONS = [
 def _run_migrations():
     t0 = time.perf_counter()
     # Create any tables that don't yet exist (safe — skips existing tables).
+    # Works on both SQLite and Postgres; a fresh Postgres DB gets the full
+    # current schema this way. Future schema changes go through Alembic
+    # (apps/backend/alembic/) — do NOT add to the PRAGMA lists below.
     from .db.models import Base
     Base.metadata.create_all(bind=engine)
-    with engine.connect() as conn:
-        from sqlalchemy import text
-        cols = [row[1] for row in conn.execute(text('PRAGMA table_info(garden)'))]
-        for col, ddl in _GARDEN_MIGRATIONS:
-            if col not in cols:
-                conn.execute(text(ddl))
-                conn.commit()
-                logger.info('[migration] Added garden.%s', col)
-        lib_cols = [row[1] for row in conn.execute(text('PRAGMA table_info(plant_library)'))]
-        for col, ddl in _PLANT_LIBRARY_MIGRATIONS:
-            if col not in lib_cols:
-                conn.execute(text(ddl))
-                conn.commit()
-                logger.info('[migration] Added plant_library.%s', col)
+    if engine.dialect.name == 'sqlite':
+        # Legacy column backfills for pre-existing SQLite databases only.
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            cols = [row[1] for row in conn.execute(text('PRAGMA table_info(garden)'))]
+            for col, ddl in _GARDEN_MIGRATIONS:
+                if col not in cols:
+                    conn.execute(text(ddl))
+                    conn.commit()
+                    logger.info('[migration] Added garden.%s', col)
+            lib_cols = [row[1] for row in conn.execute(text('PRAGMA table_info(plant_library)'))]
+            for col, ddl in _PLANT_LIBRARY_MIGRATIONS:
+                if col not in lib_cols:
+                    conn.execute(text(ddl))
+                    conn.commit()
+                    logger.info('[migration] Added plant_library.%s', col)
     logger.info('[startup] migrations done — %.0fms', (time.perf_counter() - t0) * 1000)
 
 
@@ -79,21 +86,27 @@ async def lifespan(app: FastAPI):
 
     _run_migrations()
 
-    t_sched = time.perf_counter()
-    scheduler = BackgroundScheduler()
-    # Fetch weather for all gardens daily at 2 AM.
-    scheduler.add_job(run_daily_weather_fetch, 'cron', hour=2, minute=0)
-    # NOTE: removed immediate startup weather fetch — it made external HTTP calls
-    # (open-meteo) on every restart, slowing startup. The nightly cron is sufficient.
-    scheduler.add_job(run_gcs_backup, 'cron', hour=3, minute=0)
-    scheduler.start()
-    logger.info('[startup] scheduler started — %.0fms', (time.perf_counter() - t_sched) * 1000)
+    # On free-tier cloud hosts the process spins down when idle, so in-process
+    # cron never fires — set ENABLE_SCHEDULER=0 there and trigger the admin job
+    # endpoints from GitHub Actions cron instead (.github/workflows/scheduled-jobs.yaml).
+    scheduler = None
+    if os.environ.get('ENABLE_SCHEDULER', '1') != '0':
+        t_sched = time.perf_counter()
+        scheduler = BackgroundScheduler()
+        # Fetch weather for all gardens daily at 2 AM.
+        scheduler.add_job(run_daily_weather_fetch, 'cron', hour=2, minute=0)
+        # NOTE: removed immediate startup weather fetch — it made external HTTP calls
+        # (open-meteo) on every restart, slowing startup. The nightly cron is sufficient.
+        scheduler.add_job(run_gcs_backup, 'cron', hour=3, minute=0)
+        scheduler.start()
+        logger.info('[startup] scheduler started — %.0fms', (time.perf_counter() - t_sched) * 1000)
     logger.info('[startup] app ready — %.0fms total', (time.perf_counter() - t_start) * 1000)
 
     yield
 
-    scheduler.shutdown()
-    logger.info('[shutdown] scheduler stopped')
+    if scheduler:
+        scheduler.shutdown()
+        logger.info('[shutdown] scheduler stopped')
 
 
 app = FastAPI(
@@ -103,9 +116,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Vite dev server by default; prod is same-origin. Override with a
+# comma-separated CORS_ORIGINS env var when hosting web and API separately.
+_cors_origins = [
+    o.strip() for o in os.environ.get('CORS_ORIGINS', 'http://localhost:5173').split(',')
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['http://localhost:5173'],  # Vite dev server; prod is same-origin
+    allow_origins=_cors_origins,
     allow_methods=['*'],
     allow_headers=['*'],
 )
@@ -120,21 +139,19 @@ async def log_slow_requests(request: Request, call_next):
         logger.warning('SLOW %s %s — %.0fms', request.method, request.url.path, ms)
     return response
 
-app.include_router(gardens.router)
-app.include_router(weather.router)
-app.include_router(perenual.router)
-app.include_router(beds.router)
-app.include_router(plants.router)
-app.include_router(tasks.router)
-app.include_router(canvas.router)
-app.include_router(library.router)
-app.include_router(chat.router)
+# Open routes: login/register + health. admin.router is guarded by X-Job-Token.
+app.include_router(auth.router)
 app.include_router(admin.router)
-app.include_router(tips.router)
-app.include_router(seed_room.router)
-app.include_router(observations.router)
-app.include_router(journal.router)
-app.include_router(compost.router)
+
+# Everything else requires a logged-in user (Authorization: Bearer <token>).
+_require_login = [Depends(get_current_user)]
+for _router in (
+    gardens.router, weather.router, perenual.router, beds.router, plants.router,
+    tasks.router, canvas.router, library.router, chat.router, tips.router,
+    seed_room.router, observations.router, journal.router, compost.router,
+    identify.router, auth.members_router,
+):
+    app.include_router(_router, dependencies=_require_login)
 
 
 @app.get('/api/health')
@@ -146,9 +163,19 @@ _ROOT = Path(__file__).parents[3]  # gardening_app/
 _STATIC_DIR = _ROOT / 'apps' / 'api' / 'static'   # images, CSS — keep in place (no migration needed)
 _DIST_DIR = _ROOT / 'apps' / 'web' / 'dist'       # React build output
 
-# Serve plant images, CSS, and other legacy static assets
+# Serve plant images, CSS, and other legacy static assets.
+# Locally these live on disk; in the cloud (no local tree) they live in a
+# public GCS bucket and /static/* is redirected there.
+_GCS_STATIC_BUCKET = os.environ.get('GCS_STATIC_BUCKET')
 if _STATIC_DIR.exists():
     app.mount('/static', StaticFiles(directory=str(_STATIC_DIR)), name='static')
+elif _GCS_STATIC_BUCKET:
+    @app.get('/static/{path:path}', include_in_schema=False)
+    async def static_redirect(path: str):
+        return RedirectResponse(
+            f'https://storage.googleapis.com/{_GCS_STATIC_BUCKET}/static/{path}',
+            status_code=302,
+        )
 
 # SPA catch-all — MUST come after all API routers so it never shadows /api/* routes.
 # If the React build doesn't exist yet (pre-`npm run build`), this block is skipped

@@ -1,6 +1,7 @@
 """
 Weather routes: fetch Open-Meteo forecast, fetch/store historical weather, watering status.
 """
+import logging
 import time
 from datetime import date, timedelta
 from typing import Optional
@@ -10,9 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import Garden, WeatherLog
+from ..db.models import Garden, User, WeatherLog
 from ..db.session import SessionLocal, get_db
+from ..services.auth import get_current_user, require_garden
 from ..services.helpers import FROST_DATES, REPO_ROOT, WMO, get_or_404, rainfall_summary
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['weather'])
 
@@ -21,11 +25,13 @@ _WEATHER_CACHE_TTL = 600  # 10 minutes
 
 
 @router.get('/gardens/{garden_id}/weather')
-def api_garden_weather(garden_id: int, db: Session = Depends(get_db)):
+def api_garden_weather(garden_id: int,
+                       user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'viewer')
     cached = _weather_cache.get(garden_id)
     if cached and time.time() - cached[0] < _WEATHER_CACHE_TTL:
         return cached[1]
-    garden = get_or_404(db, Garden, garden_id)
     if not garden.latitude or not garden.longitude:
         raise HTTPException(status_code=404, detail='no_location')
     try:
@@ -136,17 +142,18 @@ def run_daily_weather_fetch():
         for g in gardens:
             try:
                 saved = _fetch_weather_for_garden(db, g.id)
-                print(f'[weather] garden {g.id} ({g.name}): {saved} days saved')
-            except Exception as e:
-                print(f'[weather] garden {g.id} failed: {e}')
+                logger.info('[weather] garden %d (%s): %d days saved', g.id, g.name, saved)
+            except Exception:
+                logger.exception('[weather] garden %d fetch failed', g.id)
     finally:
         db.close()
 
 
 @router.post('/gardens/{garden_id}/fetch-weather')
-def api_fetch_weather_history(garden_id: int, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)  # raises 404 if missing
-    garden = db.get(Garden, garden_id)
+def api_fetch_weather_history(garden_id: int,
+                              user: User = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'editor')
     if not garden.latitude or not garden.longitude:
         raise HTTPException(status_code=400, detail='no_location')
 
@@ -165,8 +172,10 @@ class RainLogBody(BaseModel):
 
 
 @router.post('/gardens/{garden_id}/log-rain')
-def api_log_rain(garden_id: int, body: RainLogBody, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_log_rain(garden_id: int, body: RainLogBody,
+                 user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'editor')
     log_date = date.fromisoformat(body.entry_date) if body.entry_date else date.today()
     rainfall = max(0.0, min(20.0, body.rainfall_in))
 
@@ -181,8 +190,10 @@ def api_log_rain(garden_id: int, body: RainLogBody, db: Session = Depends(get_db
 
 
 @router.get('/gardens/{garden_id}/rain-log')
-def api_get_rain_log(garden_id: int, days: int = 14, db: Session = Depends(get_db)):
-    get_or_404(db, Garden, garden_id)
+def api_get_rain_log(garden_id: int, days: int = 14,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    require_garden(db, user, garden_id, 'viewer')
     cutoff = date.today() - timedelta(days=days)
     logs = (db.query(WeatherLog)
             .filter(WeatherLog.garden_id == garden_id, WeatherLog.date >= cutoff)
@@ -193,11 +204,13 @@ def api_get_rain_log(garden_id: int, days: int = 14, db: Session = Depends(get_d
 
 
 @router.get('/gardens/{garden_id}/watering-status')
-def api_watering_status(garden_id: int, db: Session = Depends(get_db)):
+def api_watering_status(garden_id: int,
+                        user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
     from apps.ml_service.app.watering_engine import (
         fetch_forecast_today, get_watering_recommendations,
     )
-    garden = get_or_404(db, Garden, garden_id)
+    garden = require_garden(db, user, garden_id, 'viewer')
 
     cutoff = date.today() - timedelta(days=14)
     weather_logs = (db.query(WeatherLog)

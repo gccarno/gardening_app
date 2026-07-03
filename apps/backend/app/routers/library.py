@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 
 from ..db.models import PlantLibrary, PlantLibraryImage
 from ..db.session import get_db
-from ..services.helpers import STATIC_DIR, ext_from_content_type, get_or_404
+from ..services.helpers import ext_from_content_type, get_or_404
 from ..services.files import save_plant_image
+from ..services.storage import delete_static
 
 router = APIRouter(prefix='/api', tags=['library'])
 
@@ -101,9 +102,7 @@ def api_library_image_delete(image_id: int, db: Session = Depends(get_db)):
 
     remaining = db.query(PlantLibraryImage).filter_by(filename=filename).count()
     if remaining == 0:
-        fpath = STATIC_DIR / 'plant_images' / filename
-        if fpath.exists():
-            fpath.unlink()
+        delete_static(f'plant_images/{filename}')
 
     new_primary_filename = None
     if was_primary:

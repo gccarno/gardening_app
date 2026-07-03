@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import BedPlant, PlantObservation, OBSERVATION_TYPES
+from ..db.models import BedPlant, PlantObservation, OBSERVATION_TYPES, User
 from ..db.session import get_db
+from ..services.auth import get_current_user, require_resource
 from ..services.helpers import get_or_404
 
 router = APIRouter(prefix='/api', tags=['observations'])
@@ -66,8 +67,8 @@ class ObservationCreate(BaseModel):
 
 
 @router.get('/bedplants/{bp_id}/observations')
-def api_list_observations(bp_id: int, db: Session = Depends(get_db)):
-    get_or_404(db, BedPlant, bp_id)
+def api_list_observations(bp_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_resource(db, user, BedPlant, bp_id, 'viewer')
     obs = (db.query(PlantObservation)
            .filter(PlantObservation.bed_plant_id == bp_id)
            .order_by(PlantObservation.observation_date.desc())
@@ -76,8 +77,8 @@ def api_list_observations(bp_id: int, db: Session = Depends(get_db)):
 
 
 @router.post('/bedplants/{bp_id}/observations')
-def api_create_observation(bp_id: int, body: ObservationCreate, db: Session = Depends(get_db)):
-    get_or_404(db, BedPlant, bp_id)
+def api_create_observation(bp_id: int, body: ObservationCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_resource(db, user, BedPlant, bp_id, 'editor')
     if body.observation_type not in OBSERVATION_TYPES:
         raise HTTPException(status_code=400, detail=f'observation_type must be one of {OBSERVATION_TYPES}')
     severity = max(1, min(5, body.severity or 3))
@@ -95,16 +96,16 @@ def api_create_observation(bp_id: int, body: ObservationCreate, db: Session = De
 
 
 @router.delete('/observations/{obs_id}')
-def api_delete_observation(obs_id: int, db: Session = Depends(get_db)):
-    obs = get_or_404(db, PlantObservation, obs_id)
+def api_delete_observation(obs_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    obs = require_resource(db, user, PlantObservation, obs_id, 'editor')
     db.delete(obs)
     db.commit()
     return {'ok': True}
 
 
 @router.get('/bedplants/{bp_id}/health-score')
-def api_health_score(bp_id: int, db: Session = Depends(get_db)):
-    get_or_404(db, BedPlant, bp_id)
+def api_health_score(bp_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_resource(db, user, BedPlant, bp_id, 'viewer')
     obs = db.query(PlantObservation).filter(PlantObservation.bed_plant_id == bp_id).all()
     score = compute_health_score(obs)
     label = 'good' if score >= 70 else ('fair' if score >= 40 else 'poor')

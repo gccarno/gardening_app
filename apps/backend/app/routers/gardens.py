@@ -14,9 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..db.models import Garden, GardenBed, Plant, Task, BedPlant, AppSetting
+from ..db.models import Garden, GardenBed, GardenMember, Plant, Task, BedPlant, AppSetting, User
 from ..db.session import get_db
-from ..services.helpers import STATIC_DIR, FROST_DATES, get_or_404, get_season
+from ..services.auth import get_current_user, member_garden_ids, require_garden
+from ..services.helpers import FROST_DATES, get_or_404, get_season
+from ..services.storage import delete_static, save_static
 
 router = APIRouter(prefix='/api', tags=['gardens'])
 
@@ -158,13 +160,18 @@ def _serialize_garden(g: Garden) -> dict:
 # ── Garden CRUD ───────────────────────────────────────────────────────────────
 
 @router.get('/gardens')
-def api_gardens_list(db: Session = Depends(get_db)):
-    gardens = db.query(Garden).order_by(Garden.name).all()
+def api_gardens_list(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ids = member_garden_ids(db, user)
+    gardens = (db.query(Garden)
+               .filter(Garden.id.in_(ids))
+               .order_by(Garden.name).all())
     return [_serialize_garden(g) for g in gardens]
 
 
 @router.post('/gardens')
-def api_gardens_create(body: dict, db: Session = Depends(get_db)):
+def api_gardens_create(body: dict,
+                       user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
     garden = Garden(
         name=body['name'],
         description=body.get('description'),
@@ -172,6 +179,7 @@ def api_gardens_create(body: dict, db: Session = Depends(get_db)):
     )
     db.add(garden)
     db.flush()
+    db.add(GardenMember(garden_id=garden.id, user_id=user.id, role='owner'))
     zip_code = (body.get('zip_code') or '').strip()
     if zip_code:
         _apply_zip(garden, zip_code)
@@ -180,14 +188,18 @@ def api_gardens_create(body: dict, db: Session = Depends(get_db)):
 
 
 @router.get('/gardens/{garden_id}')
-def api_garden_detail(garden_id: int, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_garden_detail(garden_id: int,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'viewer')
     return _serialize_garden(garden)
 
 
 @router.put('/gardens/{garden_id}')
-def api_garden_update(garden_id: int, body: dict, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_garden_update(garden_id: int, body: dict,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'editor')
     if 'name'                    in body: garden.name                    = body['name']
     if 'description'             in body: garden.description             = body.get('description')
     if 'unit'                    in body: garden.unit                    = body.get('unit', 'ft')
@@ -209,8 +221,10 @@ def api_garden_update(garden_id: int, body: dict, db: Session = Depends(get_db))
 
 
 @router.delete('/gardens/{garden_id}')
-def api_garden_delete(garden_id: int, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_garden_delete(garden_id: int,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'owner')
     db.delete(garden)
     db.commit()
     return {'ok': True}
@@ -241,9 +255,11 @@ def api_set_default_garden(body: dict, db: Session = Depends(get_db)):
 # ── Dashboard summary ─────────────────────────────────────────────────────────
 
 @router.get('/dashboard')
-def api_dashboard(garden_id: Optional[int] = None, db: Session = Depends(get_db)):
+def api_dashboard(garden_id: Optional[int] = None,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
     """Return all data needed to render the dashboard for the given garden."""
-    garden = db.get(Garden, garden_id) if garden_id else None
+    garden = require_garden(db, user, garden_id, 'viewer') if garden_id else None
     today = date.today()
 
     q_beds   = db.query(GardenBed)
@@ -253,11 +269,16 @@ def api_dashboard(garden_id: Optional[int] = None, db: Session = Depends(get_db)
         q_beds   = q_beds.filter(GardenBed.garden_id == garden_id)
         q_plants = q_plants.filter(Plant.garden_id == garden_id)
         q_tasks  = q_tasks.filter(Task.garden_id == garden_id)
+    else:
+        member_ids = member_garden_ids(db, user)
+        q_beds   = q_beds.filter(or_(GardenBed.garden_id.in_(member_ids), GardenBed.garden_id.is_(None)))
+        q_plants = q_plants.filter(or_(Plant.garden_id.in_(member_ids), Plant.garden_id.is_(None)))
+        q_tasks  = q_tasks.filter(or_(Task.garden_id.in_(member_ids), Task.garden_id.is_(None)))
 
     metrics = {
         'bed_count':     q_beds.count(),
         'plant_count':   q_plants.count(),
-        'plants_active': q_plants.filter(Plant.status == 'active').count(),
+        'plants_active': q_plants.filter(Plant.status == 'growing').count(),
         'task_count':    q_tasks.count(),
         'overdue_tasks': q_tasks.filter(Task.due_date < today).count(),
     }
@@ -275,6 +296,9 @@ def api_dashboard(garden_id: Optional[int] = None, db: Session = Depends(get_db)
     )
     if garden:
         q_done = q_done.filter(Task.garden_id == garden_id)
+    else:
+        member_ids = member_garden_ids(db, user)
+        q_done = q_done.filter(or_(Task.garden_id.in_(member_ids), Task.garden_id.is_(None)))
     recent_activity = q_done.order_by(Task.completed_date.desc()).limit(8).all()
 
     season, season_icon = get_season(today)
@@ -320,8 +344,10 @@ def api_dashboard(garden_id: Optional[int] = None, db: Session = Depends(get_db)
 # ── Tasks for a garden ────────────────────────────────────────────────────────
 
 @router.get('/gardens/{garden_id}/tasks')
-def api_garden_tasks(garden_id: int, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_garden_tasks(garden_id: int,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'viewer')
     plant_ids = [p.id for p in garden.plants]
     bed_ids   = [b.id for b in garden.beds]
     tasks = (db.query(Task)
@@ -348,8 +374,10 @@ def api_garden_tasks(garden_id: int, db: Session = Depends(get_db)):
 # ── Quick task creation ───────────────────────────────────────────────────────
 
 @router.post('/gardens/{garden_id}/quick-task')
-def api_quick_task(garden_id: int, body: dict, db: Session = Depends(get_db)):
-    garden    = get_or_404(db, Garden, garden_id)
+def api_quick_task(garden_id: int, body: dict,
+                   user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    garden    = require_garden(db, user, garden_id, 'editor')
     task_type = body.get('task_type', 'other')
     plant_id  = body.get('plant_id')
     bed_id    = body.get('bed_id')
@@ -423,8 +451,10 @@ def api_quick_task(garden_id: int, body: dict, db: Session = Depends(get_db)):
 # ── Bulk care ─────────────────────────────────────────────────────────────────
 
 @router.post('/gardens/{garden_id}/bulk-care')
-def api_bulk_care(garden_id: int, body: dict, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_bulk_care(garden_id: int, body: dict,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'editor')
     action = body.get('action')
     if action not in ('water', 'fertilize', 'mulch'):
         raise HTTPException(status_code=400, detail='Invalid action')
@@ -475,15 +505,19 @@ def api_bulk_care(garden_id: int, body: dict, db: Session = Depends(get_db)):
 # ── Annotations ───────────────────────────────────────────────────────────────
 
 @router.get('/gardens/{garden_id}/annotations')
-def api_get_annotations(garden_id: int, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_get_annotations(garden_id: int,
+                        user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'viewer')
     shapes = json.loads(garden.annotations or '[]')
     return {'shapes': shapes}
 
 
 @router.post('/gardens/{garden_id}/annotations')
-def api_save_annotations(garden_id: int, body: dict, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def api_save_annotations(garden_id: int, body: dict,
+                         user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'editor')
     garden.annotations = json.dumps(body.get('shapes', []))
     db.commit()
     return {'ok': True}
@@ -495,25 +529,20 @@ def api_save_annotations(garden_id: int, body: dict, db: Session = Depends(get_d
 async def upload_garden_background(
     garden_id: int,
     image: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    garden = get_or_404(db, Garden, garden_id)
+    garden = require_garden(db, user, garden_id, 'editor')
     ext = os.path.splitext(image.filename or '')[1].lower()
     if ext not in _ALLOWED_IMG_EXTS:
         raise HTTPException(status_code=400, detail='Unsupported file type')
 
-    bg_dir = STATIC_DIR / 'garden_backgrounds'
-    bg_dir.mkdir(parents=True, exist_ok=True)
-
     if garden.background_image:
-        old_path = bg_dir / garden.background_image
-        if old_path.exists():
-            old_path.unlink()
+        delete_static(f'garden_backgrounds/{garden.background_image}')
 
     filename = f'garden_{garden_id}{ext}'
-    dest = bg_dir / filename
     contents = await image.read()
-    dest.write_bytes(contents)
+    save_static(f'garden_backgrounds/{filename}', contents)
 
     garden.background_image = filename
     db.commit()
@@ -521,13 +550,12 @@ async def upload_garden_background(
 
 
 @router.post('/gardens/{garden_id}/remove-background')
-def remove_garden_background(garden_id: int, db: Session = Depends(get_db)):
-    garden = get_or_404(db, Garden, garden_id)
+def remove_garden_background(garden_id: int,
+                             user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'editor')
     if garden.background_image:
-        bg_dir = STATIC_DIR / 'garden_backgrounds'
-        old_path = bg_dir / garden.background_image
-        if old_path.exists():
-            old_path.unlink()
+        delete_static(f'garden_backgrounds/{garden.background_image}')
         garden.background_image = None
         db.commit()
     return {'ok': True}

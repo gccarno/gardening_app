@@ -9,18 +9,26 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from apps.backend.app.db.models import (
-    Base, Garden, GardenBed, Plant, BedPlant, PlantLibrary, Task, WeatherLog,
+    Base, Garden, GardenBed, GardenMember, Plant, BedPlant, PlantLibrary,
+    Task, User, WeatherLog,
 )
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture
 def engine():
-    e = create_engine('sqlite:///:memory:', connect_args={'check_same_thread': False})
+    # Function-scoped so commits from endpoints under test can't leak between
+    # tests. StaticPool keeps the single in-memory DB shared across sessions.
+    e = create_engine(
+        'sqlite://',
+        connect_args={'check_same_thread': False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(e)
     yield e
-    Base.metadata.drop_all(e)
+    e.dispose()
 
 
 @pytest.fixture
@@ -31,6 +39,39 @@ def db(engine):
     yield session
     session.rollback()
     session.close()
+
+
+@pytest.fixture
+def user(db):
+    """Default authenticated test user (owner of the `garden` fixture)."""
+    from apps.backend.app.services.auth import hash_password
+    u = User(email='test@example.com', display_name='Test',
+             password_hash=hash_password('password123'))
+    db.add(u)
+    db.flush()
+    return u
+
+
+@pytest.fixture
+def client(db, user):
+    """FastAPI TestClient wired to the test database session, logged in
+    as the `user` fixture.
+
+    Instantiated without a context manager so the app lifespan (migrations,
+    scheduler) never runs.
+    """
+    from fastapi.testclient import TestClient
+    from apps.backend.app.main import app
+    from apps.backend.app.db.session import get_db
+    from apps.backend.app.services.auth import get_current_user
+
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture
@@ -55,7 +96,7 @@ def library_plant(db):
 
 
 @pytest.fixture
-def garden(db):
+def garden(db, user):
     g = Garden(
         name='Test Garden',
         usda_zone='5b',
@@ -66,6 +107,8 @@ def garden(db):
         state='IL',
     )
     db.add(g)
+    db.flush()
+    db.add(GardenMember(garden_id=g.id, user_id=user.id, role='owner'))
     db.flush()
     return g
 

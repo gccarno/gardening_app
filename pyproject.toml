@@ -18,6 +18,9 @@ dependencies = [
     "alembic",
     "python-multipart",
     "sqlalchemy",
+    "psycopg[binary]",
+    "argon2-cffi",
+    "pillow",
     "apscheduler>=3.10",
     "google-cloud-storage>=2.14",
 ]
@@ -58,4 +61,5 @@ torchvision = { index = "pytorch-cu121" }
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "httpx",
 ]

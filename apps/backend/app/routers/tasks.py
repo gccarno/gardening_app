@@ -5,10 +5,14 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..db.models import Task
+from ..db.models import Task, User
 from ..db.session import get_db
+from ..services.auth import (
+    get_current_user, member_garden_ids, require_garden, require_resource,
+)
 from ..services.helpers import get_or_404
 
 router = APIRouter(prefix='/api', tags=['tasks'])
@@ -23,21 +27,30 @@ _VALID_TYPES = {
 def list_tasks(
     completed: Optional[bool] = None,
     garden_id: Optional[int] = None,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     q = db.query(Task)
     if completed is not None:
         q = q.filter(Task.completed == completed)
     if garden_id is not None:
+        require_garden(db, user, garden_id, 'viewer')
         q = q.filter(Task.garden_id == garden_id)
+    else:
+        member_ids = member_garden_ids(db, user)
+        q = q.filter(or_(Task.garden_id.in_(member_ids), Task.garden_id.is_(None)))
     tasks = q.order_by(Task.completed.asc(), Task.due_date.asc().nullslast()).all()
     return [_serialize(t) for t in tasks]
 
 
 @router.post('/tasks')
-def create_task(body: dict, db: Session = Depends(get_db)):
+def create_task(body: dict,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
     if not body.get('title'):
         raise HTTPException(status_code=400, detail='title required')
+    if body.get('garden_id'):
+        require_garden(db, user, int(body['garden_id']), 'editor')
     due = body.get('due_date')
     task = Task(
         title=body['title'],
@@ -54,13 +67,17 @@ def create_task(body: dict, db: Session = Depends(get_db)):
 
 
 @router.get('/tasks/{task_id}')
-def get_task(task_id: int, db: Session = Depends(get_db)):
-    return _serialize(get_or_404(db, Task, task_id))
+def get_task(task_id: int,
+             user: User = Depends(get_current_user),
+             db: Session = Depends(get_db)):
+    return _serialize(require_resource(db, user, Task, task_id, 'viewer'))
 
 
 @router.put('/tasks/{task_id}')
-def update_task(task_id: int, body: dict, db: Session = Depends(get_db)):
-    task = get_or_404(db, Task, task_id)
+def update_task(task_id: int, body: dict,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    task = require_resource(db, user, Task, task_id, 'editor')
     due  = body.get('due_date')
     if 'title'       in body: task.title       = body['title']
     if 'description' in body: task.description = body.get('description')
@@ -74,8 +91,10 @@ def update_task(task_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 @router.post('/tasks/{task_id}/complete')
-def toggle_complete(task_id: int, db: Session = Depends(get_db)):
-    task = get_or_404(db, Task, task_id)
+def toggle_complete(task_id: int,
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    task = require_resource(db, user, Task, task_id, 'editor')
     task.completed      = not task.completed
     task.completed_date = date.today() if task.completed else None
     db.commit()
@@ -83,8 +102,10 @@ def toggle_complete(task_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete('/tasks/{task_id}')
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    task = get_or_404(db, Task, task_id)
+def delete_task(task_id: int,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    task = require_resource(db, user, Task, task_id, 'editor')
     db.delete(task)
     db.commit()
     return {'ok': True}
