@@ -30,7 +30,7 @@ class GardenDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
-    private val gardenId: Int = checkNotNull(savedStateHandle.get<String>("gardenId")?.toInt())
+    private val gardenId: Int? = savedStateHandle.get<String>("gardenId")?.toIntOrNull()
 
     private val _uiState = MutableStateFlow(GardenDetailUiState())
     val uiState: StateFlow<GardenDetailUiState> = _uiState.asStateFlow()
@@ -40,6 +40,10 @@ class GardenDetailViewModel @Inject constructor(
     }
 
     fun load() {
+        val gardenId = gardenId ?: run {
+            _uiState.value = _uiState.value.copy(error = "Garden not found", isLoading = false)
+            return
+        }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             val gardenDeferred = async { repository.getGarden(gardenId) }
@@ -57,6 +61,7 @@ class GardenDetailViewModel @Inject constructor(
     }
 
     fun bulkCare(action: String) {
+        val gardenId = gardenId ?: return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isBulkCaring = true)
             val label = when (action) {

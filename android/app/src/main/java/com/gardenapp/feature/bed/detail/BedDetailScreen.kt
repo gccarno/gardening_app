@@ -55,11 +55,25 @@ fun BedDetailScreen(
             lastFertilized = uiState.careLastFertilized,
             healthNotes = uiState.careHealthNotes,
             isSaving = uiState.isSavingCare,
+            observations = uiState.observations,
+            healthScore = uiState.healthScore,
+            obsLoading = uiState.obsLoading,
+            showObsForm = uiState.showObsForm,
+            obsType = uiState.obsType,
+            obsSeverity = uiState.obsSeverity,
+            obsNotes = uiState.obsNotes,
             onWateredChange = viewModel::onCareWateredChange,
             onFertilizedChange = viewModel::onCareFertilizedChange,
             onNotesChange = viewModel::onCareNotesChange,
             onSave = viewModel::saveCare,
             onDismiss = viewModel::dismissCareSheet,
+            onShowObsForm = viewModel::showObsForm,
+            onDismissObsForm = viewModel::dismissObsForm,
+            onObsTypeChange = viewModel::setObsType,
+            onObsSeverityChange = viewModel::setObsSeverity,
+            onObsNotesChange = viewModel::setObsNotes,
+            onSubmitObs = viewModel::submitObservation,
+            onDeleteObs = viewModel::deleteObservation,
         )
     }
 
@@ -148,6 +162,13 @@ fun BedDetailScreen(
                             PlantLegend(placed = uiState.placed)
                         }
 
+                        // Rotation warnings
+                        uiState.rotationWarnings?.let { rw ->
+                            if (rw.familiesInBed.isNotEmpty()) {
+                                RotationWarningsCard(rw.familiesInBed.map { "${it.family} (${it.plantName})" })
+                            }
+                        }
+
                         Spacer(Modifier.height(32.dp))
                     }
                 }
@@ -161,6 +182,31 @@ fun BedDetailScreen(
                     Button(onClick = { viewModel.loadGrid() }) { Text("Retry") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RotationWarningsCard(families: List<String>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "🔄 Families in this bed",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            families.forEach { f ->
+                Text("• $f", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer)
+            }
+            Text(
+                "Avoid repeating the same family for crop rotation.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
         }
     }
 }

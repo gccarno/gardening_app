@@ -6,6 +6,7 @@ import com.gardenapp.core.database.entities.toTask
 import com.gardenapp.core.model.Task
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.network.toNetworkError
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -23,7 +24,7 @@ class TaskRepository @Inject constructor(
         taskDao.upsertAll(fresh.map { it.toEntity() })
         NetworkResult.Success(fresh)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("TaskRepository")
     }
 
     suspend fun completeTask(id: Int): NetworkResult<Task> = try {
@@ -31,7 +32,7 @@ class TaskRepository @Inject constructor(
         taskDao.upsertAll(listOf(result.toEntity()))
         NetworkResult.Success(result)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("TaskRepository")
     }
 
     suspend fun createTask(
@@ -56,7 +57,7 @@ class TaskRepository @Inject constructor(
         taskDao.upsertAll(listOf(result.toEntity()))
         NetworkResult.Success(result)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("TaskRepository")
     }
 
     suspend fun updateTask(
@@ -82,7 +83,7 @@ class TaskRepository @Inject constructor(
         taskDao.upsertAll(listOf(result.toEntity()))
         NetworkResult.Success(result)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("TaskRepository")
     }
 
     suspend fun deleteTask(id: Int): NetworkResult<Unit> = try {
@@ -90,7 +91,7 @@ class TaskRepository @Inject constructor(
         refresh()
         NetworkResult.Success(Unit)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("TaskRepository")
     }
 
     suspend fun quickTask(gardenId: Int, plantId: Int?, taskType: String?): NetworkResult<Unit> = try {
@@ -102,6 +103,6 @@ class TaskRepository @Inject constructor(
         refresh()
         NetworkResult.Success(Unit)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("TaskRepository")
     }
 }

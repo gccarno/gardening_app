@@ -8,6 +8,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Recycling
+import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +28,9 @@ fun GardenDetailScreen(
     onEdit: (Int) -> Unit,
     onOpenPlanner: (Int) -> Unit,
     onOpenBeds: (Int) -> Unit,
+    onOpenJournal: (Int) -> Unit,
+    onOpenSeedRoom: (Int) -> Unit,
+    onOpenCompost: (Int) -> Unit,
     viewModel: GardenDetailViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -88,6 +94,36 @@ fun GardenDetailScreen(
                             Icon(Icons.Default.Grass, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("View Beds")
+                        }
+
+                        // Journal navigation
+                        OutlinedButton(
+                            onClick = { onOpenJournal(garden.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Garden Journal")
+                        }
+
+                        // Seed Room navigation
+                        OutlinedButton(
+                            onClick = { onOpenSeedRoom(garden.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.Eco, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Seed Room")
+                        }
+
+                        // Compost navigation
+                        OutlinedButton(
+                            onClick = { onOpenCompost(garden.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.Recycling, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Compost Helper")
                         }
 
                         // Bulk care

@@ -4,9 +4,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.gardenapp.core.model.Plant
+import com.gardenapp.core.model.SyncChange
 import com.gardenapp.feature.plant.list.components.GanttChart
 import java.time.LocalDate
 
@@ -32,9 +36,30 @@ fun PlantListScreen(
         uiState.error?.let { snackbarHostState.showSnackbar(it); viewModel.dismissError() }
     }
 
+    // Sync dialog
+    if (uiState.syncOpen) {
+        SyncDialog(
+            changes = uiState.syncChanges,
+            selected = uiState.syncSelected,
+            loading = uiState.syncLoading,
+            applying = uiState.syncApplying,
+            onToggle = viewModel::toggleSyncItem,
+            onToggleAll = viewModel::toggleAllSync,
+            onApply = viewModel::applySync,
+            onDismiss = viewModel::dismissSync,
+        )
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Plants", fontWeight = FontWeight.Bold) })
+            TopAppBar(
+                title = { Text("Plants", fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = viewModel::openSync) {
+                        Icon(Icons.Default.Sync, "Sync with beds")
+                    }
+                },
+            )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNavigateToCreate) {
@@ -128,7 +153,16 @@ private fun PlantRow(plant: Plant, onClick: () -> Unit, onDelete: () -> Unit) {
     }
 
     ListItem(
-        headlineContent = { Text(plant.name, fontWeight = FontWeight.Medium) },
+        headlineContent = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(plant.name, fontWeight = FontWeight.Medium)
+                plant.successionLabel?.let { label ->
+                    Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                        Text(label, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                }
+            }
+        },
         supportingContent = {
             val parts = listOfNotNull(
                 plant.type?.replaceFirstChar(Char::uppercase),
@@ -214,4 +248,80 @@ private fun emptyMessage(tab: PlantTab) = when (tab) {
     PlantTab.Growing -> "No plants currently growing"
     PlantTab.Reminders -> "No harvests due in the next 30 days"
     PlantTab.Timeline -> ""
+}
+
+@Composable
+private fun SyncDialog(
+    changes: List<SyncChange>,
+    selected: Set<Int>,
+    loading: Boolean,
+    applying: Boolean,
+    onToggle: (Int) -> Unit,
+    onToggleAll: () -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sync with beds") },
+        text = {
+            when {
+                loading -> Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                changes.isEmpty() -> Text("Everything is in sync — no differences found.")
+                else -> Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("${changes.size} difference${if (changes.size != 1) "s" else ""} found",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = onToggleAll) {
+                            Text(if (selected.size == changes.size) "Deselect all" else "Select all",
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    changes.forEachIndexed { i, change ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = selected.contains(i), onCheckedChange = { onToggle(i) })
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(change.plantName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                val fieldLabel = if (change.field == "last_watered") "💧 Last watered" else "🌿 Last fertilized"
+                                val dirLabel = if (change.direction == "bed_to_plant") "Bed → Plant" else "Plant → Beds"
+                                Text("$fieldLabel · $dirLabel", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "${change.plantValue ?: "—"} → ${change.proposedValue ?: "—"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (changes.isNotEmpty()) {
+                Button(
+                    onClick = onApply,
+                    enabled = selected.isNotEmpty() && !applying,
+                ) {
+                    if (applying) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Text("Apply ${selected.size}")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }

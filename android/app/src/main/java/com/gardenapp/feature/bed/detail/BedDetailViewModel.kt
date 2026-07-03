@@ -7,7 +7,10 @@ import androidx.lifecycle.viewModelScope
 import com.gardenapp.core.model.Bed
 import com.gardenapp.core.model.BedPlantDetail
 import com.gardenapp.core.model.GridPlant
+import com.gardenapp.core.model.HealthScore
 import com.gardenapp.core.model.LibraryListEntry
+import com.gardenapp.core.model.PlantObservation
+import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.NetworkResult
 import com.gardenapp.feature.bed.BedRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -35,6 +38,17 @@ data class BedDetailUiState(
     val careLastFertilized: String = "",
     val careHealthNotes: String = "",
     val isSavingCare: Boolean = false,
+    // Observations (shown in care sheet)
+    val observations: List<PlantObservation> = emptyList(),
+    val healthScore: HealthScore? = null,
+    val obsLoading: Boolean = false,
+    // Observation add form
+    val showObsForm: Boolean = false,
+    val obsType: String = "healthy",
+    val obsSeverity: Int = 3,
+    val obsNotes: String = "",
+    // Rotation warnings
+    val rotationWarnings: RotationWarnings? = null,
 )
 
 @HiltViewModel
@@ -72,6 +86,16 @@ class BedDetailViewModel @Inject constructor(
                         isLoading = false, error = r.message,
                     )
                 }
+                else -> Unit
+            }
+            loadRotationWarnings()
+        }
+    }
+
+    private fun loadRotationWarnings() {
+        viewModelScope.launch {
+            when (val r = repository.getRotationWarnings(bedId)) {
+                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(rotationWarnings = r.data)
                 else -> Unit
             }
         }
@@ -179,6 +203,7 @@ class BedDetailViewModel @Inject constructor(
                         careLastFertilized = bp.lastFertilized ?: "",
                         careHealthNotes = bp.healthNotes ?: "",
                     )
+                    loadObservations(bedPlantId)
                 }
                 else -> Unit
             }
@@ -210,9 +235,56 @@ class BedDetailViewModel @Inject constructor(
         }
     }
 
-    fun dismissCareSheet() { _uiState.value = _uiState.value.copy(careSheetPlant = null) }
+    fun dismissCareSheet() {
+        _uiState.value = _uiState.value.copy(
+            careSheetPlant = null,
+            observations = emptyList(),
+            healthScore = null,
+            showObsForm = false,
+        )
+    }
     fun dismissMessage() { _uiState.value = _uiState.value.copy(message = null) }
     fun dismissError() { _uiState.value = _uiState.value.copy(error = null) }
+
+    // ── Observations ─────────────────────────────────────────────────────────
+
+    private fun loadObservations(bedPlantId: Int) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(obsLoading = true)
+            when (val r = repository.getObservations(bedPlantId)) {
+                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(observations = r.data, obsLoading = false)
+                else -> _uiState.value = _uiState.value.copy(obsLoading = false)
+            }
+            when (val r = repository.getHealthScore(bedPlantId)) {
+                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(healthScore = r.data)
+                else -> Unit
+            }
+        }
+    }
+
+    fun showObsForm() { _uiState.value = _uiState.value.copy(showObsForm = true, obsType = "healthy", obsSeverity = 3, obsNotes = "") }
+    fun dismissObsForm() { _uiState.value = _uiState.value.copy(showObsForm = false) }
+    fun setObsType(v: String) { _uiState.value = _uiState.value.copy(obsType = v) }
+    fun setObsSeverity(v: Int) { _uiState.value = _uiState.value.copy(obsSeverity = v) }
+    fun setObsNotes(v: String) { _uiState.value = _uiState.value.copy(obsNotes = v) }
+
+    fun submitObservation() {
+        val bp = _uiState.value.careSheetPlant ?: return
+        val s = _uiState.value
+        viewModelScope.launch {
+            repository.createObservation(bp.id, s.obsType, s.obsSeverity, s.obsNotes.takeIf { it.isNotBlank() }, null)
+            _uiState.value = _uiState.value.copy(showObsForm = false)
+            loadObservations(bp.id)
+        }
+    }
+
+    fun deleteObservation(obsId: Int) {
+        val bpId = _uiState.value.careSheetPlant?.id ?: return
+        viewModelScope.launch {
+            repository.deleteObservation(obsId)
+            loadObservations(bpId)
+        }
+    }
 
     companion object {
         private const val TAG = "BedDetailVM"

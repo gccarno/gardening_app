@@ -5,6 +5,7 @@ import com.gardenapp.core.model.Bed
 import com.gardenapp.core.model.CanvasPlant
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.network.toNetworkError
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,7 +19,7 @@ class CanvasPlannerRepository @Inject constructor(private val api: ApiService) {
         NetworkResult.Success(beds)
     } catch (e: Exception) {
         Log.e(TAG, "loadBeds error: ${e::class.simpleName}: ${e.message}")
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("CanvasPlannerRepository")
     }
 
     suspend fun loadCanvasPlants(gardenId: Int): NetworkResult<List<CanvasPlant>> = try {
@@ -28,7 +29,7 @@ class CanvasPlannerRepository @Inject constructor(private val api: ApiService) {
         NetworkResult.Success(plants)
     } catch (e: Exception) {
         Log.e(TAG, "loadCanvasPlants error: ${e::class.simpleName}: ${e.message}")
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("CanvasPlannerRepository")
     }
 
     suspend fun updateBedPosition(bedId: Int, posX: Float, posY: Float): NetworkResult<Unit> = try {
@@ -36,7 +37,7 @@ class CanvasPlannerRepository @Inject constructor(private val api: ApiService) {
         NetworkResult.Success(Unit)
     } catch (e: Exception) {
         Log.e(TAG, "updateBedPosition bedId=$bedId error: ${e.message}")
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("CanvasPlannerRepository")
     }
 
     suspend fun updateCanvasPlantPosition(plantId: Int, posX: Float, posY: Float): NetworkResult<Unit> = try {
@@ -44,7 +45,7 @@ class CanvasPlannerRepository @Inject constructor(private val api: ApiService) {
         NetworkResult.Success(Unit)
     } catch (e: Exception) {
         Log.e(TAG, "updateCanvasPlantPosition plantId=$plantId error: ${e.message}")
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("CanvasPlannerRepository")
     }
 
     companion object {

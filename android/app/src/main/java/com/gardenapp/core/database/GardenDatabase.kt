@@ -21,7 +21,7 @@ import com.gardenapp.core.database.entities.WeatherCacheEntity
         PlantEntity::class,
         TaskEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class GardenDatabase : RoomDatabase() {

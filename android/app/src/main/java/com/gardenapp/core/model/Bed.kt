@@ -57,3 +57,35 @@ data class BedPlantDetail(
     @SerialName("health_notes") val healthNotes: String? = null,
     val stage: String? = null,
 )
+
+@Serializable
+data class RotationFamily(
+    val family: String,
+    @SerialName("plant_name") val plantName: String,
+)
+
+@Serializable
+data class RotationWarnings(
+    @SerialName("bed_id") val bedId: Int,
+    @SerialName("families_in_bed") val familiesInBed: List<RotationFamily> = emptyList(),
+    @SerialName("candidate_family") val candidateFamily: String? = null,
+    val conflict: Boolean = false,
+    val warning: String? = null,
+)
+
+@Serializable
+data class PlantObservation(
+    val id: Int,
+    @SerialName("bed_plant_id") val bedPlantId: Int,
+    @SerialName("observation_date") val observationDate: String,
+    @SerialName("observation_type") val observationType: String,
+    val severity: Int = 3,
+    val notes: String? = null,
+)
+
+@Serializable
+data class HealthScore(
+    @SerialName("bed_plant_id") val bedPlantId: Int,
+    @SerialName("health_score") val healthScore: Int,
+    val label: String,
+)

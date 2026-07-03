@@ -5,8 +5,11 @@ import com.gardenapp.core.database.entities.toEntity
 import com.gardenapp.core.database.entities.toPlant
 import com.gardenapp.core.model.Plant
 import com.gardenapp.core.model.PlantDetail
+import com.gardenapp.core.model.SyncChange
+import com.gardenapp.core.model.SyncPreview
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.network.toNetworkError
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -24,13 +27,13 @@ class PlantRepository @Inject constructor(
         plantDao.upsertAll(fresh.map { it.toEntity() })
         NetworkResult.Success(fresh)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("PlantRepository")
     }
 
     suspend fun getDetail(id: Int): NetworkResult<PlantDetail> = try {
         NetworkResult.Success(api.getPlant(id))
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("PlantRepository")
     }
 
     suspend fun setStatus(id: Int, status: String): NetworkResult<Plant> = try {
@@ -38,7 +41,7 @@ class PlantRepository @Inject constructor(
         plantDao.upsertAll(listOf(result.toEntity()))
         NetworkResult.Success(result)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("PlantRepository")
     }
 
     suspend fun createPlant(
@@ -59,7 +62,7 @@ class PlantRepository @Inject constructor(
         plantDao.upsertAll(listOf(result.toEntity()))
         NetworkResult.Success(result)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("PlantRepository")
     }
 
     suspend fun updatePlant(
@@ -79,7 +82,7 @@ class PlantRepository @Inject constructor(
         plantDao.upsertAll(listOf(result.toEntity()))
         NetworkResult.Success(result)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("PlantRepository")
     }
 
     suspend fun deletePlant(id: Int): NetworkResult<Unit> = try {
@@ -87,6 +90,27 @@ class PlantRepository @Inject constructor(
         refresh()
         NetworkResult.Success(Unit)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("PlantRepository")
+    }
+
+    suspend fun getSyncPreview(): NetworkResult<SyncPreview> = try {
+        NetworkResult.Success(api.getSyncPreview())
+    } catch (e: Exception) {
+        e.toNetworkError("PlantRepository")
+    }
+
+    suspend fun applySync(changes: List<SyncChange>): NetworkResult<Unit> = try {
+        val body = mapOf("changes" to changes.map { c ->
+            mapOf(
+                "plant_id" to c.plantId,
+                "field" to c.field,
+                "proposed_value" to c.proposedValue,
+            )
+        })
+        api.applySync(body)
+        refresh()
+        NetworkResult.Success(Unit)
+    } catch (e: Exception) {
+        e.toNetworkError("PlantRepository")
     }
 }

@@ -27,6 +27,7 @@ data class PlantEntity(
     @ColumnInfo(name = "transplant_offset") val transplantOffset: Int? = null,
     @ColumnInfo(name = "temp_max_f") val tempMaxF: Float? = null,
     @ColumnInfo(name = "bed_names") val bedNames: String = "",
+    @ColumnInfo(name = "succession_label") val successionLabel: String? = null,
 )
 
 fun PlantEntity.toPlant() = Plant(
@@ -38,6 +39,7 @@ fun PlantEntity.toPlant() = Plant(
     directSowOffset = directSowOffset, transplantOffset = transplantOffset,
     tempMaxF = tempMaxF,
     bedNames = if (bedNames.isBlank()) emptyList() else bedNames.split(","),
+    successionLabel = successionLabel,
 )
 
 fun Plant.toEntity() = PlantEntity(
@@ -48,4 +50,5 @@ fun Plant.toEntity() = PlantEntity(
     daysToGermination = daysToGermination, sowIndoorWeeks = sowIndoorWeeks,
     directSowOffset = directSowOffset, transplantOffset = transplantOffset,
     tempMaxF = tempMaxF, bedNames = bedNames.joinToString(","),
+    successionLabel = successionLabel,
 )

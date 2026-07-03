@@ -8,10 +8,14 @@ import com.gardenapp.core.model.Bed
 import com.gardenapp.core.model.BedGridResponse
 import com.gardenapp.core.model.BedPlantDetail
 import com.gardenapp.core.model.GridPlant
+import com.gardenapp.core.model.HealthScore
 import com.gardenapp.core.model.LibraryListEntry
 import com.gardenapp.core.model.LibraryListResponse
+import com.gardenapp.core.model.PlantObservation
+import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.network.toNetworkError
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -35,7 +39,7 @@ class BedRepository @Inject constructor(
         NetworkResult.Success(fresh)
     } catch (e: Exception) {
         Log.e(TAG, "refreshBeds error: ${e::class.simpleName}: ${e.message}")
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("BedRepository")
     }
 
     suspend fun getBed(id: Int): NetworkResult<Bed> = try {
@@ -156,6 +160,58 @@ class BedRepository @Inject constructor(
     } catch (e: Exception) {
         Log.e(TAG, "searchLibrary error: ${e::class.simpleName}: ${e.message}")
         NetworkResult.Error(e.message ?: "Search failed")
+    }
+
+    // ── Rotation warnings ────────────────────────────────────────────────────
+
+    suspend fun getRotationWarnings(bedId: Int): NetworkResult<RotationWarnings> = try {
+        NetworkResult.Success(api.getRotationWarnings(bedId))
+    } catch (e: Exception) {
+        Log.e(TAG, "getRotationWarnings error: ${e::class.simpleName}: ${e.message}")
+        NetworkResult.Error(e.message ?: "Load failed")
+    }
+
+    // ── Observations ─────────────────────────────────────────────────────────
+
+    suspend fun getObservations(bedPlantId: Int): NetworkResult<List<PlantObservation>> = try {
+        NetworkResult.Success(api.getObservations(bedPlantId))
+    } catch (e: Exception) {
+        Log.e(TAG, "getObservations error: ${e::class.simpleName}: ${e.message}")
+        NetworkResult.Error(e.message ?: "Load failed")
+    }
+
+    suspend fun createObservation(
+        bedPlantId: Int,
+        observationType: String,
+        severity: Int,
+        notes: String?,
+        observationDate: String?,
+    ): NetworkResult<PlantObservation> = try {
+        val body = buildMap<String, Any?> {
+            put("observation_type", observationType)
+            put("severity", severity)
+            notes?.let { put("notes", it) }
+            observationDate?.let { put("observation_date", it) }
+        }
+        NetworkResult.Success(api.createObservation(bedPlantId, body))
+    } catch (e: Exception) {
+        Log.e(TAG, "createObservation error: ${e::class.simpleName}: ${e.message}")
+        NetworkResult.Error(e.message ?: "Create failed")
+    }
+
+    suspend fun deleteObservation(obsId: Int): NetworkResult<Unit> = try {
+        api.deleteObservation(obsId)
+        NetworkResult.Success(Unit)
+    } catch (e: Exception) {
+        Log.e(TAG, "deleteObservation error: ${e::class.simpleName}: ${e.message}")
+        NetworkResult.Error(e.message ?: "Delete failed")
+    }
+
+    suspend fun getHealthScore(bedPlantId: Int): NetworkResult<HealthScore> = try {
+        NetworkResult.Success(api.getHealthScore(bedPlantId))
+    } catch (e: Exception) {
+        Log.e(TAG, "getHealthScore error: ${e::class.simpleName}: ${e.message}")
+        NetworkResult.Error(e.message ?: "Load failed")
     }
 
     companion object {

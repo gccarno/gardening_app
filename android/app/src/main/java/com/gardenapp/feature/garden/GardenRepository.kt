@@ -9,6 +9,7 @@ import com.gardenapp.core.model.Garden
 import com.gardenapp.core.model.WeatherData
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.network.toNetworkError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -35,7 +36,7 @@ class GardenRepository @Inject constructor(
         gardenDao.upsertGardens(fresh.map { it.toEntity() })
         NetworkResult.Success(fresh)
     } catch (e: Exception) {
-        NetworkResult.Error(e.message ?: "Network error")
+        e.toNetworkError("GardenRepository")
     }
 
     suspend fun getGarden(id: Int): NetworkResult<Garden> = try {

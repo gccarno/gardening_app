@@ -25,6 +25,7 @@ data class Plant(
     @SerialName("transplant_offset") val transplantOffset: Int? = null,
     @SerialName("temp_max_f") val tempMaxF: Float? = null,
     @SerialName("bed_names") val bedNames: List<String> = emptyList(),
+    @SerialName("succession_label") val successionLabel: String? = null,
 )
 
 @Serializable
@@ -61,4 +62,21 @@ data class PlantTask(
     @SerialName("task_type") val taskType: String? = null,
     @SerialName("due_date") val dueDate: String? = null,
     val completed: Boolean = false,
+)
+
+@Serializable
+data class SyncChange(
+    @SerialName("plant_id") val plantId: Int,
+    @SerialName("plant_name") val plantName: String,
+    val field: String,
+    @SerialName("plant_value") val plantValue: String? = null,
+    @SerialName("bed_value") val bedValue: String? = null,
+    @SerialName("proposed_value") val proposedValue: String? = null,
+    val direction: String,
+    @SerialName("bed_names") val bedNames: List<String> = emptyList(),
+)
+
+@Serializable
+data class SyncPreview(
+    val changes: List<SyncChange> = emptyList(),
 )

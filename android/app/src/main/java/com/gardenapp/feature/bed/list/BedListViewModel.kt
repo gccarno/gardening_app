@@ -43,6 +43,7 @@ class BedListViewModel @Inject constructor(
             refresh()
         } else {
             Log.e(TAG, "init gardenId is null — beds will not load")
+            _uiState.value = _uiState.value.copy(error = "Garden not found")
         }
     }
 
