@@ -34,7 +34,11 @@ import com.gardenapp.feature.plant.list.PlantListScreen
 import com.gardenapp.feature.settings.SettingsScreen
 import com.gardenapp.feature.task.form.TaskFormScreen
 import com.gardenapp.feature.canvas.CanvasPlannerScreen
+import com.gardenapp.feature.identify.IdentifyScreen
 import com.gardenapp.feature.task.list.TaskListScreen
+import com.gardenapp.feature.journal.JournalScreen
+import com.gardenapp.feature.seedroom.SeedRoomScreen
+import com.gardenapp.feature.compost.CompostScreen
 
 private data class BottomNavItem(
     val screen: Screen,
@@ -97,6 +101,12 @@ fun GardenNavGraph() {
                 DashboardScreen(
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToGarden = { id -> navController.navigate(Screen.GardenDetail.route(id)) },
+                    onNavigateToIdentify = { navController.navigate(Screen.Identify.route) },
+                )
+            }
+            composable(Screen.Identify.route) {
+                IdentifyScreen(
+                    onOpenLibraryEntry = { id -> navController.navigate(Screen.LibraryDetail.route(id)) },
                 )
             }
             composable(Screen.Gardens.route) {
@@ -135,7 +145,19 @@ fun GardenNavGraph() {
                     onEdit = { id -> navController.navigate(Screen.GardenForm.route(id)) },
                     onOpenPlanner = { id -> navController.navigate(Screen.CanvasPlanner.route(id)) },
                     onOpenBeds = { id -> navController.navigate(Screen.BedList.route(id)) },
+                    onOpenJournal = { id -> navController.navigate(Screen.Journal.route(id)) },
+                    onOpenSeedRoom = { id -> navController.navigate(Screen.SeedRoom.route(id)) },
+                    onOpenCompost = { id -> navController.navigate(Screen.Compost.route(id)) },
                 )
+            }
+            composable(Screen.Journal.route) {
+                JournalScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Screen.SeedRoom.route) {
+                SeedRoomScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Screen.Compost.route) {
+                CompostScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.GardenForm.route) {
                 GardenFormScreen(

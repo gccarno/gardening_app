@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Debug builds only: allow cleartext HTTP so the emulator (10.0.2.2)
+         and arbitrary home-LAN server IPs work during development. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

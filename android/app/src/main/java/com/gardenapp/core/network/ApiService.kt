@@ -10,6 +10,24 @@ interface ApiService {
     @GET("health")
     suspend fun health(): JsonElement
 
+    // ── Auth ────────────────────────────────────────────────────────────────
+    @POST("auth/login")
+    suspend fun login(@Body body: LoginRequest): LoginResponse
+
+    @POST("auth/logout")
+    suspend fun logout(): JsonElement
+
+    @GET("auth/me")
+    suspend fun me(): JsonElement
+
+    // ── Photo identification ────────────────────────────────────────────────
+    @Multipart
+    @POST("identify")
+    suspend fun identify(
+        @Part image: okhttp3.MultipartBody.Part,
+        @Part("mode") mode: okhttp3.RequestBody,
+    ): JsonElement
+
     // ── Gardens ─────────────────────────────────────────────────────────────
     @GET("gardens")
     suspend fun getGardens(): List<Garden>
@@ -290,10 +308,106 @@ interface ApiService {
         @Body body: Map<String, @JvmSuppressWildcards Any?>,
     ): JsonElement
 
+    // ── Seed Room ────────────────────────────────────────────────────────────
+    @GET("gardens/{id}/seed-room")
+    suspend fun getSeedRoom(@Path("id") id: Int): List<SeedTray>
+
+    @POST("gardens/{id}/seed-room")
+    suspend fun createSeedTray(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): SeedTray
+
+    @POST("seed-room/{id}/advance-stage")
+    suspend fun advanceSeedTrayStage(@Path("id") id: Int): SeedTray
+
+    @DELETE("seed-room/{id}")
+    suspend fun deleteSeedTray(@Path("id") id: Int): JsonElement
+
+    // ── Compost ──────────────────────────────────────────────────────────────
+    @GET("gardens/{id}/compost")
+    suspend fun getCompostBins(@Path("id") id: Int): List<CompostBin>
+
+    @POST("gardens/{id}/compost")
+    suspend fun createCompostBin(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): CompostBin
+
+    @POST("compost/{id}/advance-stage")
+    suspend fun advanceCompostStage(@Path("id") id: Int): CompostBin
+
+    @POST("compost/{id}/add-material")
+    suspend fun addCompostMaterial(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): CompostBin
+
+    @DELETE("compost/{id}")
+    suspend fun deleteCompostBin(@Path("id") id: Int): JsonElement
+
+    // ── Journal ──────────────────────────────────────────────────────────────
+    @GET("gardens/{id}/journal")
+    suspend fun getJournal(
+        @Path("id") id: Int,
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 20,
+    ): JournalPage
+
+    @POST("gardens/{id}/journal")
+    suspend fun createJournalEntry(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): JournalEntry
+
+    @DELETE("journal/{id}")
+    suspend fun deleteJournalEntry(@Path("id") id: Int): JsonElement
+
     // ── Chat ─────────────────────────────────────────────────────────────────
     @POST("chat")
     suspend fun sendChat(@Body body: Map<String, @JvmSuppressWildcards Any?>): JsonElement
 
     @POST("chat/restart-model")
     suspend fun restartModel(): JsonElement
+
+    // ── Rotation warnings ────────────────────────────────────────────────────
+    @GET("beds/{id}/rotation-warnings")
+    suspend fun getRotationWarnings(
+        @Path("id") id: Int,
+        @Query("library_id") libraryId: Int? = null,
+    ): RotationWarnings
+
+    // ── Rain log ─────────────────────────────────────────────────────────────
+    @POST("gardens/{id}/log-rain")
+    suspend fun logRain(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): JsonElement
+
+    // ── Tip of the day ───────────────────────────────────────────────────────
+    @GET("tip-of-the-day")
+    suspend fun getTipOfDay(): JsonElement
+
+    // ── Plant sync ───────────────────────────────────────────────────────────
+    @GET("plants/sync-preview")
+    suspend fun getSyncPreview(): SyncPreview
+
+    @POST("plants/sync")
+    suspend fun applySync(@Body body: Map<String, @JvmSuppressWildcards Any?>): JsonElement
+
+    // ── Observations ─────────────────────────────────────────────────────────
+    @GET("bedplants/{id}/observations")
+    suspend fun getObservations(@Path("id") id: Int): List<PlantObservation>
+
+    @POST("bedplants/{id}/observations")
+    suspend fun createObservation(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): PlantObservation
+
+    @DELETE("observations/{id}")
+    suspend fun deleteObservation(@Path("id") id: Int): JsonElement
+
+    @GET("bedplants/{id}/health-score")
+    suspend fun getHealthScore(@Path("id") id: Int): HealthScore
 }

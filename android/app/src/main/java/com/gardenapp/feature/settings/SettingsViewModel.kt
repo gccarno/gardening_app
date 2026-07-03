@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.gardenapp.SERVER_URL_KEY
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.network.ServerConfig
+import com.gardenapp.feature.auth.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,7 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -54,5 +56,12 @@ class SettingsViewModel @Inject constructor(
 
     fun clearSavedMessage() {
         _uiState.value = _uiState.value.copy(savedMessage = null)
+    }
+
+    fun signOut() {
+        viewModelScope.launch {
+            authRepository.logout()
+            // MainActivity observes the token and flips back to the login screen.
+        }
     }
 }

@@ -63,6 +63,24 @@ sealed class Screen(val route: String) {
         fun route(aId: Int, bId: Int) = "library/diff?aId=$aId&bId=$bId"
     }
 
+    // Journal stack
+    data object Journal : Screen("gardens/{gardenId}/journal") {
+        fun route(gardenId: Int) = "gardens/$gardenId/journal"
+    }
+
+    // Seed Room stack
+    data object SeedRoom : Screen("gardens/{gardenId}/seed-room") {
+        fun route(gardenId: Int) = "gardens/$gardenId/seed-room"
+    }
+
+    // Compost stack
+    data object Compost : Screen("gardens/{gardenId}/compost") {
+        fun route(gardenId: Int) = "gardens/$gardenId/compost"
+    }
+
+    // Photo identification
+    data object Identify : Screen("identify")
+
     // Settings
     data object Settings : Screen("settings")
 }

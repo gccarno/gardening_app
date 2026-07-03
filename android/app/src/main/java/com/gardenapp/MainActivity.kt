@@ -4,21 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.gardenapp.core.dataStore
+import com.gardenapp.core.network.AuthConfig
 import com.gardenapp.core.network.ServerConfig
 import com.gardenapp.core.ui.components.OfflineBanner
 import com.gardenapp.core.ui.theme.GardenAppTheme
 import com.gardenapp.core.util.NetworkMonitor
+import com.gardenapp.feature.auth.AUTH_TOKEN_KEY
+import com.gardenapp.feature.auth.LoginScreen
 import com.gardenapp.navigation.GardenNavGraph
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
 val SERVER_URL_KEY = stringPreferencesKey("server_url")
@@ -32,20 +37,34 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val serverUrl by dataStore.data
-                .map { prefs -> prefs[SERVER_URL_KEY] }
-                .collectAsState(initial = null)
+            // null = DataStore not loaded yet (brief); drives both the server
+            // URL and the login gate.
+            val prefs by dataStore.data.collectAsState(initial = null)
+            val serverUrl = prefs?.get(SERVER_URL_KEY)
+            val authToken = prefs?.get(AUTH_TOKEN_KEY)
 
             LaunchedEffect(serverUrl) {
                 serverUrl?.let { ServerConfig.baseUrl = it }
+            }
+            LaunchedEffect(authToken) {
+                AuthConfig.token = authToken
             }
 
             val isOnline by networkMonitor.isOnline.collectAsState(initial = true)
 
             GardenAppTheme {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    OfflineBanner(isOffline = !isOnline)
-                    GardenNavGraph()
+                when {
+                    prefs == null -> Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
+
+                    authToken == null -> LoginScreen()
+
+                    else -> Column(modifier = Modifier.fillMaxSize()) {
+                        OfflineBanner(isOffline = !isOnline)
+                        GardenNavGraph()
+                    }
                 }
             }
         }

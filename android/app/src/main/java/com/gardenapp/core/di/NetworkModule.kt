@@ -1,6 +1,7 @@
 package com.gardenapp.core.di
 
 import com.gardenapp.core.network.ApiService
+import com.gardenapp.core.network.AuthInterceptor
 import com.gardenapp.core.network.DynamicBaseUrlInterceptor
 import com.gardenapp.core.network.ServerConfig
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -35,8 +36,10 @@ object NetworkModule {
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .addInterceptor(DynamicBaseUrlInterceptor())
+        .addInterceptor(AuthInterceptor())
         .addInterceptor(HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
+            redactHeader("Authorization")
         })
         .build()
 

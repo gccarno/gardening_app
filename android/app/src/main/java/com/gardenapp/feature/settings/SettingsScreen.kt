@@ -71,6 +71,16 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            Text("Account", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(
+                onClick = { viewModel.signOut() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Sign out")
+            }
+
+            HorizontalDivider()
+
             Text("About", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Garden Planner connects to your local FastAPI backend. " +
