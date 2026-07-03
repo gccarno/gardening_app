@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '@garden/shared';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useBed, useBedGrid, useUpdateBed, useDeleteBed, usePlaceInGrid, useSaveBedPlantCare, useRemoveBedPlant } from '../hooks/useBeds';
@@ -30,7 +31,7 @@ export default function BedDetail() {
   const { data: rotationData } = useQuery({
     queryKey: ['rotation-warnings', bedId, selectedLibId],
     queryFn: () =>
-      fetch(`/api/beds/${bedId}/rotation-warnings${selectedLibId ? `?library_id=${selectedLibId}` : ''}`).then(r => r.json()),
+      apiFetch(`/api/beds/${bedId}/rotation-warnings${selectedLibId ? `?library_id=${selectedLibId}` : ''}`).then(r => r.json()),
     enabled: !!selectedLibId,
   });
   const [carePanel, setCarePanel] = useState<(BedPlantDetail & { key: string }) | null>(null);

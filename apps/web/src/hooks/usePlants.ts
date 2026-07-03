@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchPlants, fetchPlant, createPlant, updatePlant,
   deletePlant, setPlantStatus, bulkDeletePlants, bulkStatusPlants, bulkCarePlants,
-  type Plant,
+  fetchSyncPreview, applySync,
+  type Plant, type SyncChange,
 } from '../api/plants';
 
 export function usePlants(params?: { garden_id?: number; status?: string }) {
@@ -78,5 +79,25 @@ export function useBulkCarePlants() {
     mutationFn: ({ ids, care }: { ids: number[]; care: Record<string, string | null> }) =>
       bulkCarePlants(ids, care),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plants'] }),
+  });
+}
+
+export function useSyncPreview(enabled: boolean) {
+  return useQuery({
+    queryKey: ['plants-sync-preview'],
+    queryFn: fetchSyncPreview,
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useApplySync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (changes: SyncChange[]) => applySync(changes),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['plants'] });
+      qc.invalidateQueries({ queryKey: ['plants-sync-preview'] });
+    },
   });
 }

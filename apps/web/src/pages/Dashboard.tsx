@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiFetch } from '@garden/shared';
 import { Link } from 'react-router-dom';
 import { useGardens, useDashboard, useWateringStatus, useSetDefaultGarden } from '../hooks/useGardens';
 import ChatWidget from '../components/ChatWidget';
@@ -95,7 +96,7 @@ function WateringCard({ gardenId }: { gardenId: number }) {
         {data && (!data.beds || data.beds.length === 0) && (
           <span className="muted" style={{ fontSize: '0.85rem' }}>Add plants to beds to see watering status.</span>
         )}
-        {data && data.beds && data.beds.map((b: any) => {
+        {data && data.beds && data.beds.map(b => {
           const u = URGENCY[b.label] ?? URGENCY.ok;
           const dsw = b.days_since_watered >= 99 ? 'Never' : `${b.days_since_watered}d ago`;
           return (
@@ -112,7 +113,7 @@ function WateringCard({ gardenId }: { gardenId: number }) {
         {data && !data.has_weather_data && (
           <p className="watering-tip muted">Tip: fetch weather history on the garden page to improve accuracy.</p>
         )}
-        {data && data.forecast_today && data.forecast_today.precip_prob > 60 && (
+        {data && data.forecast_today && (data.forecast_today.precip_prob ?? 0) > 60 && (
           <p className="watering-tip muted">🌧 {data.forecast_today.precip_prob}% chance of rain today.</p>
         )}
       </div>
@@ -126,7 +127,7 @@ function TipOfDay() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    fetch('/api/tip-of-the-day')
+    apiFetch('/api/tip-of-the-day')
       .then(r => r.json())
       .then(data => setTip(data.tip ?? null))
       .catch(() => setError(true));
@@ -156,7 +157,7 @@ function RainLogCard({ gardenId }: { gardenId: number }) {
 
   const logMut = useMutation({
     mutationFn: () =>
-      fetch(`/api/gardens/${gardenId}/log-rain`, {
+      apiFetch(`/api/gardens/${gardenId}/log-rain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rainfall_in: rainfall, entry_date: logDate }),

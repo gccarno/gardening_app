@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiFetch } from '@garden/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useGardens } from '../hooks/useGardens';
 
@@ -37,7 +38,7 @@ function useGardenId() {
 function useSeedRoom(gardenId?: number) {
   return useQuery<SeedTray[]>({
     queryKey: ['seed-room', gardenId],
-    queryFn: () => fetch(`/api/gardens/${gardenId}/seed-room`).then(r => r.json()),
+    queryFn: () => apiFetch(`/api/gardens/${gardenId}/seed-room`).then(r => r.json()),
     enabled: !!gardenId,
   });
 }
@@ -105,7 +106,7 @@ export default function SeedRoom() {
 
   const addMut = useMutation({
     mutationFn: (slot: number) =>
-      fetch(`/api/gardens/${gardenId}/seed-room`, {
+      apiFetch(`/api/gardens/${gardenId}/seed-room`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -124,13 +125,13 @@ export default function SeedRoom() {
 
   const advanceMut = useMutation({
     mutationFn: (id: number) =>
-      fetch(`/api/seed-room/${id}/advance-stage`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`/api/seed-room/${id}/advance-stage`, { method: 'POST' }).then(r => r.json()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['seed-room', gardenId] }),
   });
 
   const removeMut = useMutation({
     mutationFn: (id: number) =>
-      fetch(`/api/seed-room/${id}`, { method: 'DELETE' }).then(r => r.json()),
+      apiFetch(`/api/seed-room/${id}`, { method: 'DELETE' }).then(r => r.json()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['seed-room', gardenId] }),
   });
 

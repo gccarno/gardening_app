@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '@garden/shared';
 import { Link } from 'react-router-dom';
 import { usePlannerCtx } from '../PlannerContext';
 import { api, GARDEN_PALETTE, PATTERNS, type GardenPlant } from '../types';
@@ -227,7 +228,7 @@ export default function InfoTab() {
     if (!libInfo) return;
     const fd = new FormData();
     fd.append('file', file);
-    await fetch(`/api/library/${libInfo.id}/images`, { method: 'POST', body: fd });
+    await apiFetch(`/api/library/${libInfo.id}/images`, { method: 'POST', body: fd });
     await showLibInfo(libInfo.id);
     const imgs = await api('GET', `/api/library/${libInfo.id}/images`);
     setLibImages(Array.isArray(imgs) ? imgs : []);
@@ -412,7 +413,7 @@ export default function InfoTab() {
               <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
                 const file = e.target.files?.[0]; if (!file || !selectedBed) return;
                 const fd = new FormData(); fd.append('image', file);
-                const r = await fetch(`/api/beds/${selectedBed.id}/upload-background`, { method: 'POST', body: fd });
+                const r = await apiFetch(`/api/beds/${selectedBed.id}/upload-background`, { method: 'POST', body: fd });
                 const d = await r.json();
                 if (d.filename) {
                   setCanvasBeds(prev => prev.map(b => b.id === selectedBed.id ? { ...b, background_image: d.filename } : b));

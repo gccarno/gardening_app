@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import ThemePanel from './ThemePanel';
+import { useAuth } from '../auth/AuthContext';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const isPlanner = pathname.startsWith('/planner');
   const [showTheme, setShowTheme] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
 
   useEffect(() => {
     if (!showTheme) return;
@@ -31,12 +39,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <li><NavLink to="/plants">Plants</NavLink></li>
           <li><NavLink to="/tasks">Tasks</NavLink></li>
           <li><NavLink to="/library">Library</NavLink></li>
+          <li><NavLink to="/identify">Identify</NavLink></li>
         </ul>
         <button
           className="theme-toggle-btn"
           onClick={() => setShowTheme(v => !v)}
           title="Customize theme"
         >🎨</button>
+        <button
+          className="logout-btn"
+          onClick={handleLogout}
+          title={user ? `Signed in as ${user.email}` : 'Sign out'}
+        >Sign out</button>
       </nav>
       {showTheme && (
         <div ref={panelRef}>

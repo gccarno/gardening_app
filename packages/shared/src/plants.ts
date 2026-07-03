@@ -1,3 +1,5 @@
+import { apiFetch } from './http';
+
 export interface Plant {
   id: number;
   name: string;
@@ -84,25 +86,36 @@ export interface PlantDetail extends Plant {
   library?: LibraryEntry;
 }
 
+export interface SyncChange {
+  plant_id: number;
+  plant_name: string;
+  field: 'last_watered' | 'last_fertilized';
+  plant_value: string | null;
+  bed_value: string | null;
+  proposed_value: string | null;
+  direction: 'bed_to_plant' | 'plant_to_bed';
+  bed_names: string[];
+}
+
 export function createPlantsApi(base: string) {
   return {
     fetchPlants: async (params?: { garden_id?: number; status?: string }): Promise<Plant[]> => {
       const q = new URLSearchParams();
       if (params?.garden_id) q.set('garden_id', String(params.garden_id));
       if (params?.status) q.set('status', params.status);
-      const res = await fetch(`${base}/plants?${q}`);
+      const res = await apiFetch(`${base}/plants?${q}`);
       if (!res.ok) throw new Error('Failed to fetch plants');
       return res.json();
     },
 
     fetchPlant: async (id: number): Promise<PlantDetail> => {
-      const res = await fetch(`${base}/plants/${id}`);
+      const res = await apiFetch(`${base}/plants/${id}`);
       if (!res.ok) throw new Error('Failed to fetch plant');
       return res.json();
     },
 
     createPlant: async (body: Partial<Plant> & { name: string }): Promise<Plant> => {
-      const res = await fetch(`${base}/plants`, {
+      const res = await apiFetch(`${base}/plants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -112,7 +125,7 @@ export function createPlantsApi(base: string) {
     },
 
     updatePlant: async (id: number, body: Partial<Plant>): Promise<Plant> => {
-      const res = await fetch(`${base}/plants/${id}`, {
+      const res = await apiFetch(`${base}/plants/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -122,12 +135,12 @@ export function createPlantsApi(base: string) {
     },
 
     deletePlant: async (id: number): Promise<void> => {
-      const res = await fetch(`${base}/plants/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`${base}/plants/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete plant');
     },
 
     setPlantStatus: async (id: number, status: string): Promise<Plant> => {
-      const res = await fetch(`${base}/plants/${id}/status`, {
+      const res = await apiFetch(`${base}/plants/${id}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -137,7 +150,7 @@ export function createPlantsApi(base: string) {
     },
 
     bulkDeletePlants: async (ids: number[]): Promise<void> => {
-      const res = await fetch(`${base}/plants/bulk-delete`, {
+      const res = await apiFetch(`${base}/plants/bulk-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
@@ -146,7 +159,7 @@ export function createPlantsApi(base: string) {
     },
 
     bulkStatusPlants: async (ids: number[], status: string): Promise<void> => {
-      const res = await fetch(`${base}/plants/bulk-status`, {
+      const res = await apiFetch(`${base}/plants/bulk-status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, status }),
@@ -155,7 +168,7 @@ export function createPlantsApi(base: string) {
     },
 
     bulkCarePlants: async (ids: number[], care: Record<string, string | null>): Promise<void> => {
-      const res = await fetch(`${base}/plants/bulk-care`, {
+      const res = await apiFetch(`${base}/plants/bulk-care`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, ...care }),
@@ -164,10 +177,27 @@ export function createPlantsApi(base: string) {
     },
 
     fetchLibraryNames: async (): Promise<Array<{ id: number; name: string }>> => {
-      const res = await fetch(`${base}/library?per_page=200`);
+      const res = await apiFetch(`${base}/library?per_page=200`);
       if (!res.ok) return [];
       const data = await res.json();
       return data.entries.map((e: { id: number; name: string }) => ({ id: e.id, name: e.name }));
+    },
+
+    fetchSyncPreview: async (): Promise<SyncChange[]> => {
+      const res = await apiFetch(`${base}/plants/sync-preview`);
+      if (!res.ok) throw new Error('Failed to fetch sync preview');
+      const data = await res.json();
+      return data.changes;
+    },
+
+    applySync: async (changes: SyncChange[]): Promise<{ applied: number }> => {
+      const res = await apiFetch(`${base}/plants/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ changes }),
+      });
+      if (!res.ok) throw new Error('Failed to apply sync');
+      return res.json();
     },
   };
 }

@@ -1,3 +1,5 @@
+import { apiFetch } from './http';
+
 export interface Bed {
   id: number;
   name: string;
@@ -46,19 +48,19 @@ export function createBedsApi(base: string) {
   return {
     fetchBeds: async (gardenId?: number): Promise<Bed[]> => {
       const url = gardenId ? `${base}/beds?garden_id=${gardenId}` : `${base}/beds`;
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (!res.ok) throw new Error('Failed to fetch beds');
       return res.json();
     },
 
     fetchBed: async (id: number): Promise<Bed> => {
-      const res = await fetch(`${base}/beds/${id}`);
+      const res = await apiFetch(`${base}/beds/${id}`);
       if (!res.ok) throw new Error('Failed to fetch bed');
       return res.json();
     },
 
     createBed: async (body: Partial<Bed> & { name: string; garden_id: number }): Promise<{ ok: boolean; bed: Bed }> => {
-      const res = await fetch(`${base}/beds`, {
+      const res = await apiFetch(`${base}/beds`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -68,7 +70,7 @@ export function createBedsApi(base: string) {
     },
 
     updateBed: async (id: number, body: Partial<Bed>): Promise<{ ok: boolean }> => {
-      const res = await fetch(`${base}/beds/${id}`, {
+      const res = await apiFetch(`${base}/beds/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -78,17 +80,17 @@ export function createBedsApi(base: string) {
     },
 
     deleteBed: async (id: number): Promise<void> => {
-      await fetch(`${base}/beds/${id}/delete`, { method: 'POST' });
+      await apiFetch(`${base}/beds/${id}/delete`, { method: 'POST' });
     },
 
     fetchBedGrid: async (id: number): Promise<{ placed: GridPlant[] }> => {
-      const res = await fetch(`${base}/beds/${id}/grid`);
+      const res = await apiFetch(`${base}/beds/${id}/grid`);
       if (!res.ok) throw new Error('Failed to fetch grid');
       return res.json();
     },
 
     placePlantInGrid: async (bedId: number, body: { library_id: number; grid_x: number; grid_y: number }) => {
-      const res = await fetch(`${base}/beds/${bedId}/grid-plant`, {
+      const res = await apiFetch(`${base}/beds/${bedId}/grid-plant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -98,13 +100,13 @@ export function createBedsApi(base: string) {
     },
 
     fetchBedPlant: async (bpId: number): Promise<BedPlantDetail> => {
-      const res = await fetch(`${base}/bedplants/${bpId}`);
+      const res = await apiFetch(`${base}/bedplants/${bpId}`);
       if (!res.ok) throw new Error('Failed to fetch bed plant');
       return res.json();
     },
 
     saveBedPlantCare: async (bpId: number, body: { last_watered?: string | null; last_fertilized?: string | null; health_notes?: string | null }) => {
-      const res = await fetch(`${base}/bedplants/${bpId}/care`, {
+      const res = await apiFetch(`${base}/bedplants/${bpId}/care`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -114,7 +116,7 @@ export function createBedsApi(base: string) {
     },
 
     removeBedPlant: async (bpId: number): Promise<void> => {
-      await fetch(`${base}/bedplants/${bpId}/delete`, { method: 'POST' });
+      await apiFetch(`${base}/bedplants/${bpId}/delete`, { method: 'POST' });
     },
   };
 }

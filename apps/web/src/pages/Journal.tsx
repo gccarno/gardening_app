@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiFetch } from '@garden/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useGardens } from '../hooks/useGardens';
 
@@ -24,7 +25,7 @@ function useGardenId() {
 function useJournal(gardenId?: number, page = 1) {
   return useQuery<{ total: number; page: number; entries: JournalEntry[] }>({
     queryKey: ['journal', gardenId, page],
-    queryFn: () => fetch(`/api/gardens/${gardenId}/journal?page=${page}&per_page=20`).then(r => r.json()),
+    queryFn: () => apiFetch(`/api/gardens/${gardenId}/journal?page=${page}&per_page=20`).then(r => r.json()),
     enabled: !!gardenId,
   });
 }
@@ -50,7 +51,7 @@ export default function Journal() {
 
   const createMut = useMutation({
     mutationFn: () =>
-      fetch(`/api/gardens/${gardenId}/journal`, {
+      apiFetch(`/api/gardens/${gardenId}/journal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,7 +70,7 @@ export default function Journal() {
 
   const deleteMut = useMutation({
     mutationFn: (id: number) =>
-      fetch(`/api/journal/${id}`, { method: 'DELETE' }).then(r => r.json()),
+      apiFetch(`/api/journal/${id}`, { method: 'DELETE' }).then(r => r.json()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['journal', gardenId] }),
   });
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { apiFetch } from '@garden/shared';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useGardens, useGarden } from '../hooks/useGardens';
@@ -967,7 +968,7 @@ export default function Planner() {
               <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
                 const file = e.target.files?.[0]; if (!file || !gardenId) return;
                 const fd = new FormData(); fd.append('image', file);
-                await fetch(`/api/gardens/${gardenId}/upload-background`, { method: 'POST', body: fd });
+                await apiFetch(`/api/gardens/${gardenId}/upload-background`, { method: 'POST', body: fd });
                 queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] });
               }} />
             </label>

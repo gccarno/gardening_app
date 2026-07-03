@@ -1,3 +1,5 @@
+import { apiFetch } from './http';
+
 export interface LibraryListEntry {
   id: number;
   name: string;
@@ -31,19 +33,19 @@ export function createLibraryApi(base: string) {
       if (params?.type && params.type !== 'all') qs.set('type', params.type);
       if (params?.page)     qs.set('page',     String(params.page));
       if (params?.per_page) qs.set('per_page', String(params.per_page));
-      const res = await fetch(`${base}/library?${qs}`);
+      const res = await apiFetch(`${base}/library?${qs}`);
       if (!res.ok) throw new Error('Failed to fetch library');
       return res.json();
     },
 
     fetchLibraryEntry: async (id: number) => {
-      const res = await fetch(`${base}/library/${id}`);
+      const res = await apiFetch(`${base}/library/${id}`);
       if (!res.ok) throw new Error('Failed to fetch library entry');
       return res.json();
     },
 
     addPlantFromLibrary: async (entryId: number, gardenId: number) => {
-      const res = await fetch(`${base}/plants`, {
+      const res = await apiFetch(`${base}/plants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ library_id: entryId, garden_id: gardenId, name: '' }),
@@ -53,13 +55,13 @@ export function createLibraryApi(base: string) {
     },
 
     perenualSearch: async (q: string) => {
-      const res = await fetch(`${base}/perenual/search?q=${encodeURIComponent(q)}`);
+      const res = await apiFetch(`${base}/perenual/search?q=${encodeURIComponent(q)}`);
       if (!res.ok) throw new Error('Search failed');
       return res.json();
     },
 
     perenualSave: async (result: Record<string, unknown>) => {
-      const res = await fetch(`${base}/perenual/save`, {
+      const res = await apiFetch(`${base}/perenual/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(result),
@@ -69,19 +71,19 @@ export function createLibraryApi(base: string) {
     },
 
     setImagePrimary: async (imageId: number) => {
-      const res = await fetch(`${base}/library/images/${imageId}/set-primary`, { method: 'POST' });
+      const res = await apiFetch(`${base}/library/images/${imageId}/set-primary`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to set primary');
       return res.json();
     },
 
     deleteImage: async (imageId: number) => {
-      const res = await fetch(`${base}/library/images/${imageId}/delete`, { method: 'POST' });
+      const res = await apiFetch(`${base}/library/images/${imageId}/delete`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to delete image');
       return res.json();
     },
 
     addImageFromUrl: async (entryId: number, body: { url: string; source?: string; attribution?: string }) => {
-      const res = await fetch(`${base}/library/${entryId}/images/url`, {
+      const res = await apiFetch(`${base}/library/${entryId}/images/url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -93,13 +95,13 @@ export function createLibraryApi(base: string) {
     uploadImage: async (entryId: number, file: File) => {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${base}/library/${entryId}/images`, { method: 'POST', body: fd });
+      const res = await apiFetch(`${base}/library/${entryId}/images`, { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Upload failed');
       return res.json();
     },
 
     quickEditLibrary: async (entryId: number, body: Record<string, unknown>) => {
-      const res = await fetch(`${base}/library/${entryId}/quick-edit`, {
+      const res = await apiFetch(`${base}/library/${entryId}/quick-edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -109,7 +111,7 @@ export function createLibraryApi(base: string) {
     },
 
     clonePlant: async (entryId: number, name: string): Promise<{ id: number; name: string }> => {
-      const res = await fetch(`${base}/library/${entryId}/clone`, {
+      const res = await apiFetch(`${base}/library/${entryId}/clone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -119,7 +121,7 @@ export function createLibraryApi(base: string) {
     },
 
     patchLibraryEntry: async (entryId: number, fields: Record<string, unknown>): Promise<void> => {
-      const res = await fetch(`${base}/library/${entryId}/patch`, {
+      const res = await apiFetch(`${base}/library/${entryId}/patch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fields),

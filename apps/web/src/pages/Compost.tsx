@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiFetch } from '@garden/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useGardens } from '../hooks/useGardens';
 
@@ -47,7 +48,7 @@ function useGardenId() {
 function useCompost(gardenId?: number) {
   return useQuery<CompostBin[]>({
     queryKey: ['compost', gardenId],
-    queryFn: () => fetch(`/api/gardens/${gardenId}/compost`).then(r => r.json()),
+    queryFn: () => apiFetch(`/api/gardens/${gardenId}/compost`).then(r => r.json()),
     enabled: !!gardenId,
   });
 }
@@ -71,7 +72,7 @@ export default function Compost() {
 
   const createMut = useMutation({
     mutationFn: () =>
-      fetch(`/api/gardens/${gardenId}/compost`, {
+      apiFetch(`/api/gardens/${gardenId}/compost`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName, started_date: newStarted }),
@@ -85,19 +86,19 @@ export default function Compost() {
 
   const advanceMut = useMutation({
     mutationFn: (id: number) =>
-      fetch(`/api/compost/${id}/advance-stage`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`/api/compost/${id}/advance-stage`, { method: 'POST' }).then(r => r.json()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['compost', gardenId] }),
   });
 
   const deleteMut = useMutation({
     mutationFn: (id: number) =>
-      fetch(`/api/compost/${id}`, { method: 'DELETE' }).then(r => r.json()),
+      apiFetch(`/api/compost/${id}`, { method: 'DELETE' }).then(r => r.json()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['compost', gardenId] }),
   });
 
   const addMatMut = useMutation({
     mutationFn: ({ id }: { id: number }) =>
-      fetch(`/api/compost/${id}/add-material`, {
+      apiFetch(`/api/compost/${id}/add-material`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

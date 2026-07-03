@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useGardens } from '../hooks/useGardens';
 import {
   usePlants, useCreatePlant, useDeletePlant, useSetPlantStatus,
   useBulkDeletePlants, useBulkStatusPlants, useBulkCarePlants,
+  useSyncPreview, useApplySync,
 } from '../hooks/usePlants';
 import { useTasks, useToggleTask } from '../hooks/useTasks';
-import type { Plant, PlantGroup, SuccessionGroup } from '../api/plants';
+import type { Plant, PlantGroup, SuccessionGroup, SyncChange } from '../api/plants';
 import { plantImageUrl } from '../utils/images';
 import GanttChart, { type GanttRow } from '../components/GanttChart';
 
@@ -110,6 +111,157 @@ function groupToGanttRows(plants: Plant[], status: string): GanttRow[] {
   });
 }
 
+function fmtDate(d: string | null): string {
+  if (!d) return '—';
+  return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function SyncModal({ onClose }: { onClose: () => void }) {
+  const { data: changes, isLoading, error } = useSyncPreview(true);
+  const applyMut = useApplySync();
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  // Pre-select all once loaded
+  const allKeys = changes?.map((_, i) => i) ?? [];
+  const isAllSelected = allKeys.length > 0 && allKeys.every(i => selected.has(i));
+
+  function toggle(i: number) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (isAllSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(allKeys));
+    }
+  }
+
+  // Select all by default once data arrives
+  useEffect(() => {
+    if (changes && changes.length > 0) {
+      setSelected(new Set(changes.map((_, i) => i)));
+    }
+  }, [changes]);
+
+  async function handleApply() {
+    if (!changes) return;
+    const toApply = changes.filter((_, i) => selected.has(i));
+    await applyMut.mutateAsync(toApply);
+    onClose();
+  }
+
+  const fieldLabel = (f: SyncChange['field']) =>
+    f === 'last_watered' ? '💧 Last watered' : '🌿 Last fertilized';
+
+  const directionLabel = (d: SyncChange['direction']) =>
+    d === 'bed_to_plant' ? 'Bed → Plant record' : 'Plant record → Beds';
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 1000, padding: '1rem',
+      }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{
+        background: '#fff', borderRadius: '8px', padding: '1.5rem',
+        maxWidth: '600px', width: '100%', maxHeight: '80vh',
+        display: 'flex', flexDirection: 'column', gap: '1rem',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ margin: 0, fontSize: '1.15rem' }}>Sync with beds</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: '#888' }}>✕</button>
+        </div>
+
+        {isLoading && <p className="muted">Checking for differences…</p>}
+        {error && <p style={{ color: '#b84040' }}>Failed to load sync preview.</p>}
+
+        {changes && changes.length === 0 && (
+          <p className="muted">Everything is in sync — no differences found between plant records and bed records.</p>
+        )}
+
+        {changes && changes.length > 0 && (
+          <>
+            <p className="muted" style={{ margin: 0 }}>
+              {changes.length} difference{changes.length !== 1 ? 's' : ''} found. Select the changes to apply.
+            </p>
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button className="btn-small" onClick={toggleAll}>
+                {isAllSelected ? 'Deselect all' : 'Select all'}
+              </button>
+              <span className="muted" style={{ fontSize: '0.8rem' }}>
+                {selected.size} of {changes.length} selected
+              </span>
+            </div>
+
+            <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {changes.map((c, i) => (
+                <label key={i} style={{
+                  display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
+                  padding: '0.75rem', border: `1px solid ${selected.has(i) ? '#b0d0b0' : '#e0e0e0'}`,
+                  borderRadius: '6px', cursor: 'pointer',
+                  background: selected.has(i) ? '#f4fbf4' : '#fafafa',
+                }}>
+                  <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)}
+                    style={{ marginTop: '0.15rem', flexShrink: 0 }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '0.95rem' }}>{c.plant_name}</strong>
+                      <span style={{ fontSize: '0.78rem', padding: '0.1rem 0.4rem', background: '#e8f0ff', borderRadius: '4px', color: '#3050a0' }}>
+                        {fieldLabel(c.field)}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: '#7a9a78' }}>{directionLabel(c.direction)}</span>
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: '#555', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ textDecoration: 'line-through', color: '#aaa' }}>
+                        {c.direction === 'bed_to_plant' ? fmtDate(c.plant_value) : fmtDate(c.bed_value)}
+                      </span>
+                      <span>→</span>
+                      <span style={{ fontWeight: 600, color: '#2a6e27' }}>{fmtDate(c.proposed_value)}</span>
+                    </div>
+                    {c.bed_names.length > 0 && (
+                      <div style={{ fontSize: '0.78rem', color: '#888' }}>
+                        🛏 {c.bed_names.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="btn-small btn-link" onClick={onClose}>Cancel</button>
+              <button
+                className="btn-small"
+                style={{ background: '#3a5c37', color: '#fff', border: 'none' }}
+                onClick={handleApply}
+                disabled={selected.size === 0 || applyMut.isPending}
+              >
+                {applyMut.isPending ? 'Applying…' : `Apply ${selected.size} change${selected.size !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </>
+        )}
+
+        {changes && changes.length === 0 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn-small btn-link" onClick={onClose}>Close</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function PlantList() {
   const [tab, setTab] = useState<Tab>('planning');
   const [gardenFilter, setGardenFilter] = useState<number | undefined>(undefined);
@@ -117,6 +269,7 @@ export default function PlantList() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<'name' | 'planted' | 'harvest'>('name');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [syncOpen, setSyncOpen] = useState(false);
   const [addForm, setAddForm] = useState({
     name: '', type: '', notes: '', garden_id: '',
     planted_date: '', expected_harvest: '',
@@ -346,6 +499,7 @@ export default function PlantList() {
 
   return (
     <>
+      {syncOpen && <SyncModal onClose={() => setSyncOpen(false)} />}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         <h1 style={{ margin: 0 }}>Plants</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -359,6 +513,13 @@ export default function PlantList() {
             {gardens?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
+        <button
+          className="btn-small"
+          style={{ marginLeft: 'auto', background: '#f0f5ef', border: '1px solid #c0d4be', color: '#3a5c37' }}
+          onClick={() => setSyncOpen(true)}
+        >
+          ↕ Sync with beds
+        </button>
       </div>
 
       <div className="plant-tabs">

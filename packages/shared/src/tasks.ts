@@ -1,3 +1,5 @@
+import { apiFetch } from './http';
+
 export interface Task {
   id: number;
   title: string;
@@ -20,19 +22,19 @@ export function createTasksApi(base: string) {
       const q = new URLSearchParams();
       if (params?.garden_id != null) q.set('garden_id', String(params.garden_id));
       if (params?.completed != null) q.set('completed', String(params.completed));
-      const res = await fetch(`${base}/tasks?${q}`);
+      const res = await apiFetch(`${base}/tasks?${q}`);
       if (!res.ok) throw new Error('Failed to fetch tasks');
       return res.json();
     },
 
     fetchTask: async (id: number): Promise<Task> => {
-      const res = await fetch(`${base}/tasks/${id}`);
+      const res = await apiFetch(`${base}/tasks/${id}`);
       if (!res.ok) throw new Error('Failed to fetch task');
       return res.json();
     },
 
     createTask: async (body: Partial<Task>): Promise<Task> => {
-      const res = await fetch(`${base}/tasks`, {
+      const res = await apiFetch(`${base}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -42,7 +44,7 @@ export function createTasksApi(base: string) {
     },
 
     updateTask: async (id: number, body: Partial<Task>): Promise<Task> => {
-      const res = await fetch(`${base}/tasks/${id}`, {
+      const res = await apiFetch(`${base}/tasks/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -52,13 +54,13 @@ export function createTasksApi(base: string) {
     },
 
     toggleTaskComplete: async (id: number): Promise<Task> => {
-      const res = await fetch(`${base}/tasks/${id}/complete`, { method: 'POST' });
+      const res = await apiFetch(`${base}/tasks/${id}/complete`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to toggle task');
       return res.json();
     },
 
     deleteTask: async (id: number): Promise<void> => {
-      const res = await fetch(`${base}/tasks/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`${base}/tasks/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete task');
     },
   };

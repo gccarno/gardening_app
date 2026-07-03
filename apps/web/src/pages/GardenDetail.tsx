@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { apiFetch } from '@garden/shared';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useGarden, useUpdateGarden, useDeleteGarden } from '../hooks/useGardens';
 import { useBeds, useDeleteBed } from '../hooks/useBeds';
+import GardenMembers from '../components/GardenMembers';
 
 const WMO: Record<number, string> = {
   0:'Clear sky ☀️',1:'Mainly clear 🌤',2:'Partly cloudy ⛅',3:'Overcast ☁️',
@@ -60,7 +62,7 @@ export default function GardenDetail() {
   useEffect(() => {
     if (!garden?.latitude || !garden?.longitude) return;
     const ctrl = new AbortController();
-    fetch(`/api/gardens/${gardenId}/weather`, { signal: ctrl.signal })
+    apiFetch(`/api/gardens/${gardenId}/weather`, { signal: ctrl.signal })
       .then(r => r.json())
       .then(d => setWeather(d))
       .catch(() => setWeatherErr(true));
@@ -86,7 +88,7 @@ export default function GardenDetail() {
     setFetchingWeather(true);
     setFetchMsg('Fetching…');
     try {
-      const r = await fetch(`/api/gardens/${gardenId}/fetch-weather`, { method: 'POST' });
+      const r = await apiFetch(`/api/gardens/${gardenId}/fetch-weather`, { method: 'POST' });
       const d = await r.json();
       setFetchMsg(d.ok ? `Saved ${d.days_saved} days. 7-day rainfall: ${d.rainfall_7d.total_in}".` : d.error);
     } catch { setFetchMsg('Request failed.'); }
@@ -96,7 +98,7 @@ export default function GardenDetail() {
   async function handleBulkCare(action: string) {
     setBulkMsg('Updating…');
     try {
-      const r = await fetch(`/api/gardens/${gardenId}/bulk-care`, {
+      const r = await apiFetch(`/api/gardens/${gardenId}/bulk-care`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
@@ -250,6 +252,8 @@ export default function GardenDetail() {
       <div className="actions" style={{ marginTop: '1rem' }}>
         <Link to={`/planner?garden=${garden.id}`} className="btn-small btn-link">Open Planner →</Link>
       </div>
+
+      <GardenMembers gardenId={gardenId} />
       <div className="actions">
         <button className="btn-danger" onClick={handleDelete}>Delete Garden</button>
       </div>
