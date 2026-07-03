@@ -1,0 +1,10 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+app/build/
+local.properties
+captures/
+*.log
+replay_pid*
+hs_err_pid*
