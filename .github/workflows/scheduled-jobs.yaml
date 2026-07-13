@@ -4,9 +4,12 @@ name: Scheduled jobs
 # spins down when idle, so these requests both wake it (and the Neon database)
 # and trigger the nightly work.
 #
-# Required repo secrets:
+# Required repo secrets (Settings → Secrets and variables → Actions):
 #   APP_URL    e.g. https://garden-app.onrender.com
 #   JOB_TOKEN  same value as the JOB_TOKEN env var on the server
+#
+# Until those secrets are set (i.e. before the app is deployed to Render),
+# the job logs a notice and exits green instead of failing every night.
 
 on:
   schedule:
@@ -16,20 +19,23 @@ on:
 jobs:
   nightly:
     runs-on: ubuntu-latest
+    env:
+      APP_URL: ${{ secrets.APP_URL }}
+      JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
     steps:
+      - name: Skip if not configured
+        if: env.APP_URL == ''
+        run: |
+          echo "::notice::APP_URL / JOB_TOKEN secrets are not set — nothing to trigger yet. Set them after deploying (DEPLOYMENT.md, section 4)."
       - name: Fetch weather for all gardens
+        if: env.APP_URL != ''
         run: |
           curl -sf -X POST "$APP_URL/api/admin/run-weather-fetch" \
             -H "X-Job-Token: $JOB_TOKEN" \
             --retry 3 --retry-delay 30 --max-time 120
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
       - name: Run backup job
+        if: env.APP_URL != ''
         run: |
           curl -sf -X POST "$APP_URL/api/admin/run-backup" \
             -H "X-Job-Token: $JOB_TOKEN" \
             --retry 3 --retry-delay 30 --max-time 120
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}

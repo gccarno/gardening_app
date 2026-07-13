@@ -2,10 +2,11 @@
 Static file storage abstraction.
 
 Writes go to the local `apps/api/static/` tree by default. When the
-GCS_STATIC_BUCKET env var is set (cloud deployment, where the 5.6 GB image
-tree lives in a public Google Cloud Storage bucket), reads/writes go to GCS
-under the `static/` prefix instead. URL paths (`/static/...`) are unchanged
-either way — main.py redirects them to GCS when the local tree is absent.
+GCS_STATIC_BUCKET env var is set (cloud deployment, where plant images live
+in a PRIVATE Google Cloud Storage bucket), reads/writes go to GCS under the
+`static/` prefix instead, authenticated via the service-account key
+(GOOGLE_APPLICATION_CREDENTIALS). URL paths (`/static/...`) are unchanged
+either way — main.py proxies them from GCS when the local tree is absent.
 """
 import os
 from functools import lru_cache

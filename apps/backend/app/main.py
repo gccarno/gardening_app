@@ -9,7 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from starlette.responses import FileResponse, RedirectResponse
+from starlette.responses import FileResponse
 
 from .db.session import engine
 from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, library, chat, admin, tips
@@ -165,16 +165,32 @@ _DIST_DIR = _ROOT / 'apps' / 'web' / 'dist'       # React build output
 
 # Serve plant images, CSS, and other legacy static assets.
 # Locally these live on disk; in the cloud (no local tree) they live in a
-# public GCS bucket and /static/* is redirected there.
+# PRIVATE GCS bucket, and the backend proxies /static/* using its service
+# account key — the bucket never needs public access. Image filenames are
+# unique and their content never changes, so the response is marked immutable
+# and browsers/Coil cache it on-device: each image is downloaded from GCS at
+# most once per device.
 _GCS_STATIC_BUCKET = os.environ.get('GCS_STATIC_BUCKET')
 if _STATIC_DIR.exists():
     app.mount('/static', StaticFiles(directory=str(_STATIC_DIR)), name='static')
 elif _GCS_STATIC_BUCKET:
+    import mimetypes
+
+    from starlette.responses import Response
+
     @app.get('/static/{path:path}', include_in_schema=False)
-    async def static_redirect(path: str):
-        return RedirectResponse(
-            f'https://storage.googleapis.com/{_GCS_STATIC_BUCKET}/static/{path}',
-            status_code=302,
+    def static_gcs_proxy(path: str):
+        # sync `def` on purpose: the GCS download blocks, so FastAPI runs it
+        # in a worker thread instead of stalling the event loop
+        from .services.storage import read_static
+        data = read_static(path)
+        if data is None:
+            return Response(status_code=404)
+        media_type = mimetypes.guess_type(path)[0] or 'application/octet-stream'
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={'Cache-Control': 'public, max-age=31536000, immutable'},
         )
 
 # SPA catch-all — MUST come after all API routers so it never shadows /api/* routes.

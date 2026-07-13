@@ -84,8 +84,13 @@ export function computePositions(
 }
 
 // ── API helper ────────────────────────────────────────────────────────────────
+import { apiFetch } from '@garden/shared';
+
+// Goes through apiFetch so every request carries the Authorization header —
+// a bare fetch() here returns 401 for all planner data (beds, canvas plants,
+// annotations, tasks, weather).
 export async function api(method: string, path: string, body?: unknown) {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,

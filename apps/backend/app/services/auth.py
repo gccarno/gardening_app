@@ -73,7 +73,13 @@ def get_current_user(
     token = db.query(AuthToken).filter_by(token_hash=_hash_token(raw)).first()
     if not token:
         raise HTTPException(status_code=401, detail='Invalid or expired token')
-    token.last_used_at = datetime.utcnow()
+    # Commit immediately — read-only requests never commit, so the write would
+    # otherwise be rolled back when the session closes. Throttled to one write
+    # per token per 5 min to avoid a DB write on every request.
+    now = datetime.utcnow()
+    if token.last_used_at is None or (now - token.last_used_at).total_seconds() > 300:
+        token.last_used_at = now
+        db.commit()
     return token.user
 
 
