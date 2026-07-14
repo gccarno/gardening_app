@@ -63,7 +63,10 @@ export default function GardenDetail() {
     if (!garden?.latitude || !garden?.longitude) return;
     const ctrl = new AbortController();
     apiFetch(`/api/gardens/${gardenId}/weather`, { signal: ctrl.signal })
-      .then(r => r.json())
+      // A non-ok response still parses as JSON ({detail: ...}), so without
+      // this check we'd setWeather(garbage) and crash on weather.current.temp,
+      // unmounting the whole page (beds/plants included).
+      .then(r => { if (!r.ok) throw new Error(`weather ${r.status}`); return r.json(); })
       .then(d => setWeather(d))
       .catch(() => setWeatherErr(true));
     return () => ctrl.abort();

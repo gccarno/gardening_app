@@ -248,8 +248,12 @@ export default function Planner() {
   async function loadPanelData() {
     if (!gardenId) return;
     if (garden?.latitude) {
-      const w = await api('GET', `/api/gardens/${gardenId}/weather`);
-      setWeather(w);
+      // Weather is best-effort: a failed fetch (502 from the backend when
+      // open-meteo is unreachable) must not abort loading tasks below.
+      try {
+        const w = await api('GET', `/api/gardens/${gardenId}/weather`);
+        setWeather(w && (w as { current?: unknown }).current ? w : null);
+      } catch { setWeather(null); }
     }
     const t = await api('GET', `/api/gardens/${gardenId}/tasks`);
     setTasks(t as unknown[]);

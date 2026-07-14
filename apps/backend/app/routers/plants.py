@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary, User
 from ..db.session import get_db
@@ -105,7 +105,13 @@ def api_plants_list(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Plant)
+    # Eager-load everything _serialize_plant touches: without this each plant
+    # lazy-loads library_entry + bed_plants + each bed (3 extra round-trips per
+    # plant), which is seconds of latency against a remote Postgres.
+    q = db.query(Plant).options(
+        joinedload(Plant.library_entry),
+        selectinload(Plant.bed_plants).joinedload(BedPlant.bed),
+    )
     if garden_id:
         require_garden(db, user, garden_id, 'viewer')
         in_bed_ids = (

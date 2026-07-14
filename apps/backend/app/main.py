@@ -171,17 +171,29 @@ _DIST_DIR = _ROOT / 'apps' / 'web' / 'dist'       # React build output
 # and browsers/Coil cache it on-device: each image is downloaded from GCS at
 # most once per device.
 _GCS_STATIC_BUCKET = os.environ.get('GCS_STATIC_BUCKET')
-if _STATIC_DIR.exists():
-    app.mount('/static', StaticFiles(directory=str(_STATIC_DIR)), name='static')
-elif _GCS_STATIC_BUCKET:
+if _GCS_STATIC_BUCKET:
+    # The repo ships a partial static tree (css/js + a few images), so the
+    # directory exists even in the cloud — a plain "dir exists → mount" check
+    # would serve those few files and 404 everything else. Serve local files
+    # first, then fall back to the private bucket.
     import mimetypes
 
     from starlette.responses import Response
 
+    _STATIC_ROOT = _STATIC_DIR.resolve()
+
     @app.get('/static/{path:path}', include_in_schema=False)
-    def static_gcs_proxy(path: str):
+    def static_local_then_gcs(path: str):
         # sync `def` on purpose: the GCS download blocks, so FastAPI runs it
         # in a worker thread instead of stalling the event loop
+        try:
+            target = (_STATIC_ROOT / path).resolve()
+        except (OSError, ValueError):
+            return Response(status_code=404)
+        if not target.is_relative_to(_STATIC_ROOT):  # block ../ traversal
+            return Response(status_code=404)
+        if target.is_file():
+            return FileResponse(str(target))
         from .services.storage import read_static
         data = read_static(path)
         if data is None:
@@ -192,6 +204,8 @@ elif _GCS_STATIC_BUCKET:
             media_type=media_type,
             headers={'Cache-Control': 'public, max-age=31536000, immutable'},
         )
+elif _STATIC_DIR.exists():
+    app.mount('/static', StaticFiles(directory=str(_STATIC_DIR)), name='static')
 
 # SPA catch-all — MUST come after all API routers so it never shadows /api/* routes.
 # If the React build doesn't exist yet (pre-`npm run build`), this block is skipped

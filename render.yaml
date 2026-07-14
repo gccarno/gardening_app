@@ -5,6 +5,12 @@ services:
     name: garden-app
     runtime: python
     plan: free
+    # MUST be the same region as the Neon database (us-east-1 → virginia).
+    # Render defaults to Oregon; every DB query then pays a ~70ms coast-to-
+    # coast round trip, which multiplies into 400ms+ per API request.
+    # NOTE: region can't be changed on an existing service — if the service
+    # was created in the wrong region, delete it and re-sync the blueprint.
+    region: virginia
     buildCommand: |
       pip install uv
       uv sync --frozen --no-dev
@@ -15,7 +21,7 @@ services:
     envVars:
       - key: DATABASE_URL          # Neon connection string (postgresql+psycopg://...)
         sync: false
-      - key: GCS_STATIC_BUCKET     # public bucket holding the static image tree
+      - key: GCS_STATIC_BUCKET     # private bucket holding the static image tree
         sync: false
       - key: JOB_TOKEN             # shared secret for /api/admin/run-* cron endpoints
         generateValue: true

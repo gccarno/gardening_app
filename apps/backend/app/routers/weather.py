@@ -48,6 +48,10 @@ def api_garden_weather(garden_id: int,
         }, timeout=8)
         resp.raise_for_status()
     except http.exceptions.RequestException as e:
+        logger.warning('[weather] open-meteo forecast failed for garden %d: %s',
+                       garden_id, e)
+        if cached:  # serve stale data rather than an error
+            return cached[1]
         raise HTTPException(status_code=502, detail=str(e))
 
     data  = resp.json()
