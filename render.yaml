@@ -5,12 +5,13 @@ services:
     name: garden-app
     runtime: python
     plan: free
-    # MUST be the same region as the Neon database (us-east-1 → virginia).
-    # Render defaults to Oregon; every DB query then pays a ~70ms coast-to-
-    # coast round trip, which multiplies into 400ms+ per API request.
-    # NOTE: region can't be changed on an existing service — if the service
-    # was created in the wrong region, delete it and re-sync the blueprint.
-    region: virginia
+    # No `region:` here on purpose. The existing service was created in
+    # Oregon (the default), and region is immutable — declaring a different
+    # one makes every blueprint sync fail. Ideally the service would live in
+    # virginia (same as Neon, us-east-1; Oregon adds ~70ms per DB query), but
+    # moving requires deleting the service and re-syncing the blueprint,
+    # which changes the URL and means re-entering all secrets. If you ever
+    # recreate the service, add `region: virginia` back BEFORE the first sync.
     buildCommand: |
       pip install uv
       uv sync --frozen --no-dev
