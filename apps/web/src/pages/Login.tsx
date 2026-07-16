@@ -13,6 +13,7 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -64,9 +65,16 @@ export default function Login() {
           </label>
           <label>
             Password
-            <input type="password" required minLength={8} value={password}
-                   onChange={e => setPassword(e.target.value)}
-                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+            <div className="password-field">
+              <input type={showPassword ? 'text' : 'password'} required minLength={8} value={password}
+                     onChange={e => setPassword(e.target.value)}
+                     autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+              <button type="button" className="password-toggle"
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </label>
           {error && <p className="form-error">{error}</p>}
           <button className="btn-primary" type="submit" disabled={busy}>

@@ -250,6 +250,22 @@ section { margin-bottom: 2.5rem; }
   box-shadow: var(--focus-ring);
 }
 
+.password-field { position: relative; display: flex; }
+.password-field input { width: 100%; padding-right: 3.6rem; }
+.password-toggle {
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.08em;
+  background: transparent;
+  color: var(--clr-heading);
+}
+.password-toggle:hover { background: var(--clr-fern); box-shadow: none; }
+
 button, .btn-small {
   font: inherit;
   padding: 0.45rem 1rem;
@@ -2476,6 +2492,24 @@ details[open] .faq-q::after { content: '▾'; }
 
 /* ── Auth (login page, logout, sharing) ─────────────────────────────────── */
 .login-page {
+  /* Login is always daylight: dark ink on paper, even in system dark mode. */
+  --clr-bg:            #f7f4ec;
+  --clr-surface:       #fdfbf5;
+  --clr-field:         #fcfaf2;
+  --clr-text:          #23301f;
+  --clr-text-muted:    #77795e;
+  --clr-heading:       #2e4527;
+  --clr-primary:       #3d5a34;
+  --clr-primary-dark:  #2c4426;
+  --clr-primary-light: #e9efe2;
+  --clr-fern:          #e9efe2;
+  --clr-fern-deep:     #d8e3cb;
+  --clr-accent:        #9c6b2f;
+  --clr-accent-soft:   #c89454;
+  --clr-border:        #d8d2c0;
+  --clr-rule:          #d8d2c0;
+  --clr-danger:        #a34730;
+  color: var(--clr-text);
   min-height: 100vh;
   display: flex;
   align-items: center;

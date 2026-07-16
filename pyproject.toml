@@ -42,7 +42,10 @@ imggen = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: calls the real Ollama model (requires Ollama running locally)"]
+markers = [
+    "integration: calls the real Ollama model (requires Ollama running locally)",
+    "render: calls the live Render API (requires RENDER_API_KEY in .env)",
+]
 
 [tool.uv]
 package = false

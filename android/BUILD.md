@@ -35,10 +35,10 @@ Step-by-step instructions for opening and running the garden app Android project
 
 ## 2. Configure the Backend Server URL
 
-The Android app connects to the FastAPI backend via HTTP. The default URL is `http://10.0.2.2:8000`, which is the Android emulator's alias for `localhost` on your development machine.
+The Android app connects to the FastAPI backend over HTTP(S). The default URL is the cloud backend on Render, `https://garden-app-wa0b.onrender.com` — no local server needed. See [USING_RENDER.md](USING_RENDER.md) for details. For local development, override the URL as below.
 
-### For the Android Emulator (default)
-No change needed. Start the FastAPI backend on your machine:
+### For the Android Emulator
+Set the server URL to `http://10.0.2.2:8000` (the emulator's alias for `localhost` on your development machine) via the login screen's "Server settings" or the Settings tab. Start the FastAPI backend on your machine:
 ```powershell
 cd apps/backend
 uv run uvicorn app.main:app --reload --port 8000

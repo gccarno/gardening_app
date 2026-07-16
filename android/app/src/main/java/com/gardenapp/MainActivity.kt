@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,7 +61,15 @@ class MainActivity : ComponentActivity() {
                         contentAlignment = Alignment.Center,
                     ) { CircularProgressIndicator() }
 
-                    authToken == null -> LoginScreen()
+                    // Login is always daylight (dark ink on paper): the window
+                    // background is Theme.Material.Light white, so dark-mode
+                    // text would render white-on-white here.
+                    authToken == null -> GardenAppTheme(darkTheme = false) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background,
+                        ) { LoginScreen() }
+                    }
 
                     else -> Column(modifier = Modifier.fillMaxSize()) {
                         OfflineBanner(isOffline = !isOnline)

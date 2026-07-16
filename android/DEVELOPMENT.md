@@ -23,8 +23,8 @@ Architecture per feature: `Screen.kt` → `ViewModel.kt` → `Repository.kt` →
 1. Start backend: `cd apps/backend && uv run uvicorn app.main:app --reload`
 2. Open `android/` folder in Android Studio
 3. Sync Gradle, run on emulator or device
-4. Emulator default server URL: `http://10.0.2.2:8000`
-5. Physical device: go to Settings tab, enter your machine's LAN IP (e.g. `http://192.168.1.x:8000`)
+4. Default server URL is the Render cloud backend (`https://garden-app-wa0b.onrender.com`, see `USING_RENDER.md`); for a local backend on the emulator use `http://10.0.2.2:8000`
+5. Physical device with a local backend: go to Settings tab, enter your machine's LAN IP (e.g. `http://192.168.1.x:8000`)
 
 ---
 

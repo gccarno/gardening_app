@@ -55,7 +55,7 @@ fun SettingsScreen(
                 label = { Text("Server URL") },
                 placeholder = { Text("http://192.168.1.x:8000") },
                 supportingText = {
-                    Text("Enter the IP address of your backend server.\nEmulator default: http://10.0.2.2:8000")
+                    Text("Default: https://garden-app-wa0b.onrender.com (cloud)\nLocal dev — emulator: http://10.0.2.2:8000, device: http://<PC-IP>:8000")
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 singleLine = true,
