@@ -340,8 +340,9 @@ export default function Planner() {
       height_ft: parseFloat(addBedForm.height_ft) || 8,
       garden_id: gardenId,
     });
-    if (r.ok) {
-      setPaletteBeds(prev => [...prev, r.bed]);
+    // POST /api/beds returns the serialized bed itself, not {ok, bed}.
+    if (r && r.id) {
+      setPaletteBeds(prev => [...prev, r as Bed]);
       setAddBedForm(f => ({ ...f, name: '' }));
     }
   }
