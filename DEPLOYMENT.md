@@ -202,7 +202,8 @@ Render is a hosting company: it runs your server program on their Linux
 machines, 24/7, with a public HTTPS URL. Today the FastAPI process runs only
 while your PC is on and only reachable at `127.0.0.1`. After deploying,
 the *same process* runs on Render's machine at
-`https://garden-app.onrender.com`, so your phone can reach it from anywhere.
+`https://garden-app-wa0b.onrender.com`, so your phone can reach it from
+anywhere.
 
 What Render does on each deploy, per `render.yaml` in the repo root (a
 "Blueprint" — infrastructure described in a file instead of clicked together):
@@ -243,7 +244,7 @@ front, which is overkill for this app.
    (Service → Environment → Secret Files); the blueprint already points
    `GOOGLE_APPLICATION_CREDENTIALS` at `/etc/secrets/gcs-service-account.json`.
 5. Deploy. The build compiles the React app; FastAPI serves it at the root
-   URL (e.g. `https://garden-app.onrender.com`).
+   URL (ours is `https://garden-app-wa0b.onrender.com`).
 
 Free-tier caveats:
 - The service **spins down after 15 min idle** (same idea as Neon's
@@ -264,7 +265,9 @@ every night at 07:00 UTC: it calls `/api/admin/run-weather-fetch` and
 (`X-Job-Token`). The request itself also wakes Render and Neon from idle.
 
 1. Repo → Settings → Secrets and variables → Actions → add:
-   - `APP_URL` — your Render URL, e.g. `https://garden-app.onrender.com`
+   - `APP_URL` — your Render URL: `https://garden-app-wa0b.onrender.com`.
+     **Careful:** the unsuffixed `https://garden-app.onrender.com` is someone
+     else's site — using it makes the nightly job fail with curl exit 22.
    - `JOB_TOKEN` — copy the value Render generated (Service → Environment)
 2. Done — it runs nightly and can be run manually from the Actions tab
    (workflow_dispatch).
@@ -298,7 +301,7 @@ the emulator, putting the app on your real phone — see
    For a personal app the *debug* build is all you need — "release" builds
    only matter for the Play Store and require signing-key setup.
 5. Point the app at the cloud: open the app → **Settings** → set the server
-   URL to your Render URL (`https://garden-app.onrender.com`) → Save. Log in
+   URL to your Render URL (`https://garden-app-wa0b.onrender.com`) → Save. Log in
    with the same account as the web app; everything syncs because both talk
    to the same backend.
 

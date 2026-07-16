@@ -5,7 +5,8 @@ name: Scheduled jobs
 # and trigger the nightly work.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
-#   APP_URL    e.g. https://garden-app.onrender.com
+#   APP_URL    https://garden-app-wa0b.onrender.com  (NOT the unsuffixed
+#              garden-app.onrender.com — that is someone else's site)
 #   JOB_TOKEN  same value as the JOB_TOKEN env var on the server
 #
 # Until those secrets are set (i.e. before the app is deployed to Render),
@@ -30,12 +31,12 @@ jobs:
       - name: Fetch weather for all gardens
         if: env.APP_URL != ''
         run: |
-          curl -sf -X POST "$APP_URL/api/admin/run-weather-fetch" \
+          curl -sSf -X POST "$APP_URL/api/admin/run-weather-fetch" \
             -H "X-Job-Token: $JOB_TOKEN" \
             --retry 3 --retry-delay 30 --max-time 120
       - name: Run backup job
         if: env.APP_URL != ''
         run: |
-          curl -sf -X POST "$APP_URL/api/admin/run-backup" \
+          curl -sSf -X POST "$APP_URL/api/admin/run-backup" \
             -H "X-Job-Token: $JOB_TOKEN" \
             --retry 3 --retry-delay 30 --max-time 120
