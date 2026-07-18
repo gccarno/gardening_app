@@ -4,11 +4,13 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.gardenapp.core.database.dao.BedDao
 import com.gardenapp.core.database.dao.GardenDao
+import com.gardenapp.core.database.dao.NotificationSettingsDao
 import com.gardenapp.core.database.dao.PlantDao
 import com.gardenapp.core.database.dao.TaskDao
 import com.gardenapp.core.database.dao.WeatherDao
 import com.gardenapp.core.database.entities.BedEntity
 import com.gardenapp.core.database.entities.GardenEntity
+import com.gardenapp.core.database.entities.NotificationSettingsEntity
 import com.gardenapp.core.database.entities.PlantEntity
 import com.gardenapp.core.database.entities.TaskEntity
 import com.gardenapp.core.database.entities.WeatherCacheEntity
@@ -20,8 +22,9 @@ import com.gardenapp.core.database.entities.WeatherCacheEntity
         BedEntity::class,
         PlantEntity::class,
         TaskEntity::class,
+        NotificationSettingsEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class GardenDatabase : RoomDatabase() {
@@ -30,4 +33,5 @@ abstract class GardenDatabase : RoomDatabase() {
     abstract fun bedDao(): BedDao
     abstract fun plantDao(): PlantDao
     abstract fun taskDao(): TaskDao
+    abstract fun notificationSettingsDao(): NotificationSettingsDao
 }

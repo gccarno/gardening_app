@@ -1,6 +1,7 @@
 package com.gardenapp.feature.garden
 
 import com.gardenapp.core.database.dao.GardenDao
+import com.gardenapp.core.database.dao.NotificationSettingsDao
 import com.gardenapp.core.database.dao.WeatherDao
 import com.gardenapp.core.database.entities.WeatherCacheEntity
 import com.gardenapp.core.database.entities.toEntity
@@ -24,6 +25,7 @@ class GardenRepository @Inject constructor(
     private val api: ApiService,
     private val gardenDao: GardenDao,
     private val weatherDao: WeatherDao,
+    private val notificationSettingsDao: NotificationSettingsDao,
     private val json: Json,
 ) {
     // Cached flow — emits instantly from Room, then refreshes from network
@@ -75,6 +77,7 @@ class GardenRepository @Inject constructor(
     suspend fun deleteGarden(id: Int): NetworkResult<Unit> = try {
         api.deleteGarden(id)
         gardenDao.deleteGarden(id)
+        notificationSettingsDao.deleteForGarden(id)
         NetworkResult.Success(Unit)
     } catch (e: Exception) {
         NetworkResult.Error(e.message ?: "Delete failed")

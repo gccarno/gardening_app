@@ -9,16 +9,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.network.AuthConfig
 import com.gardenapp.core.network.ServerConfig
+import com.gardenapp.core.notifications.InAppNotifier
 import com.gardenapp.core.ui.components.OfflineBanner
 import com.gardenapp.core.ui.theme.GardenAppTheme
 import com.gardenapp.core.util.NetworkMonitor
@@ -34,6 +38,17 @@ val SERVER_URL_KEY = stringPreferencesKey("server_url")
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var networkMonitor: NetworkMonitor
+    @Inject lateinit var inAppNotifier: InAppNotifier
+
+    override fun onStart() {
+        super.onStart()
+        inAppNotifier.isForeground = true
+    }
+
+    override fun onStop() {
+        inAppNotifier.isForeground = false
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,9 +86,26 @@ class MainActivity : ComponentActivity() {
                         ) { LoginScreen() }
                     }
 
-                    else -> Column(modifier = Modifier.fillMaxSize()) {
-                        OfflineBanner(isOffline = !isOnline)
-                        GardenNavGraph()
+                    else -> {
+                        // In-app "toast" overlay for notification events that
+                        // arrive while the app is open (see InAppNotifier).
+                        val snackbarHostState = remember { SnackbarHostState() }
+                        LaunchedEffect(Unit) {
+                            inAppNotifier.events.collect { event ->
+                                snackbarHostState.showSnackbar(
+                                    "${event.title}: ${event.message}")
+                            }
+                        }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                OfflineBanner(isOffline = !isOnline)
+                                GardenNavGraph()
+                            }
+                            SnackbarHost(
+                                hostState = snackbarHostState,
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                            )
+                        }
                     }
                 }
             }

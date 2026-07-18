@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Recycling
 import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material3.*
@@ -31,6 +32,7 @@ fun GardenDetailScreen(
     onOpenJournal: (Int) -> Unit,
     onOpenSeedRoom: (Int) -> Unit,
     onOpenCompost: (Int) -> Unit,
+    onOpenNotifications: (Int) -> Unit,
     viewModel: GardenDetailViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -56,6 +58,9 @@ fun GardenDetailScreen(
                     uiState.garden?.let { garden ->
                         IconButton(onClick = { onOpenPlanner(garden.id) }) {
                             Icon(Icons.Default.Map, "Open Planner")
+                        }
+                        IconButton(onClick = { onOpenNotifications(garden.id) }) {
+                            Icon(Icons.Default.Notifications, "Notification Settings")
                         }
                         IconButton(onClick = { onEdit(garden.id) }) {
                             Icon(Icons.Default.Edit, "Edit")

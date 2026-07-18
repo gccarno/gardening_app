@@ -78,6 +78,11 @@ sealed class Screen(val route: String) {
         fun route(gardenId: Int) = "gardens/$gardenId/compost"
     }
 
+    // Per-garden notification settings
+    data object NotificationSettings : Screen("gardens/{gardenId}/notifications") {
+        fun route(gardenId: Int) = "gardens/$gardenId/notifications"
+    }
+
     // Photo identification
     data object Identify : Screen("identify")
 

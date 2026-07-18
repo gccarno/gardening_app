@@ -99,3 +99,10 @@ Last audited: 2026-07-02
 - **Offline caching (Room DB)** — Android-only
 - **Network status banner** — Android-only
 - **Deep links** (`gardenapp://garden/{id}`) — Android-only
+- **Notifications (watering / growth / time-of-year planting)** — Android-only.
+  Hourly WorkManager worker + per-garden settings (enable, frequency, earliest
+  hour per type) stored device-local in Room (`notification_settings`).
+  Watering reminders delegate rain-skip to `GET /api/gardens/{id}/watering-status`
+  (backend watering engine: 14-day rainfall + forecast → urgency score).
+  System notifications (channels per type) + in-app snackbar when foregrounded
+  (`core/notifications/`). The web app has no equivalent and none is planned.

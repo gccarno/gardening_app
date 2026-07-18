@@ -25,6 +25,7 @@ import com.gardenapp.feature.bed.list.BedListScreen
 import com.gardenapp.feature.garden.detail.GardenDetailScreen
 import com.gardenapp.feature.garden.form.GardenFormScreen
 import com.gardenapp.feature.garden.list.GardenListScreen
+import com.gardenapp.feature.garden.notifications.NotificationSettingsScreen
 import com.gardenapp.feature.library.browser.LibraryBrowserScreen
 import com.gardenapp.feature.library.detail.LibraryDetailScreen
 import com.gardenapp.feature.library.diff.PlantDiffScreen
@@ -148,7 +149,11 @@ fun GardenNavGraph() {
                     onOpenJournal = { id -> navController.navigate(Screen.Journal.route(id)) },
                     onOpenSeedRoom = { id -> navController.navigate(Screen.SeedRoom.route(id)) },
                     onOpenCompost = { id -> navController.navigate(Screen.Compost.route(id)) },
+                    onOpenNotifications = { id -> navController.navigate(Screen.NotificationSettings.route(id)) },
                 )
+            }
+            composable(Screen.NotificationSettings.route) {
+                NotificationSettingsScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.Journal.route) {
                 JournalScreen(onBack = { navController.popBackStack() })

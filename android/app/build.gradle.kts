@@ -47,6 +47,8 @@ val retrofitVersion = "2.11.0"
 val roomVersion = "2.6.1"
 val hiltVersion = "2.51.1"
 val coroutinesVersion = "1.8.1"
+val workVersion = "2.9.1"
+val hiltWorkVersion = "1.2.0"
 
 dependencies {
     // Compose BOM
@@ -88,6 +90,11 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // WorkManager (scheduled notifications) + Hilt worker injection
+    implementation("androidx.work:work-runtime-ktx:$workVersion")
+    implementation("androidx.hilt:hilt-work:$hiltWorkVersion")
+    ksp("androidx.hilt:hilt-compiler:$hiltWorkVersion")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion")
 
@@ -110,4 +117,6 @@ dependencies {
     androidTestImplementation("androidx.room:room-testing:$roomVersion")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.work:work-testing:$workVersion")
 }
