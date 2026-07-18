@@ -30,5 +30,15 @@ services:
         value: '0'
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/gcs-service-account.json
+      # Optional — weather provider evaluation (scripts/test_weather_providers.py).
+      # Probes report status "no_key" when unset.
+      - key: OPENWEATHERMAP_API_KEY
+        sync: false
+      - key: WEATHERAPI_KEY
+        sync: false
+      - key: VISUAL_CROSSING_KEY
+        sync: false
+      - key: TOMORROW_IO_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: '3.11'

@@ -49,6 +49,20 @@ def run_backup_endpoint(x_job_token: str | None = Header(default=None)):
     return {'ok': True}
 
 
+@router.post('/test-weather-providers')
+def test_weather_providers(lat: float | None = None, lon: float | None = None,
+                           x_job_token: str | None = Header(default=None)):
+    """
+    Probe alternative weather APIs from this host's egress IP and report
+    status/latency/available fields per provider. Driven remotely by
+    scripts/test_weather_providers.py to test from Render's shared IPs.
+    """
+    _check_job_token(x_job_token)
+    from ..services.weather_probes import run_all_probes
+    log.info('[admin] test-weather-providers triggered (lat=%s lon=%s)', lat, lon)
+    return run_all_probes(lat, lon)
+
+
 @router.post('/restore-from-gcs')
 def restore_from_gcs(dry_run: bool = False,
                      x_job_token: str | None = Header(default=None)):
