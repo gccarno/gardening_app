@@ -24,6 +24,58 @@ _weather_cache: dict[int, tuple[float, dict]] = {}  # garden_id -> (timestamp, d
 _WEATHER_CACHE_TTL = 600  # 10 minutes
 
 
+def _frost_info(garden: Garden) -> dict:
+    # Use real frost dates from DB if available; fall back to static zone lookup.
+    if garden.last_frost_date or garden.first_frost_date:
+        last_spring = garden.last_frost_date.strftime('%b %d') if garden.last_frost_date else 'unknown'
+        first_fall  = garden.first_frost_date.strftime('%b %d') if garden.first_frost_date else 'unknown'
+    else:
+        zone_num = ''.join(filter(str.isdigit, garden.usda_zone or ''))
+        last_spring, first_fall = FROST_DATES.get(zone_num, ('unknown', 'unknown'))
+    return {
+        'last_spring':  last_spring,
+        'first_fall':   first_fall,
+        'frost_free':   garden.frost_free,
+        'station_name': garden.frost_station_name,
+        'station_distance_km': garden.frost_station_distance_km,
+    }
+
+
+def _tomorrow_io_weather(garden: Garden) -> Optional[dict]:
+    """Build the weather-card payload from Tomorrow.io when Open-Meteo fails."""
+    from ..services import tomorrow_io
+    if not tomorrow_io.get_key():
+        return None
+    try:
+        days_raw = tomorrow_io.fetch_forecast_days(
+            garden.latitude, garden.longitude, units='imperial')
+        current = tomorrow_io.fetch_realtime(
+            garden.latitude, garden.longitude, units='imperial')
+    except Exception as e:
+        logger.warning('[weather] tomorrow.io fallback failed for garden %d: %s',
+                       garden.id, e)
+        return None
+    return {
+        'current': {
+            'temp':          current['temp'],
+            'humidity':      current['humidity'],
+            'precipitation': current['precipitation'],
+            'wind_speed':    current['wind_speed'],
+            'condition':     current['condition'],
+        },
+        'daily': [{
+            'date':        d['date'],
+            'high':        d['temp_max'],
+            'low':         d['temp_min'],
+            'precip_prob': d['precip_prob'],
+            'uv':          d['uv'],
+            'condition':   d['condition'],
+        } for d in days_raw],
+        'frost': _frost_info(garden),
+        'source': 'tomorrow.io',
+    }
+
+
 @router.get('/gardens/{garden_id}/weather')
 def api_garden_weather(garden_id: int,
                        user: User = Depends(get_current_user),
@@ -52,19 +104,15 @@ def api_garden_weather(garden_id: int,
                        garden_id, e)
         if cached:  # serve stale data rather than an error
             return cached[1]
-        raise HTTPException(status_code=502, detail=str(e))
+        result = _tomorrow_io_weather(garden)
+        if result is None:
+            raise HTTPException(status_code=502, detail=str(e))
+        _weather_cache[garden_id] = (time.time(), result)
+        return result
 
     data  = resp.json()
     cur   = data.get('current', {})
     daily = data.get('daily', {})
-
-    # Use real frost dates from DB if available; fall back to static zone lookup.
-    if garden.last_frost_date or garden.first_frost_date:
-        last_spring = garden.last_frost_date.strftime('%b %d') if garden.last_frost_date else 'unknown'
-        first_fall  = garden.first_frost_date.strftime('%b %d') if garden.first_frost_date else 'unknown'
-    else:
-        zone_num = ''.join(filter(str.isdigit, garden.usda_zone or ''))
-        last_spring, first_fall = FROST_DATES.get(zone_num, ('unknown', 'unknown'))
 
     days = []
     for i, d in enumerate(daily.get('time', [])):
@@ -85,13 +133,8 @@ def api_garden_weather(garden_id: int,
             'condition':     WMO.get(cur.get('weather_code'), 'Unknown'),
         },
         'daily': days,
-        'frost': {
-            'last_spring':  last_spring,
-            'first_fall':   first_fall,
-            'frost_free':   garden.frost_free,
-            'station_name': garden.frost_station_name,
-            'station_distance_km': garden.frost_station_distance_km,
-        },
+        'frost': _frost_info(garden),
+        'source': 'open-meteo',
     }
     _weather_cache[garden_id] = (time.time(), result)
     return result
@@ -105,34 +148,70 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
 
     end_date   = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=13)
-    resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
-        'latitude':           garden.latitude,
-        'longitude':          garden.longitude,
-        'start_date':         start_date.isoformat(),
-        'end_date':           end_date.isoformat(),
-        'daily':              'precipitation_sum,temperature_2m_max,temperature_2m_min',
-        'temperature_unit':   'fahrenheit',
-        'precipitation_unit': 'inch',
-        'timezone':           'auto',
-    }, timeout=10)
-    resp.raise_for_status()
-    daily = resp.json().get('daily', {})
+    try:
+        resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
+            'latitude':           garden.latitude,
+            'longitude':          garden.longitude,
+            'start_date':         start_date.isoformat(),
+            'end_date':           end_date.isoformat(),
+            'daily':              'precipitation_sum,temperature_2m_max,temperature_2m_min',
+            'temperature_unit':   'fahrenheit',
+            'precipitation_unit': 'inch',
+            'timezone':           'auto',
+        }, timeout=10)
+        resp.raise_for_status()
+        daily = resp.json().get('daily', {})
+        rows = [(date.fromisoformat(d_str),
+                 daily['precipitation_sum'][i],
+                 daily['temperature_2m_max'][i],
+                 daily['temperature_2m_min'][i])
+                for i, d_str in enumerate(daily.get('time', []))]
+    except http.exceptions.RequestException as e:
+        logger.warning('[weather] open-meteo archive failed for garden %d, '
+                       'trying tomorrow.io: %s', garden_id, e)
+        rows = _tomorrow_io_history_rows(garden)
+        if rows is None:
+            raise
 
     created = 0
-    for i, d_str in enumerate(daily.get('time', [])):
-        d = date.fromisoformat(d_str)
+    for d, rainfall, hi, lo in rows:
         db.query(WeatherLog).filter_by(garden_id=garden_id, date=d).delete()
         db.add(WeatherLog(
             garden_id=garden_id,
             date=d,
-            rainfall_in=daily['precipitation_sum'][i],
-            temp_high_f=daily['temperature_2m_max'][i],
-            temp_low_f=daily['temperature_2m_min'][i],
+            rainfall_in=rainfall,
+            temp_high_f=hi,
+            temp_low_f=lo,
             source='api',
         ))
         created += 1
     db.commit()
     return created
+
+
+def _tomorrow_io_history_rows(garden: Garden) -> Optional[list]:
+    """Yesterday-only backfill from Tomorrow.io recent history (past ~24h).
+
+    Can't match the archive's 14-day window, but run nightly it keeps
+    WeatherLog fresh when the archive host rejects Render's egress IP.
+    """
+    from ..services import tomorrow_io
+    if not tomorrow_io.get_key():
+        return None
+    try:
+        days = tomorrow_io.fetch_history_days(
+            garden.latitude, garden.longitude, units='imperial')
+    except Exception as e:
+        logger.warning('[weather] tomorrow.io history failed for garden %d: %s',
+                       garden.id, e)
+        return None
+    rows = []
+    for d in days or []:
+        day = date.fromisoformat(d['date'])
+        if day >= date.today():  # today is a partial day — don't log it
+            continue
+        rows.append((day, d['precip_sum'], d['temp_max'], d['temp_min']))
+    return rows or None
 
 
 def run_daily_weather_fetch():
