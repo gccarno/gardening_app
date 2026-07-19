@@ -24,7 +24,20 @@ if DATABASE_URL.startswith('sqlite'):
 else:
     # Neon's free tier suspends idle compute and drops connections;
     # pool_pre_ping transparently reconnects on the next request.
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
+    # Pool sized above SQLAlchemy's 5+10 default so concurrent traffic (E2E
+    # runs, plus requests that hold a connection across slow external calls
+    # like ZIP enrichment) doesn't exhaust it — the "QueuePool limit of size 5
+    # overflow 10 reached, connection timed out" 500s. 30 max stays well under
+    # Neon's connection cap on a single Render worker. To scale further, switch
+    # to Neon's -pooler endpoint (see DEPLOYMENT.md §1, "Connection pooling").
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+    )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 

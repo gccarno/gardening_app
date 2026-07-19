@@ -30,8 +30,25 @@ class B10GardenBuildTest : ComposeE2eTest() {
         type("Water Source", "drip")
         tap("Save", substring = false)
 
-        // Saved → garden detail; resolve the id for the rest of the suite.
-        waitForText("View Beds", timeout = loadTimeout)
+        // Saved → garden detail; resolve the id for the rest of the suite. A
+        // failed save keeps us on the form, so fail fast with an API cross-check
+        // instead of a blind 60s hang (usually a backend 5xx / pool exhaustion).
+        waitForSavedNavigation(
+            successText = "View Beds",
+            formTitle = "New Garden",
+            diagnose = {
+                val existsViaApi = runCatching {
+                    val gs = E2e.getArray("/api/gardens")
+                    (0 until gs.length()).any { gs.getJSONObject(it).getString("name") == name }
+                }.getOrDefault(false)
+                if (existsViaApi)
+                    "Garden \"$name\" WAS created server-side — the UI never navigated " +
+                        "(client read-timeout/error after a slow save)."
+                else
+                    "Garden \"$name\" was NOT created — the create call returned an error; " +
+                        "check backend logs for 5xx or QueuePool exhaustion."
+            },
+        )
         val gardens = E2e.getArray("/api/gardens")
         for (i in 0 until gardens.length()) {
             val g = gardens.getJSONObject(i)

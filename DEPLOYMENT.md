@@ -84,6 +84,72 @@ Other notes:
 - Neon keeps ~24 h of point-in-time restore history on the free tier, which
   replaces the old SQLite GCS backup for disaster recovery.
 
+### Connection pooling
+
+The app opens Postgres connections through a SQLAlchemy **pool** (a small set
+of reusable connections). Each in-flight request that touches the DB borrows
+one for the duration of that request and returns it when done. If every
+connection is borrowed at once, the next request waits, then errors:
+
+```
+sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached,
+connection timed out, timeout 30.00
+```
+
+That surfaces as intermittent `500`s (and, if it destabilizes the instance,
+`502`s) — e.g. the Android E2E suite's garden-create step timing out, or a
+library search failing mid-run — whenever traffic bursts past the pool while
+some requests are slow (the garden-create call holds its connection across
+three external lookups — frost/zone/city — so it occupies a slot for a
+second or more).
+
+**Already applied (`apps/backend/app/db/session.py`):** the pool is sized to
+`pool_size=10, max_overflow=20` (30 max) instead of SQLAlchemy's `5 + 10 = 15`
+default. On Render's single free-tier worker, 30 connections is comfortably
+under Neon's server-side cap and absorbs the E2E burst. This is enough for a
+single-instance, single-family deployment.
+
+**TODO — upgrade to Neon's pooled endpoint (do this if you ever raise the pool
+higher, add a second Render worker/instance, or still see QueuePool errors):**
+Neon offers a built-in **PgBouncer** endpoint that multiplexes thousands of
+client connections onto a handful of real Postgres ones. It's the right fix if
+the direct connection cap ever becomes the ceiling. Steps:
+
+1. In the Neon dashboard → **Connection Details**, toggle **Connection
+   pooling** on and copy the pooled string. Its host has a `-pooler` suffix,
+   e.g. `ep-crimson-star-aitjy8am-pooler.c-4.us-east-1.aws.neon.tech` (the
+   current non-pooled URL uses the same host *without* `-pooler`).
+2. Convert to the SQLAlchemy form as in step 2 above (scheme
+   `postgresql+psycopg://`, keep `?sslmode=require`).
+3. Update `DATABASE_URL` in **both** places: the Render dashboard (Service →
+   Environment) **and** your local `.env`. Changing it on Render triggers a
+   redeploy.
+4. PgBouncer runs in **transaction pooling** mode, which doesn't keep
+   server-side prepared statements alive between statements — psycopg3 uses
+   those automatically and they'll break (`prepared statement "..." does not
+   exist`). Disable them in `session.py` by adding `connect_args` to the
+   Postgres `create_engine(...)` call:
+
+   ```python
+   engine = create_engine(
+       DATABASE_URL,
+       pool_pre_ping=True,
+       pool_recycle=300,
+       pool_size=10,
+       max_overflow=20,
+       pool_timeout=30,
+       connect_args={"prepare_threshold": None},  # required for PgBouncer
+   )
+   ```
+
+5. With the pooler in front you can safely raise `pool_size`/`max_overflow`
+   further if a real load ever needs it.
+6. Verify locally first (point local `.env` at the pooled URL, start the
+   backend, click around and confirm no `prepared statement` errors), then
+   deploy. Keep the non-pooled URL handy — one-off migration/admin scripts
+   that open many short-lived sessions can use either, but the direct endpoint
+   avoids PgBouncer quirks for bulk work.
+
 ## 2. Google Cloud Storage (images) — private bucket, pennies/month
 
 The plant image tree (`apps/api/static/`, ~5.6 GB of originals) is too big

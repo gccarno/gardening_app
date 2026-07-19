@@ -9,6 +9,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.gardenapp.MainActivity
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
 
@@ -41,6 +42,39 @@ abstract class ComposeE2eTest {
         rule.waitUntil(timeoutMillis = timeout) {
             rule.onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isEmpty()
         }
+    }
+
+    private fun isShown(text: String, substring: Boolean = true) =
+        rule.onAllNodes(hasText(text, substring = substring)).fetchSemanticsNodes().isNotEmpty()
+
+    /**
+     * Wait for a form save to navigate to [successText]. Unlike a bare
+     * [waitForText], this fails fast with a diagnostic when the save errors
+     * instead of hanging the full timeout: a failed save keeps us on the form
+     * (its [formTitle] still shown and the "Save" button back from its saving
+     * spinner), which we detect and report — enriched by [diagnose], e.g. an
+     * API cross-check. The usual culprit is a backend 5xx (connection-pool
+     * exhaustion), which otherwise surfaces as an opaque ComposeTimeoutException.
+     */
+    protected fun waitForSavedNavigation(
+        successText: String,
+        formTitle: String,
+        timeout: Long = loadTimeout,
+        diagnose: () -> String = { "" },
+    ) {
+        var sawSaving = false
+        runCatching {
+            rule.waitUntil(timeoutMillis = timeout) {
+                if (!isShown("Save", substring = false) && isShown(formTitle)) sawSaving = true
+                isShown(successText) ||
+                    (sawSaving && isShown(formTitle) && isShown("Save", substring = false))
+            }
+        }
+        if (isShown(successText)) return
+        fail(
+            "Save did not reach \"$successText\" within ${timeout}ms " +
+                "(stillOnForm=${isShown(formTitle)}). ${diagnose()}".trim()
+        )
     }
 
     protected fun node(text: String, substring: Boolean = true): SemanticsNodeInteraction =
