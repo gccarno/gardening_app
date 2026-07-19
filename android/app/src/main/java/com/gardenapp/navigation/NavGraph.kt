@@ -17,6 +17,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import com.gardenapp.feature.dashboard.DashboardScreen
 import com.gardenapp.feature.bed.detail.BedDetailScreen
@@ -152,16 +154,28 @@ fun GardenNavGraph() {
                     onOpenNotifications = { id -> navController.navigate(Screen.NotificationSettings.route(id)) },
                 )
             }
-            composable(Screen.NotificationSettings.route) {
+            composable(
+                Screen.NotificationSettings.route,
+                arguments = listOf(navArgument("gardenId") { type = NavType.IntType }),
+            ) {
                 NotificationSettingsScreen(onBack = { navController.popBackStack() })
             }
-            composable(Screen.Journal.route) {
+            composable(
+                Screen.Journal.route,
+                arguments = listOf(navArgument("gardenId") { type = NavType.IntType }),
+            ) {
                 JournalScreen(onBack = { navController.popBackStack() })
             }
-            composable(Screen.SeedRoom.route) {
+            composable(
+                Screen.SeedRoom.route,
+                arguments = listOf(navArgument("gardenId") { type = NavType.IntType }),
+            ) {
                 SeedRoomScreen(onBack = { navController.popBackStack() })
             }
-            composable(Screen.Compost.route) {
+            composable(
+                Screen.Compost.route,
+                arguments = listOf(navArgument("gardenId") { type = NavType.IntType }),
+            ) {
                 CompostScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.GardenForm.route) {
@@ -203,7 +217,10 @@ fun GardenNavGraph() {
                     },
                 )
             }
-            composable(Screen.PlantDetail.route) {
+            composable(
+                Screen.PlantDetail.route,
+                arguments = listOf(navArgument("plantId") { type = NavType.IntType }),
+            ) {
                 PlantDetailScreen(
                     onBack = { navController.popBackStack() },
                     onEdit = { id -> navController.navigate(Screen.PlantForm.route(id)) },
@@ -231,13 +248,22 @@ fun GardenNavGraph() {
                     onSaved = { navController.popBackStack() },
                 )
             }
-            composable(Screen.LibraryDetail.route) {
+            composable(
+                Screen.LibraryDetail.route,
+                arguments = listOf(navArgument("entryId") { type = NavType.IntType }),
+            ) {
                 LibraryDetailScreen(
                     onBack = { navController.popBackStack() },
                     onNavigateToPlant = { id -> navController.navigate(Screen.PlantDetail.route(id)) },
                 )
             }
-            composable(Screen.PlantDiff.route) {
+            composable(
+                Screen.PlantDiff.route,
+                arguments = listOf(
+                    navArgument("aId") { type = NavType.IntType },
+                    navArgument("bId") { type = NavType.IntType },
+                ),
+            ) {
                 PlantDiffScreen(onBack = { navController.popBackStack() })
             }
         }
