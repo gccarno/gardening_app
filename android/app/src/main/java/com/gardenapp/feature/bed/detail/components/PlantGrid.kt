@@ -4,7 +4,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -77,8 +76,7 @@ fun PlantGrid(
 
     Box(
         modifier = modifier
-            .horizontalScroll(rememberScrollState())
-            .verticalScroll(rememberScrollState()),
+            .horizontalScroll(rememberScrollState()),
     ) {
         Box(
             modifier = Modifier
