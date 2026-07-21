@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..db.models import Garden, GardenBed, GardenMember, Plant, Task, BedPlant, AppSetting, User, WeatherLog
 from ..db.session import get_db
 from ..services.auth import get_current_user, member_garden_ids, require_garden
-from ..services.helpers import FROST_DATES, get_or_404, get_season
+from ..services.helpers import FROST_DATES, get_or_404, get_season, record_watering_event
 from ..services.storage import delete_static, save_static
 
 router = APIRouter(prefix='/api', tags=['gardens'])
@@ -477,6 +477,8 @@ def api_bulk_care(garden_id: int, body: dict,
         for p in plants:
             p.last_watered = care_date
             if watering_amount: p.watering_amount = watering_amount
+        for bed_id in {bp.bed_id for bp in bps}:
+            record_watering_event(db, garden_id, bed_id, watering_amount, 'bulk')
     elif action == 'fertilize':
         fertilizer_type = body.get('fertilizer_type') or None
         fertilizer_npk  = body.get('fertilizer_npk') or None

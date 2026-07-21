@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 eda = ["matplotlib", "seaborn", "jupyter"]
+monitoring = ["streamlit"]
 # Image generation via HuggingFace diffusers (local GPU).
 # NOTE: PyTorch with CUDA must be installed separately — uv cannot pull the CUDA wheel:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121

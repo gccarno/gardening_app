@@ -17,6 +17,7 @@ from .routers import auth, identify, seed_room, observations, journal, compost
 from .routers.weather import run_daily_weather_fetch
 from .services.auth import get_current_user
 from .jobs.gcs_backup import run_backup as run_gcs_backup
+from .jobs.ml_snapshot import run_ml_snapshot
 
 # ── Logging setup ────────────────────────────────────────────────────────────
 _LOG_DIR = Path(__file__).parents[4] / 'logs'
@@ -97,6 +98,8 @@ async def lifespan(app: FastAPI):
         scheduler.add_job(run_daily_weather_fetch, 'cron', hour=2, minute=0)
         # NOTE: removed immediate startup weather fetch — it made external HTTP calls
         # (open-meteo) on every restart, slowing startup. The nightly cron is sufficient.
+        # Watering-model snapshot/label-backfill/prune — right after the weather fetch.
+        scheduler.add_job(run_ml_snapshot, 'cron', hour=2, minute=10)
         scheduler.add_job(run_gcs_backup, 'cron', hour=3, minute=0)
         scheduler.start()
         logger.info('[startup] scheduler started — %.0fms', (time.perf_counter() - t_sched) * 1000)

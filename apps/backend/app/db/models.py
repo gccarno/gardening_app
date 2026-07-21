@@ -321,13 +321,15 @@ class Task(Base):
 class WeatherLog(Base):
     __tablename__ = 'weather_log'
 
-    id          = Column(Integer, primary_key=True)
-    garden_id   = Column(Integer, ForeignKey('garden.id'), nullable=False)
-    date        = Column(Date, nullable=False)
-    rainfall_in = Column(Float, nullable=True)
-    temp_high_f = Column(Float, nullable=True)
-    temp_low_f  = Column(Float, nullable=True)
-    source      = Column(String(10), nullable=False, default='manual')  # 'manual' or 'api'
+    id           = Column(Integer, primary_key=True)
+    garden_id    = Column(Integer, ForeignKey('garden.id'), nullable=False)
+    date         = Column(Date, nullable=False)
+    rainfall_in  = Column(Float, nullable=True)
+    temp_high_f  = Column(Float, nullable=True)
+    temp_low_f   = Column(Float, nullable=True)
+    humidity_pct = Column(Float, nullable=True)
+    et0_mm       = Column(Float, nullable=True)
+    source       = Column(String(10), nullable=False, default='manual')  # 'manual' or 'api'
 
     __table_args__ = (
         UniqueConstraint('garden_id', 'date', name='uq_weatherlog_garden_date'),
@@ -335,6 +337,82 @@ class WeatherLog(Base):
 
     def __repr__(self):
         return f'<WeatherLog garden={self.garden_id} date={self.date}>'
+
+
+class WateringEvent(Base):
+    """
+    Append-only log of actual watering actions, written alongside the existing
+    last_watered/watering_amount mutations on Plant/BedPlant. Kept for 7 days
+    operationally (pruned by the nightly ml_snapshot job); the ML flywheel's
+    durable record of "was this bed watered" lives in MlWateringSnapshot instead.
+    """
+    __tablename__ = 'watering_event'
+
+    id         = Column(Integer, primary_key=True)
+    garden_id  = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    bed_id     = Column(Integer, ForeignKey('garden_bed.id'), nullable=True, index=True)
+    event_date = Column(Date, nullable=False)
+    amount     = Column(String(20), nullable=True)   # 'light' | 'moderate' | 'heavy'
+    source     = Column(String(10), nullable=False, default='user')  # 'user' or 'bulk'
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<WateringEvent garden={self.garden_id} bed={self.bed_id} date={self.event_date}>'
+
+
+class MlWateringSnapshot(Base):
+    """
+    One row per bed per day: the feature vector the watering model saw (or
+    would see), what the rule engine and model each said, and — backfilled the
+    following night — what actually happened. Never pruned: this is the
+    accumulating training/monitoring store (the "flywheel"), separate from the
+    7-day operational WeatherLog/WateringEvent window.
+    """
+    __tablename__ = 'ml_watering_snapshot'
+
+    id            = Column(Integer, primary_key=True)
+    garden_id     = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    bed_id        = Column(Integer, ForeignKey('garden_bed.id'), nullable=False, index=True)
+    snapshot_date = Column(Date, nullable=False)
+
+    # Features
+    rain_7d_mm                = Column(Float, nullable=True)
+    et0_7d_mm                 = Column(Float, nullable=True)
+    temp_high_f               = Column(Float, nullable=True)
+    temp_low_f                = Column(Float, nullable=True)
+    humidity_pct              = Column(Float, nullable=True)
+    forecast_precip_mm_d0     = Column(Float, nullable=True)
+    forecast_precip_prob_d0   = Column(Float, nullable=True)
+    forecast_precip_mm_d1_d2  = Column(Float, nullable=True)
+    forecast_temp_max_c       = Column(Float, nullable=True)
+    days_since_watered        = Column(Integer, nullable=True)
+    maturity_days             = Column(Integer, nullable=True)
+    seedling_frac             = Column(Float, nullable=True)
+    kc_avg                    = Column(Float, nullable=True)
+    mm_day_avg                = Column(Float, nullable=True)
+    sand_pct                  = Column(Float, nullable=True)
+    clay_pct                  = Column(Float, nullable=True)
+    bed_area_m2                = Column(Float, nullable=True)
+
+    # Engine outputs at snapshot time
+    rule_deficit_mm = Column(Float, nullable=True)
+    rule_score      = Column(Integer, nullable=True)
+    model_pred_mm   = Column(Float, nullable=True)
+    model_used      = Column(Boolean, nullable=False, default=False)
+
+    # Labels — backfilled the following night
+    watered_next_day  = Column(Boolean, nullable=True)
+    watered_amount    = Column(String(20), nullable=True)
+    rain_next_day_mm  = Column(Float, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('garden_id', 'bed_id', 'snapshot_date', name='uq_ml_snapshot_garden_bed_date'),
+    )
+
+    def __repr__(self):
+        return f'<MlWateringSnapshot garden={self.garden_id} bed={self.bed_id} date={self.snapshot_date}>'
 
 
 class SeedTray(Base):

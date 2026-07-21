@@ -11,6 +11,11 @@ Pure Python — no Flask imports.  All SQLAlchemy objects are passed in by calle
 from datetime import date, timedelta
 from math import sqrt
 
+try:
+    from apps.ml_service.app.watering_model import predict_water_mm
+except Exception:  # pkl-less / partial deploy — rule engine still works standalone
+    predict_water_mm = None
+
 # ── Crop coefficient (Kc) + daily water need lookup ──────────────────────────
 # Searched by plant name substring (longest match wins).
 # Fallback uses PlantLibrary.water field values: 'Low', 'Moderate', 'High'.
@@ -223,6 +228,13 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
         List of bed recommendation dicts, sorted by urgency score descending.
     """
     results = []
+    today = date.today()
+
+    # Garden-level weather aggregates, same for every bed this call.
+    rain_7d_mm = sum((lg.rainfall_in or 0) * 25.4 for lg in weather_logs)
+    et0_vals   = [lg.et0_mm for lg in weather_logs if lg.et0_mm is not None]
+    et0_7d_mm  = round(sum(et0_vals), 1) if et0_vals else None
+    latest_log = max(weather_logs, key=lambda lg: lg.date, default=None)
 
     for bed in garden.beds:
         plants_in_bed = [bp.plant for bp in bed.bed_plants if bp.plant]
@@ -248,9 +260,58 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
         score   = score_urgency(deficit, avg_kc, forecast_today)
         label   = get_urgency_label(score)
 
-        # Suggested amount (very rough: mm_day × area × 0.3-0.4 litres/m² scaling)
         area_m2 = (bed.width_ft * bed.height_ft) * 0.0929  # ft² → m²
-        amount_L = round(avg_kc['mm_day'] * area_m2 * (1.3 if label == 'urgent' else 1.0))
+
+        # Plant maturity — seedlings need frequent shallow watering, mature
+        # plants deep infrequent watering (see ml/docs/WATERING_MODEL.md §4).
+        maturity_days = [(today - p.planted_date).days for p in plants_in_bed if p.planted_date]
+        stages = [bp.stage or 'seedling' for bp in bed.bed_plants if bp.plant]
+        seedling_frac = (sum(1 for s in stages if s == 'seedling') / len(stages)) if stages else None
+
+        model_pred_mm = None
+        if predict_water_mm is not None:
+            model_pred_mm = predict_water_mm({
+                'rain_7d_mm':               round(rain_7d_mm, 1),
+                'et0_7d_mm':                et0_7d_mm,
+                'temp_high_f':              latest_log.temp_high_f if latest_log else None,
+                'temp_low_f':               latest_log.temp_low_f if latest_log else None,
+                'humidity_pct':             latest_log.humidity_pct if latest_log else None,
+                'forecast_precip_mm_d0':    (forecast_today or {}).get('precip_mm'),
+                'forecast_precip_prob_d0':  (forecast_today or {}).get('precip_prob'),
+                # Not fetched on the live path (would cost an extra forecast
+                # call per request) — defaults to "no rain expected" via
+                # ml/features/watering_features.py. The nightly snapshot job
+                # fetches it for real; see ml/docs/WATERING_MODEL.md §8.
+                'forecast_precip_mm_d1_d2': None,
+                'forecast_temp_max_c':      (forecast_today or {}).get('temp_max_c'),
+                'days_since_watered':       dsw,
+                'maturity_days':            round(sum(maturity_days) / len(maturity_days)) if maturity_days else None,
+                'seedling_frac':            seedling_frac,
+                'kc_avg':                   avg_kc['kc'],
+                'mm_day_avg':               avg_kc['mm_day'],
+                'sand_pct':                 bed.sand_pct,
+                'clay_pct':                 bed.clay_pct,
+                'bed_area_m2':              round(area_m2, 2),
+            })
+        model_used = model_pred_mm is not None
+
+        if model_used:
+            # Re-derive score/label from the model's predicted depth, in the
+            # same 0-100 shape the rule engine already produces, so the
+            # 50/75 thresholds Android/web read keep their meaning.
+            max_deficit = avg_kc['mm_day'] * 3.0  # three dry days at peak need
+            score = max(0, min(100, round((model_pred_mm / max(max_deficit, 0.1)) * 100)))
+            label = get_urgency_label(score)
+            amount_L = round(model_pred_mm * area_m2 * (1.3 if label == 'urgent' else 1.0))
+        else:
+            # Suggested amount (very rough: mm_day × area × 0.3-0.4 litres/m² scaling)
+            amount_L = round(avg_kc['mm_day'] * area_m2 * (1.3 if label == 'urgent' else 1.0))
+
+        # Maturity shaping: cap the per-event amount for seedling-heavy beds
+        # (shallow, frequent) rather than the mature-bed full deficit (deep,
+        # infrequent).
+        if seedling_frac and seedling_frac >= 0.5:
+            amount_L = max(1, round(amount_L * 0.6))
 
         rec = {
             'ok':          'Soil moisture looks adequate.',
@@ -258,6 +319,11 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
             'water_today': f'Water today — about {max(amount_L, 1)}L suggested.',
             'urgent':      f'Water immediately — plants may be stressed. About {max(amount_L, 1)}L needed.',
         }[label]
+
+        if seedling_frac and seedling_frac >= 0.5 and label in ('water_today', 'urgent'):
+            rec += ' Bed is mostly seedlings — water lightly and check again tomorrow.'
+        elif seedling_frac == 0 and label in ('water_today', 'urgent'):
+            rec += ' Mature bed — water deeply and less often.'
 
         if forecast_today and (forecast_today.get('precip_prob') or 0) > 60:
             rec += f' ({forecast_today["precip_prob"]}% chance of rain — consider waiting.)'
@@ -273,6 +339,8 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
             'mm_day':             avg_kc['mm_day'],
             'plants':             [p.name for p in plants_in_bed],
             'recommendation':     rec,
+            'model_used':         model_used,
+            'predicted_mm':       model_pred_mm,
         })
 
     results.sort(key=lambda x: x['urgency_score'], reverse=True)

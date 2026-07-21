@@ -3,7 +3,6 @@ import { apiFetch } from '@garden/shared';
 import { Link } from 'react-router-dom';
 import { useGardens, useDashboard, useWateringStatus, useSetDefaultGarden } from '../hooks/useGardens';
 import ChatWidget from '../components/ChatWidget';
-import { useMutation } from '@tanstack/react-query';
 
 // ── WMO weather code descriptions ─────────────────────────────────────────────
 const WMO: Record<number, string> = {
@@ -144,56 +143,6 @@ function TipOfDay() {
         ) : (
           <p className="tip-of-day-text">{tip}</p>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ── Rain log card ─────────────────────────────────────────────────────────────
-function RainLogCard({ gardenId }: { gardenId: number }) {
-  const [rainfall, setRainfall] = useState(0.5);
-  const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [saved, setSaved] = useState(false);
-
-  const logMut = useMutation({
-    mutationFn: () =>
-      apiFetch(`/api/gardens/${gardenId}/log-rain`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rainfall_in: rainfall, entry_date: logDate }),
-      }).then(r => r.json()),
-    onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
-  });
-
-  return (
-    <div className="info-card" id="rain-log-card">
-      <div className="info-card__header">🌧 Log Rainfall</div>
-      <div className="info-card__body">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <label style={{ fontSize: '0.85rem' }}>
-            Amount: <strong>{rainfall.toFixed(2)} in</strong>
-          </label>
-          <input
-            type="range" min="0" max="4" step="0.05"
-            value={rainfall}
-            onChange={e => setRainfall(parseFloat(e.target.value))}
-            style={{ width: '100%' }}
-          />
-          <input
-            type="date"
-            value={logDate}
-            onChange={e => setLogDate(e.target.value)}
-            style={{ fontSize: '0.85rem', padding: '0.2rem 0.4rem' }}
-          />
-          <button
-            className="btn btn--ghost"
-            style={{ fontSize: '0.82rem' }}
-            disabled={logMut.isPending}
-            onClick={() => logMut.mutate()}
-          >
-            {saved ? '✓ Saved' : logMut.isPending ? 'Saving…' : 'Log Rain'}
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -347,9 +296,8 @@ export default function Dashboard() {
       {/* Tip of the Day */}
       <TipOfDay />
 
-      {/* Watering status + rain logging */}
+      {/* Watering status (rainfall is fetched automatically, not logged manually) */}
       {effectiveId && <WateringCard gardenId={effectiveId} />}
-      {effectiveId && <RainLogCard gardenId={effectiveId} />}
 
       {/* Three-column content */}
       {dash && (

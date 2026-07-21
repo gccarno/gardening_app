@@ -15,7 +15,7 @@ from ..db.session import get_db
 from ..services.auth import (
     get_current_user, member_garden_ids, require_garden, require_resource,
 )
-from ..services.helpers import FROST_DATES, get_or_404
+from ..services.helpers import FROST_DATES, get_or_404, record_watering_event
 
 router = APIRouter(prefix='/api', tags=['plants'])
 
@@ -349,6 +349,9 @@ def api_plants_sync(body: dict,
             plant.last_watered = val
             for bp in plant.bed_plants:
                 bp.last_watered = val
+            if val is not None:
+                for bp in plant.bed_plants:
+                    record_watering_event(db, plant.garden_id, bp.bed_id, None, 'user')
         elif field == 'last_fertilized':
             plant.last_fertilized = val
             for bp in plant.bed_plants:
@@ -407,6 +410,10 @@ def api_plants_bulk_care(body: dict,
         _apply_care(plant)
         for bp in plant.bed_plants:
             _apply_care(bp)
+        if body.get('last_watered'):
+            amount = body.get('watering_amount') or None
+            for bp in plant.bed_plants:
+                record_watering_event(db, plant.garden_id, bp.bed_id, amount, 'user')
         updated += 1
     db.commit()
     return {'ok': True, 'updated': updated}
@@ -531,6 +538,10 @@ def api_plant_care(plant_id: int, body: dict,
         if 'last_fertilized' in body: bp.last_fertilized = _d(body['last_fertilized'])
         if 'fertilizer_type' in body: bp.fertilizer_type = body.get('fertilizer_type') or None
         if 'fertilizer_npk'  in body: bp.fertilizer_npk  = body.get('fertilizer_npk') or None
+    if body.get('last_watered'):
+        amount = body.get('watering_amount') or None
+        for bp in plant.bed_plants:
+            record_watering_event(db, plant.garden_id, bp.bed_id, amount, 'user')
     db.commit()
     return {'ok': True}
 

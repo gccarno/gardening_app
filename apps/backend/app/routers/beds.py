@@ -17,7 +17,7 @@ from ..db.session import get_db
 from ..services.auth import (
     get_current_user, member_garden_ids, require_garden, require_resource,
 )
-from ..services.helpers import get_or_404
+from ..services.helpers import get_or_404, record_watering_event
 from ..services.storage import delete_static, save_static
 from sqlalchemy import or_
 
@@ -331,6 +331,9 @@ def api_bedplants_bulk_care(body: dict,
             if 'planted_date'    in body: bp.plant.planted_date    = _d(body['planted_date'])
             if 'transplant_date' in body: bp.plant.transplant_date = _d(body['transplant_date'])
             if 'plant_notes'     in body: bp.plant.notes           = body['plant_notes'] or None
+        if body.get('last_watered'):
+            garden_id = bp.bed.garden_id if bp.bed else None
+            record_watering_event(db, garden_id, bp.bed_id, body.get('watering_amount') or None, 'user')
         updated += 1
     db.commit()
     return {'ok': True, 'updated': updated}
@@ -382,6 +385,9 @@ def api_bedplant_care(bp_id: int, body: dict,
         if 'transplant_date' in body: bp.plant.transplant_date = _d(body['transplant_date'])
         if 'plant_notes'     in body: bp.plant.notes           = body['plant_notes'] or None
     if 'stage' in body: bp.stage = body['stage'] or None
+    if body.get('last_watered'):
+        garden_id = bp.bed.garden_id if bp.bed else None
+        record_watering_event(db, garden_id, bp.bed_id, None, 'user')
     db.commit()
     return {'ok': True}
 

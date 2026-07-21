@@ -32,12 +32,6 @@ class DashboardRepository @Inject constructor(
         null
     }
 
-    suspend fun logRain(gardenId: Int, rainfallIn: Float, entryDate: String): NetworkResult<Unit> =
-        safeApiCall {
-            api.logRain(gardenId, mapOf("rainfall_in" to rainfallIn, "entry_date" to entryDate))
-            Unit
-        }
-
     suspend fun getTipOfDay(): String? = try {
         val result = api.getTipOfDay()
         (result as? JsonObject)?.get("tip")?.jsonPrimitive?.contentOrNull

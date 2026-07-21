@@ -45,10 +45,13 @@ Last audited: 2026-07-02
   - Quick-start suggestion chips on first open
   - Note: requires Ollama/Anthropic/OpenAI backend running
 
-- [x] **Rain Log** (Dashboard)
-  - Manual rainfall entry with slider (0–4 in) and date field
-  - API: `POST /api/gardens/{id}/log-rain`
-  - Shows "✓ Saved" confirmation for 2 seconds
+- [ ] **Rain Log** (removed from UI on both platforms, 2026-07)
+  - Was: manual rainfall entry with slider (0–4 in) and date field
+  - Superseded by the watering ML project: rainfall is now fetched
+    automatically from Tomorrow.io each night instead of logged by hand
+  - `POST /api/gardens/{id}/log-rain` still exists server-side as a
+    fallback (e.g. a garden with no coordinates), but neither the web
+    Dashboard nor this screen expose it anymore
 
 - [x] **Crop Rotation Warnings** (`BedDetail.tsx`)
   - Shows botanical family conflicts within a bed

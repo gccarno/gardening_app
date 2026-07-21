@@ -17,7 +17,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.time.LocalDate
 import javax.inject.Inject
 
 data class ChatMessage(val id: String, val role: String, val text: String)
@@ -29,11 +28,6 @@ data class DashboardUiState(
     val weather: WeatherData? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
-    // Rain log
-    val rainAmount: Float = 0.5f,
-    val rainDate: String = LocalDate.now().toString(),
-    val rainSaving: Boolean = false,
-    val rainSaved: Boolean = false,
     // Tip of the day
     val tipOfDay: String? = null,
     // Chat
@@ -122,23 +116,6 @@ class DashboardViewModel @Inject constructor(
                 isLoading = false,
                 error = (dashResult as? NetworkResult.Error)?.message,
             )
-        }
-    }
-
-    // ── Rain log ─────────────────────────────────────────────────────────────
-
-    fun setRainAmount(v: Float) { _uiState.value = _uiState.value.copy(rainAmount = v) }
-    fun setRainDate(v: String) { _uiState.value = _uiState.value.copy(rainDate = v) }
-
-    fun logRain() {
-        val gardenId = _uiState.value.selectedGardenId ?: return
-        val s = _uiState.value
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(rainSaving = true)
-            repository.logRain(gardenId, s.rainAmount, s.rainDate)
-            _uiState.value = _uiState.value.copy(rainSaving = false, rainSaved = true)
-            kotlinx.coroutines.delay(2000)
-            _uiState.value = _uiState.value.copy(rainSaved = false)
         }
     }
 

@@ -150,19 +150,6 @@ fun DashboardScreen(
                             TipOfDayCard(tip = tip)
                         }
 
-                        // Rain log (only when a garden is selected)
-                        if (uiState.selectedGardenId != null) {
-                            RainLogCard(
-                                amount = uiState.rainAmount,
-                                date = uiState.rainDate,
-                                saving = uiState.rainSaving,
-                                saved = uiState.rainSaved,
-                                onAmountChange = viewModel::setRainAmount,
-                                onDateChange = viewModel::setRainDate,
-                                onLog = viewModel::logRain,
-                            )
-                        }
-
                         // Upcoming tasks
                         uiState.dashboard?.let { dash ->
                             UpcomingTasksCard(
@@ -222,48 +209,6 @@ private fun TipOfDayCard(tip: String) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("💡 Tip of the Day", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text(tip, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun RainLogCard(
-    amount: Float,
-    date: String,
-    saving: Boolean,
-    saved: Boolean,
-    onAmountChange: (Float) -> Unit,
-    onDateChange: (String) -> Unit,
-    onLog: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("🌧 Log Rainfall", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Amount: ${"%.2f".format(amount)} in",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Slider(
-                value = amount,
-                onValueChange = onAmountChange,
-                valueRange = 0f..4f,
-                steps = 79, // 0.05 increments
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = date,
-                onValueChange = onDateChange,
-                label = { Text("Date (YYYY-MM-DD)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = onLog,
-                enabled = !saving,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (saved) "✓ Saved" else if (saving) "Saving…" else "Log Rain")
-            }
         }
     }
 }

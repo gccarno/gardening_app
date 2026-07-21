@@ -56,6 +56,7 @@ def _daily_entry(day: dict) -> dict:
                              v.get('precipitationProbabilityAvg')),
         'precip_sum': v.get('rainAccumulationSum', v.get('rainAccumulationAvg')),
         'wind_max': v.get('windSpeedMax', v.get('windSpeedAvg')),
+        'humidity': v.get('humidityAvg'),
         'uv': v.get('uvIndexMax'),
         'et0': v.get('evapotranspirationSum'),
         'condition': CODES.get(v.get('weatherCodeMax', v.get('weatherCodeMin')),

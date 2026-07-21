@@ -141,40 +141,54 @@ def api_garden_weather(garden_id: int,
 
 
 def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
-    """Fetch 14 days of historical weather for one garden. Returns number of days saved."""
+    """Fetch the last 7 days of historical weather for one garden. Returns
+    number of days saved.
+
+    Tomorrow.io's recent-history endpoint is the primary source: it gives
+    per-garden *observed* rainfall automatically, which is what feeds
+    WeatherLog instead of asking the gardener to log rain by hand. The
+    Open-Meteo archive (7-day window) is the fallback when Tomorrow.io has
+    no key configured or its call fails.
+    """
     garden = db.get(Garden, garden_id)
     if not garden or not garden.latitude or not garden.longitude:
         return 0
 
-    end_date   = date.today() - timedelta(days=1)
-    start_date = end_date - timedelta(days=13)
-    try:
-        resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
-            'latitude':           garden.latitude,
-            'longitude':          garden.longitude,
-            'start_date':         start_date.isoformat(),
-            'end_date':           end_date.isoformat(),
-            'daily':              'precipitation_sum,temperature_2m_max,temperature_2m_min',
-            'temperature_unit':   'fahrenheit',
-            'precipitation_unit': 'inch',
-            'timezone':           'auto',
-        }, timeout=10)
-        resp.raise_for_status()
-        daily = resp.json().get('daily', {})
-        rows = [(date.fromisoformat(d_str),
-                 daily['precipitation_sum'][i],
-                 daily['temperature_2m_max'][i],
-                 daily['temperature_2m_min'][i])
-                for i, d_str in enumerate(daily.get('time', []))]
-    except http.exceptions.RequestException as e:
-        logger.warning('[weather] open-meteo archive failed for garden %d, '
-                       'trying tomorrow.io: %s', garden_id, e)
-        rows = _tomorrow_io_history_rows(garden)
-        if rows is None:
+    rows = _tomorrow_io_history_rows(garden)
+    if rows is None:
+        end_date   = date.today() - timedelta(days=1)
+        start_date = end_date - timedelta(days=6)
+        try:
+            resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
+                'latitude':           garden.latitude,
+                'longitude':          garden.longitude,
+                'start_date':         start_date.isoformat(),
+                'end_date':           end_date.isoformat(),
+                'daily':              ('precipitation_sum,temperature_2m_max,temperature_2m_min,'
+                                       'relative_humidity_2m_mean,et0_fao_evapotranspiration'),
+                'temperature_unit':   'fahrenheit',
+                'precipitation_unit': 'inch',
+                'timezone':           'auto',
+            }, timeout=10)
+            resp.raise_for_status()
+            daily = resp.json().get('daily', {})
+            times = daily.get('time', [])
+            humidity = daily.get('relative_humidity_2m_mean', [None] * len(times))
+            et0      = daily.get('et0_fao_evapotranspiration', [None] * len(times))
+            rows = [(date.fromisoformat(d_str),
+                     daily['precipitation_sum'][i],
+                     daily['temperature_2m_max'][i],
+                     daily['temperature_2m_min'][i],
+                     humidity[i],
+                     et0[i])
+                    for i, d_str in enumerate(times)]
+        except http.exceptions.RequestException as e:
+            logger.warning('[weather] open-meteo archive failed for garden %d '
+                           '(tomorrow.io also unavailable): %s', garden_id, e)
             raise
 
     created = 0
-    for d, rainfall, hi, lo in rows:
+    for d, rainfall, hi, lo, hum, et0_val in rows:
         db.query(WeatherLog).filter_by(garden_id=garden_id, date=d).delete()
         db.add(WeatherLog(
             garden_id=garden_id,
@@ -182,6 +196,8 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
             rainfall_in=rainfall,
             temp_high_f=hi,
             temp_low_f=lo,
+            humidity_pct=hum,
+            et0_mm=et0_val,
             source='api',
         ))
         created += 1
@@ -192,15 +208,20 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
 def _tomorrow_io_history_rows(garden: Garden) -> Optional[list]:
     """Yesterday-only backfill from Tomorrow.io recent history (past ~24h).
 
-    Can't match the archive's 14-day window, but run nightly it keeps
-    WeatherLog fresh when the archive host rejects Render's egress IP.
+    Can't match the archive's 7-day window in one call, but run nightly it
+    keeps WeatherLog fresh — and is the primary rainfall source (see
+    _fetch_weather_for_garden). Fetched in metric units so humidity/ET0 are
+    natively %/mm; temp and rainfall are converted to the existing F/inch
+    WeatherLog columns.
+
+    Returns list of (date, rainfall_in, temp_high_f, temp_low_f, humidity_pct, et0_mm).
     """
     from ..services import tomorrow_io
     if not tomorrow_io.get_key():
         return None
     try:
         days = tomorrow_io.fetch_history_days(
-            garden.latitude, garden.longitude, units='imperial')
+            garden.latitude, garden.longitude, units='metric')
     except Exception as e:
         logger.warning('[weather] tomorrow.io history failed for garden %d: %s',
                        garden.id, e)
@@ -210,7 +231,11 @@ def _tomorrow_io_history_rows(garden: Garden) -> Optional[list]:
         day = date.fromisoformat(d['date'])
         if day >= date.today():  # today is a partial day — don't log it
             continue
-        rows.append((day, d['precip_sum'], d['temp_max'], d['temp_min']))
+        precip_mm = d['precip_sum']
+        rainfall_in = round(precip_mm / 25.4, 3) if precip_mm is not None else None
+        temp_max_f  = round(d['temp_max'] * 9 / 5 + 32, 1) if d['temp_max'] is not None else None
+        temp_min_f  = round(d['temp_min'] * 9 / 5 + 32, 1) if d['temp_min'] is not None else None
+        rows.append((day, rainfall_in, temp_max_f, temp_min_f, d.get('humidity'), d.get('et0')))
     return rows or None
 
 
@@ -273,7 +298,7 @@ def api_log_rain(garden_id: int, body: RainLogBody,
 
 
 @router.get('/gardens/{garden_id}/rain-log')
-def api_get_rain_log(garden_id: int, days: int = 14,
+def api_get_rain_log(garden_id: int, days: int = 7,
                      user: User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
     require_garden(db, user, garden_id, 'viewer')
@@ -295,7 +320,7 @@ def api_watering_status(garden_id: int,
     )
     garden = require_garden(db, user, garden_id, 'viewer')
 
-    cutoff = date.today() - timedelta(days=14)
+    cutoff = date.today() - timedelta(days=7)
     weather_logs = (db.query(WeatherLog)
                     .filter(WeatherLog.garden_id == garden_id,
                             WeatherLog.date >= cutoff)

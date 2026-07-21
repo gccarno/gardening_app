@@ -72,6 +72,17 @@ def get_season(today: date) -> tuple[str, str]:
     return 'Fall', '🍂'
 
 
+def record_watering_event(db: Session, garden_id: int | None, bed_id: int | None,
+                          amount: str | None, source: str) -> None:
+    """Append a WateringEvent row for the ML flywheel. No-op without a garden_id
+    (e.g. a canvas-only plant not tied to a garden). Caller commits."""
+    from ..db.models import WateringEvent
+    if not garden_id:
+        return
+    db.add(WateringEvent(garden_id=garden_id, bed_id=bed_id, event_date=date.today(),
+                         amount=amount, source=source))
+
+
 def rainfall_summary(db: Session, garden_id: int, days: int = 7) -> dict:
     from ..db.models import WeatherLog
     cutoff = date.today() - timedelta(days=days)
