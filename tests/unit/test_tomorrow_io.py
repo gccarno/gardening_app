@@ -44,13 +44,18 @@ REALTIME = {'data': {'time': '2026-07-17T14:00:00Z', 'values': {
 
 
 def _history_payload():
+    # History is fetched in metric units (see _tomorrow_io_history_rows) so
+    # humidity/ET0 come back unambiguously in native %/mm; temp/rainfall are
+    # converted back to F/inches in code. Values below are the Celsius/mm
+    # equivalents of 88.0F/66.0F and 0.12in, so the converted assertions in
+    # test_history_fetch_falls_back_and_skips_today stay round-number-clean.
     yesterday = date.today() - timedelta(days=1)
     return {'timelines': {'daily': [
         {'time': f'{yesterday.isoformat()}T11:00:00Z', 'values': {
-            'temperatureMax': 88.0, 'temperatureMin': 66.0,
-            'rainAccumulationSum': 0.12, 'weatherCodeMax': 1000}},
+            'temperatureMax': 31.11, 'temperatureMin': 18.89,
+            'rainAccumulationSum': 3.05, 'weatherCodeMax': 1000}},
         {'time': f'{date.today().isoformat()}T11:00:00Z', 'values': {
-            'temperatureMax': 90.0, 'temperatureMin': 70.0,
+            'temperatureMax': 32.22, 'temperatureMin': 21.11,
             'rainAccumulationSum': 0.0, 'weatherCodeMax': 1000}},
     ]}}
 
@@ -95,8 +100,8 @@ def test_fetch_forecast_days_parses(fallback_http):
     days = tomorrow_io.fetch_forecast_days(40.0, -75.2)
     assert days[0] == {
         'date': '2026-07-17', 'temp_max': 31.0, 'temp_min': 19.0,
-        'precip_prob': 65, 'precip_sum': 4.0, 'wind_max': 5.0, 'uv': 7,
-        'et0': 3.8, 'condition': 'Rain',
+        'precip_prob': 65, 'precip_sum': 4.0, 'wind_max': 5.0, 'humidity': None,
+        'uv': 7, 'et0': 3.8, 'condition': 'Rain',
     }
     assert days[1]['condition'] == 'Mainly clear'
 
