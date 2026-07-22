@@ -247,12 +247,17 @@ def run_daily_weather_fetch():
             Garden.latitude.isnot(None),
             Garden.longitude.isnot(None),
         ).all()
-        for g in gardens:
+        # Capture id/name up front: after a failed commit the session enters a
+        # pending-rollback state, and touching a live ORM object in the except
+        # block would itself raise (PendingRollbackError) and escape as a 500.
+        targets = [(g.id, g.name) for g in gardens]
+        for gid, gname in targets:
             try:
-                saved = _fetch_weather_for_garden(db, g.id)
-                logger.info('[weather] garden %d (%s): %d days saved', g.id, g.name, saved)
+                saved = _fetch_weather_for_garden(db, gid)
+                logger.info('[weather] garden %d (%s): %d days saved', gid, gname, saved)
             except Exception:
-                logger.exception('[weather] garden %d fetch failed', g.id)
+                db.rollback()
+                logger.exception('[weather] garden %d (%s) fetch failed', gid, gname)
     finally:
         db.close()
 

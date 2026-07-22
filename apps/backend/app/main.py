@@ -53,6 +53,16 @@ _PLANT_LIBRARY_MIGRATIONS = [
 ]
 
 
+# Idempotent column adds for the live Postgres (Neon) DB. create_all() only
+# creates missing tables, never alters existing ones, so columns added to an
+# existing model must be applied here. ADD COLUMN IF NOT EXISTS is Postgres-
+# native, so no introspection is needed (unlike the SQLite PRAGMA path).
+_POSTGRES_MIGRATIONS = [
+    'ALTER TABLE weather_log ADD COLUMN IF NOT EXISTS humidity_pct FLOAT',
+    'ALTER TABLE weather_log ADD COLUMN IF NOT EXISTS et0_mm FLOAT',
+]
+
+
 def _run_migrations():
     t0 = time.perf_counter()
     # Create any tables that don't yet exist (safe — skips existing tables).
@@ -77,6 +87,13 @@ def _run_migrations():
                     conn.execute(text(ddl))
                     conn.commit()
                     logger.info('[migration] Added plant_library.%s', col)
+    elif engine.dialect.name == 'postgresql':
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            for ddl in _POSTGRES_MIGRATIONS:
+                conn.execute(text(ddl))
+                conn.commit()
+                logger.info('[migration] %s', ddl)
     logger.info('[startup] migrations done — %.0fms', (time.perf_counter() - t0) * 1000)
 
 
