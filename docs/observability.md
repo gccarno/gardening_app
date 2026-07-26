@@ -131,14 +131,26 @@ Then check issues via the Sentry MCP (`search_issues`) or the dashboard.
   trace resolving to application code. Trace context showed `client_sample_rate: 0.1`,
   confirming the sampler is applied. Issue since marked resolved.
 - ✅ `196 passed` — full `tests/unit tests/data_tests` suite after the change.
+- ✅ **Deployed** as `082c759` (`dep-d9j4addsbgtc73d2u41g`, live 2026-07-26T17:38Z).
+  The build's `uv sync --frozen` resolved `sentry-sdk` 2.66.1 from the lockfile;
+  `/api/health` returns 200 in ~0.29s.
+- ✅ **Memory is fine — `enable_logs` stays.** Post-deploy `memory_usage` is
+  **152–172 MB** against a 536 MB limit, *below* the ~204 MB pre-change baseline. The
+  SDK cost nothing measurable. (The 204 MB figure was a single stale datapoint from
+  Jul 19, so treat 152–172 MB as the real baseline from here.)
+- ✅ **`SENTRY_ENVIRONMENT=production` synced from the blueprint.** Worth knowing how:
+  pushing to `main` produced *two* deploys — the commit deploy, then a second from the
+  blueprint sync that applied the plain-value env var. `sync: false` values like
+  `SENTRY_DSN` never arrive this way and must be set by hand.
 - ⬜ **Not yet verified:** the three cron monitors. Sentry creates a monitor on its
   first check-in, so they appear only after the nightly job actually runs. Confirm
   after the first `0 7 * * *` run, or trigger `scheduled-jobs.yaml` via
   `workflow_dispatch`. Verifying earlier would have meant running the jobs against the
   production Neon database off-schedule.
-- ⬜ **Not yet verified:** post-deploy memory. Compare `memory_usage` against the
-  ~204 MB baseline once Render redeploys. If the SDK pushed it near 512 MB, drop
-  `enable_logs` first.
+- ⬜ **Not yet proven by a live event.** The config is verified, but no production
+  error or transaction has reached Sentry yet — traces are sampled at 10% and the only
+  traffic so far was `/api/health`, which the sampler drops by design. The first real
+  error or cron check-in is the proof.
 
 ---
 
