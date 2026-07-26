@@ -5,13 +5,14 @@ services:
     name: garden-app
     runtime: python
     plan: free
-    # No `region:` here on purpose. The existing service was created in
-    # Oregon (the default), and region is immutable — declaring a different
-    # one makes every blueprint sync fail. Ideally the service would live in
-    # virginia (same as Neon, us-east-1; Oregon adds ~70ms per DB query), but
-    # moving requires deleting the service and re-syncing the blueprint,
-    # which changes the URL and means re-entering all secrets. If you ever
-    # recreate the service, add `region: virginia` back BEFORE the first sync.
+    # No `region:` here on purpose — region is immutable, so declaring one that
+    # doesn't match makes every blueprint sync fail.
+    # The live service (garden-app-wa0b, srv-d9be5kbtqb8s73ce1lbg) runs in
+    # **virginia**, which is already the right place: Neon is in aws-us-east-1.
+    # There is no cross-region DB latency penalty to fix.
+    # (An older Oregon service, garden-app / srv-d9a3stucjfls7397c5d0, is
+    # suspended. An earlier version of this comment described that one and was
+    # left behind when the service moved — corrected 2026-07-26.)
     buildCommand: |
       pip install uv
       uv sync --frozen --no-dev
@@ -42,3 +43,10 @@ services:
         sync: false
       - key: PYTHON_VERSION
         value: '3.11'
+      # Error tracking + nightly-job cron monitors. Paste the DSN into the
+      # Render dashboard — `sync: false` declares the variable but never
+      # carries its value. Leave it unset locally; the SDK then no-ops.
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production

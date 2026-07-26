@@ -5,6 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import sentry_sdk
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,52 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger('garden.main')
+
+# ── Sentry ───────────────────────────────────────────────────────────────────
+# The log files above live on Render's ephemeral disk and are destroyed on every
+# redeploy and free-tier spin-down. Sentry is where errors, slow-request
+# warnings and nightly-job check-ins go to survive. init() must run before
+# `app = FastAPI(...)` below, or FastAPI exceptions escape uncaptured.
+#
+# Unset SENTRY_DSN (the normal local case) makes the SDK a no-op — no branch
+# needed here. .env is already loaded by db.session, imported above.
+_TRACE_SAMPLE_RATE = 0.1
+
+
+def traces_sampler(sampling_context: dict) -> float:
+    """Decide what fraction of transactions to trace, by request path.
+
+    Render polls /api/health continuously as the service health check, and each
+    page view pulls many /static/* images through the GCS proxy. At a flat rate
+    those two would consume the entire free-tier transaction quota while telling
+    us nothing, so they are dropped outright.
+
+    Must never raise: the SDK's fallback on exception is `traces_sample_rate`,
+    which is unset on purpose (it is mutually exclusive with this hook), so a
+    raise would leave no sampling decision at all.
+    """
+    path = (sampling_context.get('asgi_scope') or {}).get('path', '')
+    if path == '/api/health' or path.startswith('/static/'):
+        return 0.0
+    return _TRACE_SAMPLE_RATE
+
+
+sentry_sdk.init(
+    dsn=os.environ.get('SENTRY_DSN'),
+    environment=os.environ.get('SENTRY_ENVIRONMENT', 'development'),
+    # Render injects the deployed commit, so a stack trace maps to a commit.
+    release=os.environ.get('RENDER_GIT_COMMIT'),
+    # This app stores real user emails and auth identity. send_default_pii=True
+    # would ship client IPs, headers and the logged-in user to a third party;
+    # not a trade worth making here. Cost: no client IP or query strings.
+    send_default_pii=False,
+    traces_sampler=traces_sampler,
+    # Bridges the stdlib logging configured above — including the SLOW request
+    # warnings further down — into Sentry.
+    enable_logs=True,
+    # No profiling: this runs on a 512 MB free instance already sitting at
+    # ~204 MB. Revisit when there is traffic worth profiling.
+)
 
 _GARDEN_MIGRATIONS = [
     ('first_frost_date',           'ALTER TABLE garden ADD COLUMN first_frost_date DATE'),

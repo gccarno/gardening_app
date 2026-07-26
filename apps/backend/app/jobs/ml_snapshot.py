@@ -17,6 +17,7 @@ itself is never pruned — it's the accumulating training/monitoring store.
 import logging
 from datetime import date, timedelta
 
+from sentry_sdk.crons import monitor
 from sqlalchemy.orm import Session
 
 from ..db.models import Garden, MlWateringSnapshot, WateringEvent, WeatherLog
@@ -166,6 +167,20 @@ def _prune_operational_tables(db: Session) -> None:
     db.query(WateringEvent).filter(WateringEvent.event_date < cutoff).delete(synchronize_session=False)
 
 
+@monitor(
+    monitor_slug='nightly-ml-snapshot',
+    # Schedule mirrors .github/workflows/scheduled-jobs.yaml. This job feeds the
+    # watering-model flywheel, so a silent stop means training data quietly
+    # stops accruing — exactly the failure MISSED detection exists to catch.
+    monitor_config={
+        'schedule': {'type': 'crontab', 'value': '0 7 * * *'},
+        'timezone': 'UTC',
+        'checkin_margin': 30,
+        'max_runtime': 10,        # DB-only work, no external calls
+        'failure_issue_threshold': 1,
+        'recovery_threshold': 1,
+    },
+)
 def run_ml_snapshot() -> dict:
     """APScheduler/admin job: backfill labels, snapshot today, prune. Order matters."""
     db = SessionLocal()

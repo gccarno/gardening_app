@@ -24,6 +24,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sentry_sdk.crons import monitor
+
 log = logging.getLogger(__name__)
 
 _BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME', '')
@@ -163,6 +165,21 @@ def _apply_retention(bucket, dry_run: bool) -> None:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+@monitor(
+    monitor_slug='nightly-gcs-backup',
+    # Schedule mirrors .github/workflows/scheduled-jobs.yaml.
+    # IMPORTANT: on Postgres this function early-exits (see below), so a green
+    # check-in means "the nightly job ran", NOT "a backup was written". Neon's
+    # point-in-time restore is what actually protects production data.
+    monitor_config={
+        'schedule': {'type': 'crontab', 'value': '0 7 * * *'},
+        'timezone': 'UTC',
+        'checkin_margin': 30,
+        'max_runtime': 10,
+        'failure_issue_threshold': 1,
+        'recovery_threshold': 1,
+    },
+)
 def run_backup(dry_run: bool = False) -> None:
     """
     Orchestrate a full backup cycle.  Called by APScheduler (3 AM daily) and
