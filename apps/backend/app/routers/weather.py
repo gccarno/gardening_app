@@ -9,6 +9,7 @@ from typing import Optional
 import requests as http
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sentry_sdk.crons import monitor
 from sqlalchemy.orm import Session
 
 from ..db.models import Garden, User, WeatherLog
@@ -239,6 +240,25 @@ def _tomorrow_io_history_rows(garden: Garden) -> Optional[list]:
     return rows or None
 
 
+@monitor(
+    monitor_slug='nightly-weather-fetch',
+    # Schedule mirrors .github/workflows/scheduled-jobs.yaml, which is what
+    # actually triggers this in production (ENABLE_SCHEDULER=0 there, so the
+    # APScheduler entry in main.py never fires on the free tier).
+    # monitor_config is required — without it Sentry never creates the monitor,
+    # and a monitor that doesn't exist can't report MISSED.
+    monitor_config={
+        'schedule': {'type': 'crontab', 'value': '0 7 * * *'},
+        'timezone': 'UTC',
+        # Generous: the first nightly request also has to wake a spun-down free
+        # instance and a scale-to-zero Neon compute before any work starts.
+        'checkin_margin': 30,
+        # Longest of the three — one external forecast call per garden.
+        'max_runtime': 15,
+        'failure_issue_threshold': 1,
+        'recovery_threshold': 1,
+    },
+)
 def run_daily_weather_fetch():
     """APScheduler job: fetch weather for every garden that has coordinates."""
     db = SessionLocal()
