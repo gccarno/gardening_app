@@ -40,16 +40,30 @@ def _tools_called(trace):
 def tool_selection(trace, expectations):
     """Did the agent call the tool(s) the question requires?
 
-    Scored as: every expected tool was called (extra calls are tolerated — the
-    agent gathering more context is not a failure). When no tools are expected,
-    calling none is the pass condition.
+    Three independent expectations, because the first version of this scorer
+    conflated them and scored the agent down for reasonable behaviour:
+
+    * `expected_tools`  — ALL of these must be called.
+    * `expected_any`    — at LEAST ONE of these must be called (for questions a
+      couple of different tools could legitimately answer).
+    * `forbid_tools`    — none of these may be called.
+
+    Extra tool calls are otherwise fine: an agent gathering more context before
+    answering is not making a mistake. Only `forbid_tools` makes a call wrong.
     """
-    expected = set((expectations or {}).get('expected_tools') or [])
+    exp = expectations or {}
+    required = set(exp.get('expected_tools') or [])
+    any_of = set(exp.get('expected_any') or [])
+    forbidden = set(exp.get('forbid_tools') or [])
     called = set(_tools_called(trace))
 
-    if not expected:
-        return 'yes' if not called else 'no'
-    return 'yes' if expected <= called else 'no'
+    if forbidden & called:
+        return 'no'
+    if required and not required <= called:
+        return 'no'
+    if any_of and not (any_of & called):
+        return 'no'
+    return 'yes'
 
 
 @scorer

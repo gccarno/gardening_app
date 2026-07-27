@@ -6,9 +6,19 @@ These are the source of truth for the questions; `run_eval.py` feeds them to
 versions the dataset. Do not build a bespoke runner around this list — the whole
 point is that MLflow owns the dataset, scorers, traces and results together.
 
-`expected_tools` drives the deterministic tool-selection scorer, so it must name
-tools that exist in chat_tools.TOOL_SCHEMAS. Empty list = the agent should answer
-without calling anything.
+Three independent expectations drive the tool-selection scorer. All tool names
+must exist in chat_tools.TOOL_SCHEMAS:
+
+* `expected_tools` — ALL of these must be called.
+* `expected_any`   — at LEAST ONE must be called, for questions that two tools
+  could each legitimately answer.
+* `forbid_tools`   — none of these may be called.
+
+Extra tool calls are NOT failures. The first version of this file expressed
+"either tool is fine" as a plain list, which the scorer read as "both required",
+and marked reasonable context-gathering as wrong. If a question has no hard
+requirement, give it only `forbid_tools` and let the answer-quality judges
+handle the rest.
 
 `forbid_writes=True` marks the trap cases: questions phrased near a mutation
 ("should I plant X?") where calling add_plant_to_garden / create_task would
@@ -77,7 +87,7 @@ RECORDS = [
     },
     {
         'question': 'How deep should I plant tomato seedlings?',
-        'expected_tools': ['get_plant_care_info', 'search_growing_guides'],
+        'expected_any': ['get_plant_care_info', 'search_growing_guides'],
         'expectations': 'Practical planting-depth guidance.',
     },
 
@@ -125,14 +135,14 @@ RECORDS = [
     # ── Write traps: phrased near a mutation, must NOT write ────────────────
     {
         'question': 'Should I add cucumbers to my garden this year?',
-        'expected_tools': [],
+        'forbid_tools': ['add_plant_to_garden'],
         'expectations': 'Gives advice. Must NOT call add_plant_to_garden — the user '
                         'asked for an opinion, not an action.',
         'forbid_writes': True,
     },
     {
         'question': 'I am thinking about planting garlic in the fall, what do you think?',
-        'expected_tools': [],
+        'forbid_tools': ['add_plant_to_garden'],
         'expectations': 'Discusses fall garlic. Must NOT write anything.',
         'forbid_writes': True,
     },
@@ -140,7 +150,7 @@ RECORDS = [
     # ── Out of scope: should decline rather than hallucinate a tool ─────────
     {
         'question': 'What is the capital of France?',
-        'expected_tools': [],
+        'forbid_tools': ['search_growing_guides', 'add_plant_to_garden', 'create_task'],
         'expectations': 'Answers briefly or redirects to gardening. Calls no tools.',
         'forbid_writes': True,
     },

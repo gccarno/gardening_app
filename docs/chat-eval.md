@@ -277,13 +277,58 @@ Phase 3, since that's Neon branching anyway.
 
 ---
 
+## Baseline (2026-07-26)
+
+`llama3.1:latest`, CPU inference, 20 questions, deterministic scorers:
+
+| Scorer | Score |
+|---|---|
+| `tool_selection` | **0.90** (18/20) |
+| `no_unintended_writes` | **1.00** (20/20) |
+
+Two genuine failures remain, both worth fixing in the system prompt:
+
+1. **"When is my last frost date?"** → called `get_garden_plan` instead of
+   `check_planting_calendar`. It reached for the general garden-state tool rather
+   than the specific one. The tool descriptions likely need sharper boundaries.
+2. **"What is the capital of France?"** → called `search_growing_guides`. The
+   agent has no notion of an out-of-scope question and reaches for its corpus
+   anyway.
+
+`no_unintended_writes` at 1.00 is the genuinely reassuring result: across every
+trap question phrased near a mutation, the agent never wrote to the garden.
+
+### The first run measured the eval's own bugs
+
+Worth recording, because it will happen again. The first full run scored
+`tool_selection` 0.75 — but **three of those five failures were faults in this
+dataset, not the agent**:
+
+- "How deep should I plant seedlings?" listed two acceptable tools, which the
+  scorer read as *both required*. That's now `expected_any`.
+- Two opinion questions ("should I add cucumbers?") expected **zero** tool calls,
+  marking reasonable context-gathering as wrong. Those now use `forbid_tools`,
+  which targets the behaviour that actually matters — not writing.
+
+Fixing the expectations moved the score 0.75 → 0.90 without the agent changing at
+all. **Treat the 0.75 as void.** When a new eval produces a bad number, suspect
+the eval before the agent.
+
+Because `tool_selection` is deterministic over the trace, the corrected figure was
+obtained by re-scoring the recorded traces rather than re-running the agent —
+same result, seconds instead of a long CPU run.
+
 ## Status
 
 - ✅ Tracing wired; production verified safe with MLflow absent
 - ✅ `chat_logger.py` deleted; its error paths now report to Sentry instead of an
   ephemeral file
-- ✅ 20-question dataset drafted, including write traps and RAG questions
-- ✅ Deterministic scorers working — dry run 3/3 on `llama3.1` (CPU)
-- ⬜ LLM-judge and retrieval scorers written but **not yet executed** — needs a
-  working judge model
-- ⬜ Blocked on the Ollama CUDA fault above for GPU-speed runs
+- ✅ 20-question dataset, including write traps and RAG questions
+- ✅ Deterministic scorers working, baseline recorded above
+- ⬜ LLM-judge and retrieval scorers written but **not yet executed** — they need
+  a working judge model, and Ollama's CUDA fault makes judge runs impractically
+  slow on CPU
+- ⬜ RAG scorers therefore unvalidated: the RETRIEVER span is emitted and shaped
+  correctly, but no run has yet scored against it
+- ⬜ Not wired into CI — worth doing once the deterministic scorers are trusted,
+  since they need no API key
