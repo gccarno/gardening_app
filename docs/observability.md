@@ -154,7 +154,19 @@ Then check issues via the Sentry MCP (`search_issues`) or the dashboard.
 
 ---
 
-## Phase 2 — MLflow tracing + eval for the chat agent (planned)
+## Phase 2 — MLflow tracing + eval for the chat agent ✅ (built)
+
+**Full write-up: [`chat-eval.md`](chat-eval.md)** — including the RAG evaluation
+setup, the self-hosting-vs-API cost analysis, and why MLflow's backend store can
+be a Neon branch.
+
+Summary of what changed here: `chat_logger.py` is **deleted**. Its error paths now
+call `sentry_sdk.capture_exception` in `routers/chat.py`, so chat failures that
+were previously swallowed into an ephemeral file now surface in Phase 1's Sentry
+project. MLflow stays out of production via the `evaluation` extra.
+
+<details>
+<summary>Original Phase 2 plan (superseded)</summary>
 
 Local and CI only; nothing ships to Render (512 MB won't carry it).
 
@@ -172,6 +184,8 @@ sequences, and scorers for tool-selection correctness, groundedness, latency and
 captures `gen_ai.*` spans in production. That's *production telemetry* — what real
 users experienced. MLflow is an *offline eval harness* — a fixed dataset you re-run to
 compare versions. Different jobs; both are worth having.
+
+</details>
 
 ## Phase 3 — Neon branching for safe migrations (planned)
 
