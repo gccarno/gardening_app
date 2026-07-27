@@ -187,12 +187,17 @@ compare versions. Different jobs; both are worth having.
 
 </details>
 
-## Phase 3 — Neon branching for safe migrations (planned)
+## Phase 3 — Neon branching for safe migrations ✅ (built)
 
-Alembic has zero revisions. `main.py` carries a hand-maintained `_POSTGRES_MIGRATIONS`
-list of raw `ALTER TABLE` statements executed against production at every boot — which
-is how the 2026-07-21 outage happened. Neon branching gives a throwaway copy of real
-data to test migrations against.
+**Full write-up: [`migrations.md`](migrations.md).**
+
+The hand-maintained `_POSTGRES_MIGRATIONS` list of raw `ALTER TABLE` statements is
+gone. Postgres schema changes now go through Alembic (`alembic upgrade head` at
+startup), are tested on a disposable Neon branch, and are guarded by a CI job that
+builds the schema from revisions alone and asserts it matches `models.py`.
+
+That CI check is the piece that would have caught the 2026-07-21 outage — verified by
+reproducing the bug and watching `alembic check` fail on it.
 
 ## Phase 4 — Query performance visibility (planned)
 

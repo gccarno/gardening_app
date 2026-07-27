@@ -18,6 +18,40 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/unit tests/data_tests -q
 
+  migrations:
+    # Guards the failure mode behind the 2026-07-21 outage: a column added to
+    # models.py but never to the database. Builds the schema from the Alembic
+    # revisions alone against a throwaway Postgres, then asserts the result
+    # matches models.py. No Neon credential, never touches production.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: garden_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/garden_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Build schema from migrations only
+        run: uv run alembic upgrade head
+      - name: Assert schema matches models.py
+        # Fails with "New upgrade operations detected: [('add_column', ...)]"
+        # when a model change has no matching revision.
+        run: uv run alembic check
+      - name: Assert migrations are reversible
+        run: uv run alembic downgrade base
+
   web:
     runs-on: ubuntu-latest
     steps:

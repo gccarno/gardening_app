@@ -20,6 +20,13 @@ from .services.auth import get_current_user
 from .jobs.gcs_backup import run_backup as run_gcs_backup
 from .jobs.ml_snapshot import run_ml_snapshot
 
+# ── Paths ────────────────────────────────────────────────────────────────────
+# parents[3] is the repo root (gardening_app/); parents[4] is its parent, which
+# is where the log directory has always been written — left as-is.
+_REPO_ROOT = Path(__file__).parents[3]
+_ALEMBIC_INI = _REPO_ROOT / 'alembic.ini'
+_ALEMBIC_DIR = _REPO_ROOT / 'apps' / 'backend' / 'alembic'
+
 # ── Logging setup ────────────────────────────────────────────────────────────
 _LOG_DIR = Path(__file__).parents[4] / 'logs'
 _LOG_DIR.mkdir(exist_ok=True)
@@ -100,22 +107,45 @@ _PLANT_LIBRARY_MIGRATIONS = [
 ]
 
 
-# Idempotent column adds for the live Postgres (Neon) DB. create_all() only
-# creates missing tables, never alters existing ones, so columns added to an
-# existing model must be applied here. ADD COLUMN IF NOT EXISTS is Postgres-
-# native, so no introspection is needed (unlike the SQLite PRAGMA path).
-_POSTGRES_MIGRATIONS = [
-    'ALTER TABLE weather_log ADD COLUMN IF NOT EXISTS humidity_pct FLOAT',
-    'ALTER TABLE weather_log ADD COLUMN IF NOT EXISTS et0_mm FLOAT',
-]
+def _run_alembic_upgrade():
+    """Bring the Postgres schema up to date from apps/backend/alembic/versions.
+
+    Replaces the hand-maintained list of raw ALTER TABLE statements that used to
+    live here. That list was the 2026-07-21 outage: humidity_pct/et0_mm were
+    added to the model, never to the live table, and the mismatch only surfaced
+    as a 500 from the nightly job. `alembic check` catches that class of bug in
+    CI instead — see docs/migrations.md.
+
+    create_all() is deliberately NOT called on Postgres: the initial revision
+    creates every table, so running both would race (create_all makes the table,
+    then the migration's CREATE TABLE fails).
+
+    A pre-Alembic database must be stamped once before this runs, or the initial
+    revision will try to re-create tables that already exist:
+        DATABASE_URL=... uv run alembic stamp head
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.set_main_option('script_location', str(_ALEMBIC_DIR))
+    # env.py reads DATABASE_URL itself, but be explicit so the running app and
+    # the CLI can never disagree about which database is being migrated.
+    cfg.set_main_option('sqlalchemy.url', str(engine.url.render_as_string(hide_password=False)))
+    command.upgrade(cfg, 'head')
 
 
 def _run_migrations():
     t0 = time.perf_counter()
-    # Create any tables that don't yet exist (safe — skips existing tables).
-    # Works on both SQLite and Postgres; a fresh Postgres DB gets the full
-    # current schema this way. Future schema changes go through Alembic
-    # (apps/backend/alembic/) — do NOT add to the PRAGMA lists below.
+    if engine.dialect.name == 'postgresql':
+        _run_alembic_upgrade()
+        logger.info('[startup] migrations done (alembic) — %.0fms',
+                    (time.perf_counter() - t0) * 1000)
+        return
+
+    # SQLite (local dev and the frozen pre-migration backup) keeps the old path.
+    # The Alembic revisions are Postgres-shaped and SQLite cannot ALTER columns
+    # the same way, so create_all plus the legacy PRAGMA backfills stay here.
     from .db.models import Base
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == 'sqlite':
@@ -134,14 +164,8 @@ def _run_migrations():
                     conn.execute(text(ddl))
                     conn.commit()
                     logger.info('[migration] Added plant_library.%s', col)
-    elif engine.dialect.name == 'postgresql':
-        with engine.connect() as conn:
-            from sqlalchemy import text
-            for ddl in _POSTGRES_MIGRATIONS:
-                conn.execute(text(ddl))
-                conn.commit()
-                logger.info('[migration] %s', ddl)
-    logger.info('[startup] migrations done — %.0fms', (time.perf_counter() - t0) * 1000)
+    logger.info('[startup] migrations done (sqlite) — %.0fms',
+                (time.perf_counter() - t0) * 1000)
 
 
 @asynccontextmanager
