@@ -9,7 +9,13 @@ import json
 import os
 from datetime import date, timedelta, datetime
 
+from .tracing import SpanType, set_outputs, span, trace
+
 CHAT_MODEL = os.environ.get('CHAT_MODEL', 'claude-sonnet-4-6')
+
+# Tools that mutate the database. The offline eval harness scores the agent on
+# never calling these unprompted, and must point at a throwaway DB when it does.
+WRITE_TOOLS = frozenset({'add_plant_to_garden', 'create_task'})
 
 # Frost dates (duplicated from main.py to avoid circular imports)
 _FROST_DATES = {
@@ -796,8 +802,22 @@ def _tool_search_growing_guides(input_data: dict, garden) -> dict:
         }
         region_filter = _STATE_REGION.get(garden.state.upper()[:2])
 
-    results = search_guides(query, plant_name=plant_name or None, n_results=3,
-                            region_filter=region_filter)
+    # Explicit RETRIEVER span: MLflow's retrieval scorers (groundedness,
+    # relevance, sufficiency) only fire on spans of this type, and expect
+    # documents shaped {page_content, metadata}. search_guides returns
+    # {text, source, plant, region, page, score}, so translate here rather than
+    # changing the tool's own return shape, which the LLM prompt depends on.
+    with span('search_growing_guides_retriever',
+              span_type=SpanType.RETRIEVER,
+              inputs={'query': query, 'plant_name': plant_name,
+                      'region_filter': region_filter}) as retriever_span:
+        results = search_guides(query, plant_name=plant_name or None, n_results=3,
+                                region_filter=region_filter)
+        set_outputs(retriever_span, [
+            {'page_content': r.get('text', ''),
+             'metadata': {k: v for k, v in r.items() if k != 'text'}}
+            for r in results
+        ])
 
     if not results:
         return {
@@ -824,8 +844,13 @@ def _tool_search_growing_guides(input_data: dict, garden) -> dict:
 
 # ── Tool dispatcher ───────────────────────────────────────────────────────────
 
+@trace(name='execute_tool', span_type=SpanType.TOOL)
 def execute_tool(name: str, input_data: dict, garden, db) -> dict:
-    """Route a tool call to its implementation. Returns a result dict."""
+    """Route a tool call to its implementation. Returns a result dict.
+
+    Single chokepoint for all 12 tools, so one span covers every tool call —
+    the trace records which tool ran, with what arguments, and what came back.
+    """
     handlers = {
         'get_garden_plan':             lambda: _tool_get_garden_plan(input_data, garden),
         'check_companion_planting':    lambda: _tool_check_companion_planting(input_data, garden, db),
@@ -851,41 +876,59 @@ def execute_tool(name: str, input_data: dict, garden, db) -> dict:
 
 # ── Agentic loop ──────────────────────────────────────────────────────────────
 
-def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 5, session_logger=None) -> str:
+@trace(name='ollama_agentic_loop', span_type=SpanType.AGENT)
+def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 5) -> str:
     """
     Agentic loop for Ollama (llama3.1+, gemma4+) using the OpenAI-compatible tool-calling API.
     Passes the full conversation history and supports multi-round tool use.
+
+    Ollama is called over plain HTTP rather than through an SDK, so no MLflow
+    autolog integration applies — each round gets an explicit LLM span instead.
     """
     import requests
-    from apps.ml_service.app.chat_logger import log_event
     base  = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
     model = os.environ.get('LLM_MODEL') or 'llama3.1'
+
+    # Escape hatch for broken local CUDA. Ollama 0.32 on an RTX 3060 dies with
+    # "CUDA error: device kernel image is invalid" on every request; num_gpu=0
+    # forces CPU inference, which is slow but works. Unset = leave Ollama's own
+    # GPU decision alone.
+    _options = {}
+    if os.environ.get('OLLAMA_NUM_GPU'):
+        _options['num_gpu'] = int(os.environ['OLLAMA_NUM_GPU'])
 
     working = [{'role': 'system', 'content': system}] + list(messages)
 
     for round_num in range(1, max_rounds + 1):
-        if session_logger:
-            log_event(session_logger, 'llm_request', round=round_num,
-                      provider='ollama', message_count=len(working))
-        resp = requests.post(
-            f'{base}/api/chat',
-            json={
-                'model':    model,
-                'messages': working,
-                'tools':    _OLLAMA_TOOL_SCHEMAS,
-                'stream':   False,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        msg = resp.json()['message']   # {'role': 'assistant', 'content': ..., 'tool_calls': [...]}
-        working.append(msg)
+        with span(f'ollama_round_{round_num}',
+                  span_type=SpanType.LLM,
+                  inputs={'model': model, 'message_count': len(working)}) as llm_span:
+            resp = requests.post(
+                f'{base}/api/chat',
+                json={
+                    'model':    model,
+                    'messages': working,
+                    'tools':    _OLLAMA_TOOL_SCHEMAS,
+                    'stream':   False,
+                    **({'options': _options} if _options else {}),
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            msg = body['message']   # {'role': 'assistant', 'content': ..., 'tool_calls': [...]}
+            tool_calls = msg.get('tool_calls') or []
+            set_outputs(llm_span, {
+                'content': msg.get('content'),
+                'tool_calls': [tc['function']['name'] for tc in tool_calls],
+                'stop_reason': 'end_turn' if not tool_calls else 'tool_use',
+                # Ollama reports token counts on the response; recording them is
+                # what makes cost/latency comparable across prompt revisions.
+                'prompt_eval_count': body.get('prompt_eval_count'),
+                'eval_count': body.get('eval_count'),
+            })
 
-        tool_calls = msg.get('tool_calls') or []
-        if session_logger:
-            log_event(session_logger, 'llm_response', round=round_num,
-                      provider='ollama',
-                      stop_reason='end_turn' if not tool_calls else 'tool_use')
+        working.append(msg)
         if not tool_calls:
             return (msg.get('content') or '').strip() or 'Done.'
 
@@ -895,26 +938,18 @@ def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 
             if isinstance(args, str):
                 args = json.loads(args)
             result = execute_tool(fn['name'], args, garden, db)
-            if session_logger:
-                log_event(session_logger, 'tool_call', round=round_num,
-                          tool=fn['name'], input=args)
-                log_event(session_logger, 'tool_result', round=round_num,
-                          tool=fn['name'],
-                          ok='error' not in result,
-                          result_keys=list(result.keys()) if isinstance(result, dict) else None,
-                          error=result.get('error') if isinstance(result, dict) else None)
             working.append({'role': 'tool', 'content': json.dumps(result)})
 
     return 'I ran into a loop. Please try rephrasing your question.'
 
 
+@trace(name='run_agentic_loop', span_type=SpanType.CHAIN)
 def run_agentic_loop(
     system: str,
     messages: list,
     garden,
     db,
     max_tool_rounds: int = 5,
-    session_logger=None,
 ) -> str:
     """
     Run multi-turn tool loop until Claude returns a pure text response.
@@ -923,11 +958,9 @@ def run_agentic_loop(
     Falls back to a plain complete() call for non-Anthropic providers.
     """
     from apps.ml_service.app.llm_provider import PROVIDER, complete as _llm_complete
-    from apps.ml_service.app.chat_logger import log_event
 
     if PROVIDER == 'ollama':
-        return _run_ollama_loop(system, messages, garden, db, max_tool_rounds,
-                                session_logger=session_logger)
+        return _run_ollama_loop(system, messages, garden, db, max_tool_rounds)
 
     if PROVIDER != 'anthropic':
         # Other non-Anthropic providers: pass the last user message only (no tool support)
@@ -939,13 +972,10 @@ def run_agentic_loop(
                 block.get('text', '') for block in last_user
                 if isinstance(block, dict) and block.get('type') == 'text'
             )
-        if session_logger:
-            log_event(session_logger, 'llm_request', round=1, provider=PROVIDER,
-                      message_count=len(messages))
-        result = _llm_complete(system, last_user)
-        if session_logger:
-            log_event(session_logger, 'llm_response', round=1, provider=PROVIDER,
-                      stop_reason='end_turn')
+        with span('llm_complete', span_type=SpanType.LLM,
+                  inputs={'provider': PROVIDER}) as s:
+            result = _llm_complete(system, last_user)
+            set_outputs(s, {'content': result, 'stop_reason': 'end_turn'})
         return result
 
     import anthropic
@@ -960,11 +990,9 @@ def run_agentic_loop(
     client = anthropic.Anthropic(api_key=key)
     working_messages = list(messages)
 
+    # No explicit LLM spans on this path: the Anthropic SDK is covered by
+    # mlflow.anthropic.autolog(), which the eval harness enables.
     for round_num in range(1, max_tool_rounds + 1):
-        if session_logger:
-            log_event(session_logger, 'llm_request', round=round_num,
-                      message_count=len(working_messages))
-
         response = client.messages.create(
             model=CHAT_MODEL,
             max_tokens=1024,
@@ -975,11 +1003,6 @@ def run_agentic_loop(
 
         # Append assistant turn to working history
         working_messages.append({'role': 'assistant', 'content': response.content})
-
-        if session_logger:
-            log_event(session_logger, 'llm_response', round=round_num,
-                      stop_reason=response.stop_reason,
-                      content_blocks=len(response.content))
 
         if response.stop_reason != 'tool_use':
             text_parts = [
@@ -994,14 +1017,6 @@ def run_agentic_loop(
             if block.type != 'tool_use':
                 continue
             result = execute_tool(block.name, block.input, garden, db)
-            if session_logger:
-                log_event(session_logger, 'tool_call', round=round_num,
-                          tool=block.name, input=block.input)
-                log_event(session_logger, 'tool_result', round=round_num,
-                          tool=block.name,
-                          ok='error' not in result,
-                          result_keys=list(result.keys()) if isinstance(result, dict) else None,
-                          error=result.get('error') if isinstance(result, dict) else None)
             tool_results.append({
                 'type':        'tool_result',
                 'tool_use_id': block.id,

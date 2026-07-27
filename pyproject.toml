@@ -31,6 +31,10 @@ dependencies = [
 dev = ["pytest", "ruff"]
 eda = ["matplotlib", "seaborn", "jupyter"]
 monitoring = ["streamlit"]
+# Offline chat-agent tracing + evaluation. MUST stay out of [project.dependencies]:
+# Render builds with `uv sync --frozen --no-dev`, and MLflow has no business on a
+# 512 MB free instance. Install locally with: uv pip install "mlflow>=3.8"
+evaluation = ["mlflow>=3.8"]
 # Image generation via HuggingFace diffusers (local GPU).
 # NOTE: PyTorch with CUDA must be installed separately — uv cannot pull the CUDA wheel:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121

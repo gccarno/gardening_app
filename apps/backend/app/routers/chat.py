@@ -5,12 +5,13 @@ import uuid
 from datetime import date
 from typing import Optional
 
+import sentry_sdk
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..db.models import Garden, Plant, PlantLibrary
 from ..db.session import get_db
-from ..services.helpers import FROST_DATES, REPO_ROOT, get_season
+from ..services.helpers import FROST_DATES, get_season
 
 router = APIRouter(prefix='/api', tags=['chat'])
 
@@ -19,15 +20,11 @@ router = APIRouter(prefix='/api', tags=['chat'])
 def api_chat(body: dict, db: Session = Depends(get_db)):
     from apps.ml_service.app.recommender import recommend
     from apps.ml_service.app.chat_tools import run_agentic_loop
-    from apps.ml_service.app.chat_logger import (
-        create_session_logger, log_event, close_session_logger,
-    )
 
     user_msg             = (body.get('message') or '').strip()
     garden_id            = body.get('garden_id')
     conversation_history = body.get('conversation_history') or []
     session_id           = body.get('session_id') or str(uuid.uuid4())
-    logs_root            = str(REPO_ROOT / 'logs')
 
     if not user_msg:
         return {'reply': 'Please type a message first.',
@@ -99,26 +96,19 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
 
     messages = list(conversation_history) + [{'role': 'user', 'content': user_msg}]
 
-    _session_logger = create_session_logger(session_id, logs_root)
+    # Both handlers below deliberately swallow the exception to return a friendly
+    # reply, so nothing would reach Sentry on its own — capture explicitly.
     try:
-        log_event(_session_logger, 'session_start',
-                  session_id=session_id, garden_id=garden_id,
-                  garden_name=garden_name, user_message=user_msg,
-                  history_length=len(conversation_history))
-        reply = run_agentic_loop(system_prompt, messages, garden, db,
-                                 session_logger=_session_logger)
-        log_event(_session_logger, 'session_end',
-                  session_id=session_id, final_reply_length=len(reply))
+        reply = run_agentic_loop(system_prompt, messages, garden, db)
         return {'reply': reply, 'conversation_history': messages, 'session_id': session_id}
     except RuntimeError as exc:
-        log_event(_session_logger, 'error', error=str(exc))
+        # Configuration problems (missing API key) — expected, user-facing.
+        sentry_sdk.capture_exception(exc)
         return {'reply': str(exc), 'conversation_history': messages, 'session_id': session_id}
     except Exception as exc:
-        log_event(_session_logger, 'error', error=str(exc))
+        sentry_sdk.capture_exception(exc)
         return {'reply': f'Sorry, the assistant ran into an error: {exc}',
                 'conversation_history': messages, 'session_id': session_id}
-    finally:
-        close_session_logger(_session_logger)
 
 
 @router.post('/chat/restart-model')
