@@ -1,11 +1,14 @@
-"""Sentry trace sampling: keep high-volume noise out of the free-tier quota.
+"""Sentry trace sampling and event filtering: keep noise out of the free-tier quota.
 
 The sampler must never raise — the SDK falls back to `traces_sample_rate` when
 it does, and that option is deliberately unset (traces_sampler and
 traces_sample_rate are mutually exclusive), so a raise means no sampling
 decision at all.
 """
-from apps.backend.app.main import traces_sampler
+from fastapi import HTTPException
+
+from apps.backend.app.main import before_send, traces_sampler
+from apps.backend.app.services.errors import NotConfiguredError
 
 
 def _ctx(path):
@@ -44,3 +47,36 @@ def test_missing_asgi_scope_does_not_raise():
 
 def test_scope_without_path_does_not_raise():
     assert traces_sampler({'asgi_scope': {}}) == 0.1
+
+
+# ── before_send ───────────────────────────────────────────────────────────────
+# Production deliberately runs without ANTHROPIC_API_KEY / PERENUAL_API_KEY. The
+# endpoints answer 5xx, which the Starlette integration reports by default, so
+# every probe opened an issue for a correctly-configured system (three of them
+# on 2026-07-27, from the E2E suite).
+
+def _hint(exc):
+    return {'exc_info': (type(exc), exc, None)}
+
+
+def test_not_configured_is_dropped():
+    exc = NotConfiguredError(status_code=503, detail='no ANTHROPIC_API_KEY')
+    assert before_send({'event_id': 'x'}, _hint(exc)) is None
+
+
+def test_real_http_error_is_kept():
+    # A genuine upstream failure must still reach Sentry.
+    event = {'event_id': 'x'}
+    assert before_send(event, _hint(HTTPException(status_code=502, detail='boom'))) is event
+
+
+def test_unrelated_exception_is_kept():
+    event = {'event_id': 'x'}
+    assert before_send(event, _hint(ValueError('boom'))) is event
+
+
+def test_missing_hint_does_not_raise():
+    # Log-derived events carry no exc_info; losing them would be a regression.
+    event = {'event_id': 'x'}
+    assert before_send(event, {}) is event
+    assert before_send(event, None) is event

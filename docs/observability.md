@@ -81,8 +81,16 @@ monitor that doesn't exist cannot report `MISSED`.
 | `nightly-gcs-backup` | `run_backup` | `app/jobs/gcs_backup.py` | 10 min |
 
 All three: `0 7 * * *` UTC (mirroring `.github/workflows/scheduled-jobs.yaml`),
-`checkin_margin: 30`. The margin is generous because the first nightly request also
-has to wake a spun-down free instance and a scale-to-zero Neon compute.
+`checkin_margin: 300` (5 hours).
+
+**Why the margin is so wide.** The cron expression is when GitHub is *asked* to run the
+workflow, not when it does. Scheduled workflows queue behind on-demand jobs, and this one
+has never started at 07:00 — across 12 consecutive days the real start ranged from 08:53
+to 10:49 UTC (worst drift 3h49m). The original `checkin_margin: 30` therefore opened
+`MISSED` issues for all three monitors on 2026-07-27 at 07:30 on jobs that had run
+perfectly, which then auto-resolved when the late check-in arrived. Do not tighten this
+back down without also moving the workflow off a top-of-hour schedule; 5 hours still
+opens an issue many hours before the next night's run.
 
 **The point of this:** Sentry generates `MISSED` server-side. A job that stops running
 *entirely* now opens an issue — the failure mode you cannot catch by watching for

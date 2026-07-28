@@ -54,6 +54,16 @@ export function testName(label: string): string {
   return `${E2E_PREFIX} ${readRunState().runId} ${label}`;
 }
 
+// Render's free instance restarts under memory pressure mid-run (on 2026-07-27
+// it did so while ChromaDB lazily downloaded a 79 MB ONNX model), and every
+// request in that window returns 502. A single unlucky call used to abort
+// teardown and strand [E2E] rows in the production database, so treat the
+// gateway codes as transient and give the instance time to come back.
+// Retrying the mutating verbs is safe here: these codes come from Render's
+// proxy when no healthy instance accepted the request, so the write never ran.
+const TRANSIENT_STATUSES = [502, 503, 504];
+const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 15_000];
+
 /** Authenticated JSON call against the live API (setup + verification). */
 export async function api(
   request: APIRequestContext,
@@ -62,10 +72,20 @@ export async function api(
   data?: unknown,
 ): Promise<any> {
   const { token } = readRunState();
-  const resp = await request[method](`${baseUrl}${apiPath}`, {
+  const send = () => request[method](`${baseUrl}${apiPath}`, {
     headers: { Authorization: `Bearer ${token}` },
     ...(data !== undefined ? { data } : {}),
   });
+
+  let resp = await send();
+  for (const delay of RETRY_DELAYS_MS) {
+    if (!TRANSIENT_STATUSES.includes(resp.status())) break;
+    logManifest({
+      event: 'api-retry', method, path: apiPath, status: resp.status(), delay,
+    });
+    await new Promise(r => setTimeout(r, delay));
+    resp = await send();
+  }
   expect(resp.ok(), `${method.toUpperCase()} ${apiPath} -> ${resp.status()}`).toBeTruthy();
   const body = await resp.text();
   const parsed = body ? JSON.parse(body) : null;

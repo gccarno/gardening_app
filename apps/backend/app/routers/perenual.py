@@ -10,8 +10,21 @@ from ..db.models import PlantLibrary
 from ..db.session import get_db
 from ..services.helpers import get_or_404, perenual_get, permapeople_post
 from ..services.files import download_and_save_plant_image
+from ..services.errors import NotConfiguredError
 
 router = APIRouter(prefix='/api', tags=['perenual'])
+
+
+def _proxy_error(status: int, err_type: str, err_msg: str) -> HTTPException:
+    """Build the error for a failed upstream call, preserving the caller's status.
+
+    `config` means this deployment has no API key for the upstream — a
+    deployment choice rather than a fault, so it is raised as
+    NotConfiguredError to keep it out of Sentry (see services/errors.py).
+    The response body and status are identical either way.
+    """
+    cls = NotConfiguredError if err_type == 'config' else HTTPException
+    return cls(status_code=status, detail={'error': err_type, 'message': err_msg})
 
 
 @router.get('/perenual/search')
@@ -20,8 +33,7 @@ def api_perenual_search(q: str = '', db: Session = Depends(get_db)):
         return {'results': []}
     data, err_type, err_msg = perenual_get('species-list', {'q': q, 'page': 1})
     if err_type:
-        status = 429 if err_type == 'rate_limit' else 502
-        raise HTTPException(status_code=status, detail={'error': err_type, 'message': err_msg})
+        raise _proxy_error(429 if err_type == 'rate_limit' else 502, err_type, err_msg)
     results = []
     for p in data.get('data', []):
         name = p.get('common_name') or (p.get('scientific_name') or [None])[0]
@@ -52,8 +64,7 @@ def api_perenual_fetch_image(entry_id: int, db: Session = Depends(get_db)):
 
     data, err_type, err_msg = perenual_get(f'species/details/{entry.perenual_id}', {})
     if err_type:
-        status = 429 if err_type == 'rate_limit' else 502
-        raise HTTPException(status_code=status, detail={'error': err_type, 'message': err_msg})
+        raise _proxy_error(429 if err_type == 'rate_limit' else 502, err_type, err_msg)
 
     img = data.get('default_image') or {}
     url = img.get('small_url') or img.get('thumbnail')
@@ -113,7 +124,7 @@ def api_permapeople_search(body: dict, db: Session = Depends(get_db)):
         return {'results': []}
     data, err_type, err_msg = permapeople_post('search', {'q': q})
     if err_type:
-        raise HTTPException(status_code=502, detail={'error': err_type, 'message': err_msg})
+        raise _proxy_error(502, err_type, err_msg)
     results = []
     for p in data.get('plants', []):
         kv = {item['key']: item['value'] for item in (p.get('data') or []) if 'key' in item}

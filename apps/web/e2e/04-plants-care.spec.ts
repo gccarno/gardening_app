@@ -71,11 +71,15 @@ test.describe('plants & care', () => {
 
     // GET /plants/{id} (detail) omits succession_label — the list serializer
     // carries it, so verify through the list endpoint.
+    // click() resolves when the event dispatches, not when the PUT completes,
+    // so poll: against the live backend the read otherwise beats the write.
     const { gardenId } = readRunState();
-    const plants = await api(request, 'get', `/api/plants?garden_id=${gardenId}`);
-    const detail = plants.find((p: any) => p.id === id);
-    expect(detail.succession_label).toBe('Wave 1');
-    expect(detail.expected_harvest).toBe('2026-09-15');
+    await expect(async () => {
+      const plants = await api(request, 'get', `/api/plants?garden_id=${gardenId}`);
+      const detail = plants.find((p: any) => p.id === id);
+      expect(detail.succession_label).toBe('Wave 1');
+      expect(detail.expected_harvest).toBe('2026-09-15');
+    }).toPass({ timeout: 15_000 });
   });
 
   test('succession badge shows on the list; search and sort work', async ({ page }) => {

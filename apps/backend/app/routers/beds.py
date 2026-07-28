@@ -10,7 +10,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session, joinedload
 
-from ..db.models import Garden, GardenBed, Plant, BedPlant, PlantLibrary, User
+from ..db.models import (Garden, GardenBed, Plant, BedPlant, PlantLibrary, User,
+                         WateringEvent, MlWateringSnapshot)
 
 logger = logging.getLogger(__name__)
 from ..db.session import get_db
@@ -98,6 +99,10 @@ def api_delete_bed(bed_id: int,
                    user: User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     bed = require_resource(db, user, GardenBed, bed_id, 'editor')
+    # bed_plants cascades via the relationship; these two reference bed_id with
+    # no cascade, so leaving them behind is a ForeignKeyViolation on Postgres.
+    db.query(WateringEvent).filter_by(bed_id=bed_id).delete()
+    db.query(MlWateringSnapshot).filter_by(bed_id=bed_id).delete()
     db.delete(bed)
     db.commit()
     return {'ok': True}

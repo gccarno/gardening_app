@@ -40,7 +40,11 @@ test.describe('dashboard & weather', () => {
     await expect(page.locator('.tip-of-day-card .info-card__body').getByText(/.+/)).toBeVisible();
     const weatherCard = page.locator('#weather-card');
     if (await weatherCard.count()) {
-      await expect(weatherCard.getByText(/°F|Weather unavailable|Loading/)).toBeVisible({ timeout: 30_000 });
+      // A populated card matches twice ('74°F' and 'Feels like 78°F · Wind…'),
+      // which is a strict-mode violation rather than a pass. Any one match is
+      // enough to prove the card rendered content or its fallback.
+      await expect(weatherCard.getByText(/°F|Weather unavailable|Loading/).first())
+        .toBeVisible({ timeout: 30_000 });
     }
     await expect(page.locator('#watering-card .info-card__body').getByText(/.+/)).toBeVisible();
   });

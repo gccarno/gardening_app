@@ -51,6 +51,29 @@ def test_delete_garden(client, garden):
     assert client.get(f'/api/gardens/{garden.id}').status_code == 404
 
 
+def test_delete_garden_clears_watering_rows(client, db, garden, bed):
+    """A watered garden must still delete.
+
+    Only WeatherLog was cleared here; watering_event and ml_watering_snapshot
+    have the same NOT NULL garden_id with no cascade, so they raised a
+    ForeignKeyViolation 500 on Postgres. SQLite does not enforce FKs here, so
+    assert the rows are gone rather than relying on the IntegrityError.
+    """
+    from datetime import date
+
+    from apps.backend.app.db.models import MlWateringSnapshot, WateringEvent
+
+    db.add(WateringEvent(garden_id=garden.id, bed_id=bed.id,
+                         event_date=date.today(), amount='light', source='user'))
+    db.add(MlWateringSnapshot(garden_id=garden.id, bed_id=bed.id,
+                              snapshot_date=date.today()))
+    db.flush()
+
+    assert client.delete(f'/api/gardens/{garden.id}').json()['ok'] is True
+    assert db.query(WateringEvent).filter_by(garden_id=garden.id).count() == 0
+    assert db.query(MlWateringSnapshot).filter_by(garden_id=garden.id).count() == 0
+
+
 def test_default_garden_setting(client, garden):
     assert client.get('/api/settings/default-garden').json()['garden_id'] is None
     client.post('/api/settings/default-garden', json={'garden_id': garden.id})

@@ -106,6 +106,17 @@ export default function Planner() {
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [dashArray, setDashArray] = useState('');
   const [annShapes, setAnnShapes] = useState<AnnotationShape[]>([]);
+  // Set as soon as the user draws/erases/clears. loadGardenData fetches
+  // annotations in parallel with everything else and applies them last, so a
+  // shape drawn while that fetch is still in flight would otherwise be wiped
+  // by the (now stale) server response — and the next draw would POST an array
+  // rebuilt from the wiped state, destroying the shape server-side too.
+  const annDirtyRef = useRef(false);
+  /** Mark annotations as locally edited, then apply the change. */
+  function applyAnnShapes(shapes: AnnotationShape[]) {
+    annDirtyRef.current = true;
+    setAnnShapes(shapes);
+  }
 
   // ── Selected bed for detail panel ──────────────────────────────────────────
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
@@ -210,6 +221,7 @@ export default function Planner() {
     if (!gardenId) return;
     setSelectedCanvasIds(new Set());
     setContextMenu(null);
+    annDirtyRef.current = false;
     const t0 = performance.now();
 
     // ── Fire all 4 requests in parallel ──
@@ -239,7 +251,8 @@ export default function Planner() {
     const [cpData, gpData, annData] = await Promise.all([cpPromise, gpPromise, annPromise]);
     setCanvasPlants(cpData as CanvasPlant[]);
     setGardenPlants(gpData as GardenPlant[]);
-    setAnnShapes((annData as any).shapes || []);
+    // Don't clobber shapes the user drew while these requests were in flight.
+    if (!annDirtyRef.current) setAnnShapes((annData as any).shapes || []);
 
     console.info(`[planner] phase1 complete: ${(performance.now() - t0).toFixed(0)}ms`);
     if (rightPanelOpen) loadPanelData();
@@ -1054,7 +1067,7 @@ export default function Planner() {
           setStrokeColor={setStrokeColor} setFillColor={setFillColor}
           setNoFill={setNoFill} setStrokeWidth={setStrokeWidth} setDashArray={setDashArray}
           selectDrawTool={selectDrawTool} deactivateDrawTool={deactivateDrawTool}
-          onClearShapes={() => { setAnnShapes([]); api('POST', `/api/gardens/${gardenId}/annotations`, { shapes: [] }); }}
+          onClearShapes={() => { applyAnnShapes([]); api('POST', `/api/gardens/${gardenId}/annotations`, { shapes: [] }); }}
         />
 
         {/* Beds */}
@@ -1289,7 +1302,7 @@ export default function Planner() {
             noFill={noFill} strokeWidth={strokeWidth} dashArray={dashArray}
             zoom={zoom} gardenId={gardenId}
             annShapes={annShapes}
-            onShapesChange={setAnnShapes}
+            onShapesChange={applyAnnShapes}
           />
 
           {/* ── Lasso selection rectangle ─────────────────────────────────────── */}

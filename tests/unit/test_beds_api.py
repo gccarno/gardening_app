@@ -79,3 +79,26 @@ def test_bed_position(client, bed):
 def test_delete_bed(client, bed):
     assert client.post(f'/api/beds/{bed.id}/delete').json()['ok'] is True
     assert client.get(f'/api/beds/{bed.id}').status_code == 404
+
+
+def test_delete_bed_clears_watering_rows(client, db, garden, bed):
+    """A watered bed must still delete.
+
+    watering_event.bed_id / ml_watering_snapshot.bed_id are plain FKs with no
+    cascade, so leaving the rows behind is a ForeignKeyViolation 500 on
+    Postgres. SQLite does not enforce FKs here, so assert the rows are gone
+    rather than relying on the IntegrityError.
+    """
+    from datetime import date
+
+    from apps.backend.app.db.models import MlWateringSnapshot, WateringEvent
+
+    db.add(WateringEvent(garden_id=garden.id, bed_id=bed.id,
+                         event_date=date.today(), amount='moderate', source='user'))
+    db.add(MlWateringSnapshot(garden_id=garden.id, bed_id=bed.id,
+                              snapshot_date=date.today()))
+    db.flush()
+
+    assert client.post(f'/api/beds/{bed.id}/delete').json()['ok'] is True
+    assert db.query(WateringEvent).filter_by(bed_id=bed.id).count() == 0
+    assert db.query(MlWateringSnapshot).filter_by(bed_id=bed.id).count() == 0

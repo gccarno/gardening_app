@@ -96,14 +96,16 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
 
     messages = list(conversation_history) + [{'role': 'user', 'content': user_msg}]
 
-    # Both handlers below deliberately swallow the exception to return a friendly
-    # reply, so nothing would reach Sentry on its own — capture explicitly.
+    # The generic handler below deliberately swallows the exception to return a
+    # friendly reply, so nothing would reach Sentry on its own — capture there
+    # explicitly.
     try:
         reply = run_agentic_loop(system_prompt, messages, garden, db)
         return {'reply': reply, 'conversation_history': messages, 'session_id': session_id}
     except RuntimeError as exc:
-        # Configuration problems (missing API key) — expected, user-facing.
-        sentry_sdk.capture_exception(exc)
+        # Missing API key — production deliberately runs without ANTHROPIC_API_KEY,
+        # so this is the configured behaviour, not a fault. Reporting it opened a
+        # Sentry issue on every probe of /api/chat. The reply is unchanged.
         return {'reply': str(exc), 'conversation_history': messages, 'session_id': session_id}
     except Exception as exc:
         sentry_sdk.capture_exception(exc)

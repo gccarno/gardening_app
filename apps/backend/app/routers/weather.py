@@ -250,9 +250,14 @@ def _tomorrow_io_history_rows(garden: Garden) -> Optional[list]:
     monitor_config={
         'schedule': {'type': 'crontab', 'value': '0 7 * * *'},
         'timezone': 'UTC',
-        # Generous: the first nightly request also has to wake a spun-down free
-        # instance and a scale-to-zero Neon compute before any work starts.
-        'checkin_margin': 30,
+        # Must absorb GitHub Actions cron drift, which is what actually fires
+        # this. Scheduled workflows queue behind on-demand jobs and have never
+        # started at 07:00: over 12 consecutive days the real start ranged from
+        # 08:53 to 10:49 UTC. A 30-minute margin therefore reported MISSED every
+        # night on jobs that had run fine, then auto-resolved on the late
+        # check-in. 5 hours clears the observed worst case (3h49m) and still
+        # opens an issue long before the next night's run.
+        'checkin_margin': 300,
         # Longest of the three — one external forecast call per garden.
         'max_runtime': 15,
         'failure_issue_threshold': 1,

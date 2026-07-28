@@ -175,7 +175,8 @@ def _prune_operational_tables(db: Session) -> None:
     monitor_config={
         'schedule': {'type': 'crontab', 'value': '0 7 * * *'},
         'timezone': 'UTC',
-        'checkin_margin': 30,
+        # 5h, not 30m: absorbs GitHub Actions cron drift (see weather.py).
+        'checkin_margin': 300,
         'max_runtime': 10,        # DB-only work, no external calls
         'failure_issue_threshold': 1,
         'recovery_threshold': 1,

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import PlantLibrary
 from ..db.session import get_db
+from ..services.errors import NotConfiguredError
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,8 @@ async def api_identify(
     try:
         reply = complete_vision(_SYSTEM, MODES[mode], img_b64, media_type)
     except RuntimeError as exc:          # not configured
-        raise HTTPException(status_code=503, detail=str(exc))
+        # Same 503 as before; NotConfiguredError only keeps it out of Sentry.
+        raise NotConfiguredError(status_code=503, detail=str(exc))
     except Exception as exc:
         logger.exception('[identify] vision call failed')
         raise HTTPException(status_code=502, detail=f'Identification failed: {exc}')

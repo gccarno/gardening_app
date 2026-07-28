@@ -17,6 +17,7 @@ from .routers import gardens, weather, perenual, beds, plants, tasks, canvas, li
 from .routers import auth, identify, seed_room, observations, journal, compost
 from .routers.weather import run_daily_weather_fetch
 from .services.auth import get_current_user
+from .services.errors import NotConfiguredError
 from .jobs.gcs_backup import run_backup as run_gcs_backup
 from .jobs.ml_snapshot import run_ml_snapshot
 
@@ -73,6 +74,23 @@ def traces_sampler(sampling_context: dict) -> float:
     return _TRACE_SAMPLE_RATE
 
 
+def before_send(event: dict, hint: dict):
+    """Drop events for optional integrations that simply aren't configured.
+
+    Production deliberately runs without ANTHROPIC_API_KEY and PERENUAL_API_KEY.
+    Those endpoints answer with a 5xx, which the Starlette integration reports
+    by default, so every probe opened a Sentry issue describing a system doing
+    exactly what it was configured to do. Returning None discards the event; the
+    HTTP response the caller sees is unchanged.
+
+    Must never raise: an exception here loses the event entirely.
+    """
+    exc = (hint or {}).get('exc_info', (None, None, None))[1]
+    if isinstance(exc, NotConfiguredError):
+        return None
+    return event
+
+
 sentry_sdk.init(
     dsn=os.environ.get('SENTRY_DSN'),
     environment=os.environ.get('SENTRY_ENVIRONMENT', 'development'),
@@ -83,6 +101,7 @@ sentry_sdk.init(
     # not a trade worth making here. Cost: no client IP or query strings.
     send_default_pii=False,
     traces_sampler=traces_sampler,
+    before_send=before_send,
     # Bridges the stdlib logging configured above — including the SLOW request
     # warnings further down — into Sentry.
     enable_logs=True,

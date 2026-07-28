@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..db.models import Garden, GardenBed, GardenMember, Plant, Task, BedPlant, AppSetting, User, WeatherLog
+from ..db.models import (Garden, GardenBed, GardenMember, Plant, Task, BedPlant, AppSetting, User,
+                         WeatherLog, WateringEvent, MlWateringSnapshot)
 from ..db.session import get_db
 from ..services.auth import get_current_user, member_garden_ids, require_garden
 from ..services.helpers import FROST_DATES, get_or_404, get_season, record_watering_event
@@ -225,9 +226,11 @@ def api_garden_delete(garden_id: int,
                       user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     garden = require_garden(db, user, garden_id, 'owner')
-    # weather_log.garden_id is NOT NULL and the relationship has no cascade,
+    # These tables have a NOT NULL garden_id and no cascade on the relationship,
     # so deleting the garden alone nulls the FK and raises IntegrityError.
     db.query(WeatherLog).filter_by(garden_id=garden_id).delete()
+    db.query(WateringEvent).filter_by(garden_id=garden_id).delete()
+    db.query(MlWateringSnapshot).filter_by(garden_id=garden_id).delete()
     db.delete(garden)
     db.commit()
     return {'ok': True}
