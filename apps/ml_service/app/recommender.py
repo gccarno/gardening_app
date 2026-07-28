@@ -65,28 +65,35 @@ def recommend(plants: list, context: dict, top_n: int = 5) -> list:
         return []
 
     model = _load_model()
-    results = []
+    feature_vectors = [build_feature_vector(p, context) for p in plants]
 
-    for plant in plants:
-        fv = build_feature_vector(plant, context)
+    # One predict_proba over every row, not one call per plant. The library is
+    # ~9,999 rows in production and the per-row version spent minutes of CPU on
+    # sklearn call overhead alone -- enough to pin the free instance's CPU cap
+    # and time the request out. A failure now falls the whole batch back to
+    # rule scoring rather than just the offending row; the model either loads
+    # and works or it doesn't, so per-row recovery bought nothing.
+    scores = None
+    if model is not None:
+        X = [[fv.get(f, 0.0) for f in _FEATURE_ORDER] for fv in feature_vectors]
+        try:
+            scores = [float(row[1]) for row in model.predict_proba(X)]
+        except Exception:
+            scores = None
+    if scores is None:
+        scores = [score_plant(p, context) for p in plants]
 
-        if model is not None:
-            X = [[fv.get(f, 0.0) for f in _FEATURE_ORDER]]
-            try:
-                score = float(model.predict_proba(X)[0][1])
-            except Exception:
-                score = score_plant(plant, context)
-        else:
-            score = score_plant(plant, context)
-
-        results.append({
+    results = [
+        {
             'plant_id':       plant.get('id'),
             'name':           plant.get('name'),
             'type':           plant.get('type'),
             'score':          round(score, 3),
             'reason':         top_reason(fv, context),
             'image_filename': plant.get('image_filename'),
-        })
+        }
+        for plant, fv, score in zip(plants, feature_vectors, scores)
+    ]
 
     results.sort(key=lambda x: x['score'], reverse=True)
     return results[:top_n]

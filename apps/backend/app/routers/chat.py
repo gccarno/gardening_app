@@ -7,13 +7,54 @@ from typing import Optional
 
 import sentry_sdk
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
-from ..db.models import Garden, Plant, PlantLibrary
+from ..db.models import Garden, Plant, PlantLibrary, PlantLibraryImage
 from ..db.session import get_db
 from ..services.helpers import FROST_DATES, get_season
 
 router = APIRouter(prefix='/api', tags=['chat'])
+
+# Only the columns the scorer reads. Hydrating whole PlantLibrary rows pulled
+# every Trefle blob, FAQ and nutrition JSON for ~9,999 plants into memory on
+# each request, which walked the free instance from 181 MB to its 536 MB limit.
+_SCORING_COLUMNS = (
+    PlantLibrary.id, PlantLibrary.name, PlantLibrary.type,
+    PlantLibrary.min_zone, PlantLibrary.max_zone, PlantLibrary.sunlight,
+    PlantLibrary.soil_ph_min, PlantLibrary.soil_ph_max,
+    PlantLibrary.good_neighbors, PlantLibrary.difficulty,
+    PlantLibrary.days_to_harvest, PlantLibrary.fruit_months,
+    PlantLibrary.bloom_months, PlantLibrary.growth_months,
+    PlantLibrary.image_filename,
+)
+
+
+def _scoring_candidates(db: Session):
+    """Every library row, but only the columns the recommender scores on."""
+    return (db.query(PlantLibrary)
+            .options(load_only(*_SCORING_COLUMNS))
+            .order_by(PlantLibrary.name)
+            .all())
+
+
+def _primary_image_filenames(db: Session, plant_library_ids: list) -> dict:
+    """{plant_library_id: filename} for the given ids, in one query.
+
+    Mirrors what reading `entry.images` used to do: the primary image when
+    there is one, otherwise the earliest by created_at (the relationship's
+    own order_by).
+    """
+    if not plant_library_ids:
+        return {}
+    rows = (db.query(PlantLibraryImage)
+            .filter(PlantLibraryImage.plant_library_id.in_(plant_library_ids))
+            .order_by(PlantLibraryImage.is_primary.desc(),
+                      PlantLibraryImage.created_at)
+            .all())
+    filenames: dict = {}
+    for img in rows:
+        filenames.setdefault(img.plant_library_id, img.filename)
+    return filenames
 
 
 @router.post('/chat')
@@ -55,11 +96,8 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
         phs    = [b.soil_ph for b in garden.beds if b.soil_ph] if garden else []
         avg_ph = sum(phs) / len(phs) if phs else None
         existing = set(current_plants)
-        plants_data = []
-        for p in db.query(PlantLibrary).all():
-            if p.name in existing:
-                continue
-            plants_data.append({
+        plants_data = [
+            {
                 'id': p.id, 'name': p.name, 'type': p.type,
                 'min_zone': p.min_zone, 'max_zone': p.max_zone,
                 'sunlight': p.sunlight,
@@ -69,7 +107,10 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
                 'fruit_months': p.fruit_months,
                 'bloom_months': p.bloom_months,
                 'growth_months': p.growth_months,
-            })
+            }
+            for p in _scoring_candidates(db)
+            if p.name not in existing
+        ]
         ctx = {
             'zone': zone_int, 'sunlight_hours': 6,
             'current_month': today.month, 'soil_ph': avg_ph,
@@ -204,14 +245,8 @@ def api_recommendations(
     }
 
     existing_names = set(current_plant_names)
-    plants_data = []
-    for p in db.query(PlantLibrary).order_by(PlantLibrary.name).all():
-        if p.name in existing_names:
-            continue
-        primary_img = next((img for img in p.images if img.is_primary), None)
-        if not primary_img and p.images:
-            primary_img = p.images[0]
-        plants_data.append({
+    plants_data = [
+        {
             'id':              p.id,
             'name':            p.name,
             'type':            p.type,
@@ -226,12 +261,22 @@ def api_recommendations(
             'fruit_months':    p.fruit_months,
             'bloom_months':    p.bloom_months,
             'growth_months':   p.growth_months,
-            'image_filename':  primary_img.filename if primary_img else p.image_filename,
-        })
+            # Fallback only; the image table wins below when it has a row.
+            'image_filename':  p.image_filename,
+        }
+        for p in _scoring_candidates(db)
+        if p.name not in existing_names
+    ]
 
     results = recommend(plants_data, context, top_n)
+
+    # Resolve images for the handful that scored, not for all ~9,999 candidates.
+    # Reading p.images inside the loop above was an N+1: one query per library
+    # row against a remote Neon, ~10,000 round trips for a five-item response.
+    images = _primary_image_filenames(db, [r['plant_id'] for r in results])
     for rec in results:
-        fn = rec.get('image_filename')
+        fn = images.get(rec['plant_id']) or rec.get('image_filename')
+        rec['image_filename'] = fn
         rec['image_url'] = f'/static/plant_images/{fn}' if fn else None
 
     return {'recommendations': results,
