@@ -62,7 +62,9 @@ export function testName(label: string): string {
 // Retrying the mutating verbs is safe here: these codes come from Render's
 // proxy when no healthy instance accepted the request, so the write never ran.
 const TRANSIENT_STATUSES = [502, 503, 504];
-const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 15_000];
+// ~110s total. A restart costs ~60-90s end to end (crash -> process up ->
+// alembic -> serving), and the free instance also cold-starts after idling.
+const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 15_000, 20_000, 30_000, 30_000];
 
 /** Authenticated JSON call against the live API (setup + verification). */
 export async function api(

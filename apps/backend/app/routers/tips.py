@@ -1,19 +1,23 @@
 """
-Tip of the Day -- retrieves gardening tips from the RAG vector database.
+Tip of the Day -- one tip per day, chosen by the ordinal day number.
 
-The garden_tips ChromaDB collection is seeded on first request if it doesn't
-exist. Each day a different tip is returned based on the ordinal day number.
+This used to run through a ChromaDB collection, which cost the app two
+production outages (2026-07-27 and 2026-07-28): the first request after a cold
+start made Chroma download and load its default embedding model
+(all-MiniLM-L6-v2, 79 MB) inside the web process, and the load OOM-killed the
+512 MB Render instance for ~60-90s. Render's disk is ephemeral, so it happened
+on every cold start.
+
+Nothing was gained for that price. The collection was seeded from and only ever
+contained _SEED_TIPS, `garden_tips` was referenced nowhere else, and the
+endpoint never ran a similarity query -- it fetched every document and indexed
+by date, which is exactly what it does now without the vector store.
 """
-import os
 from datetime import date
-from pathlib import Path
 
 from fastapi import APIRouter
 
 router = APIRouter(prefix='/api', tags=['tips'])
-
-_RAG_DB          = str(Path(__file__).parents[4] / 'apps' / 'api' / 'instance' / 'rag_db')
-_TIPS_COLLECTION = 'garden_tips'
 
 _SEED_TIPS = [
     "Water deeply and infrequently. Shallow, frequent watering encourages roots to stay near the surface. Deep watering once or twice a week pushes roots down where soil stays moist longer.",
@@ -83,39 +87,7 @@ _SEED_TIPS = [
 ]
 
 
-def _get_tips_collection(rebuild: bool = False):
-    import chromadb
-    os.makedirs(_RAG_DB, exist_ok=True)
-    client = chromadb.PersistentClient(path=_RAG_DB)
-
-    if rebuild:
-        try:
-            client.delete_collection(_TIPS_COLLECTION)
-        except Exception:
-            pass
-
-    collection = client.get_or_create_collection(
-        name=_TIPS_COLLECTION,
-        metadata={'hnsw:space': 'cosine'},
-    )
-    if collection.count() == 0:
-        collection.add(
-            documents=_SEED_TIPS,
-            metadatas=[{'tip_index': i} for i in range(len(_SEED_TIPS))],
-            ids=[str(i) for i in range(len(_SEED_TIPS))],
-        )
-    return collection
-
-
 @router.get('/tip-of-the-day')
 def tip_of_the_day():
-    try:
-        collection = _get_tips_collection()
-        result = collection.get(include=['documents'])
-        docs = result.get('documents') or []
-        if not docs:
-            return {'tip': 'Happy gardening today!'}
-        idx = date.today().toordinal() % len(docs)
-        return {'tip': docs[idx], 'tip_index': idx, 'total': len(docs)}
-    except Exception as exc:
-        return {'tip': 'Check your garden today -- small daily care makes a big difference!', 'error': str(exc)}
+    idx = date.today().toordinal() % len(_SEED_TIPS)
+    return {'tip': _SEED_TIPS[idx], 'tip_index': idx, 'total': len(_SEED_TIPS)}
