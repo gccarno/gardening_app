@@ -1,5 +1,6 @@
 // Dashboard: default-garden selector, metric tiles, weather/watering/season
-// cards, tip of the day, rain logging, and the content columns.
+// cards, tip of the day, and the content columns. Rain logging is API-only —
+// the slider was removed from the UI in 2026-07 (see below).
 import { test, expect, api, readRunState, updateRunState, logManifest } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
@@ -49,15 +50,15 @@ test.describe('dashboard & weather', () => {
     await expect(page.locator('#watering-card .info-card__body').getByText(/.+/)).toBeVisible();
   });
 
-  test('rain log slider records rainfall', async ({ page, request }) => {
+  // The Dashboard's rain-log slider (#rain-log-card) was deleted in 5bee320,
+  // 2026-07-20: the watering ML project auto-fetches rainfall from Tomorrow.io
+  // instead of asking for it by hand, and the card went from both platforms
+  // (android/FEATURE_GAPS.md). This test kept driving that UI and could only
+  // ever time out. POST /log-rain is deliberately still served as a fallback
+  // for gardens with no coordinates, so cover it where it actually lives.
+  test('log-rain endpoint records rainfall (server-side fallback, no UI)', async ({ request }) => {
     const { gardenId } = readRunState();
-    await page.goto('/dashboard');
-    await page.locator('.garden-selector-select').selectOption(String(gardenId));
-    const card = page.locator('#rain-log-card');
-    await card.locator('input[type="range"]').fill('0.75');
-    await expect(card.getByText('0.75 in')).toBeVisible();
-    await card.getByRole('button', { name: 'Log Rain' }).click();
-    await expect(card.getByText('✓ Saved')).toBeVisible();
+    await api(request, 'post', `/api/gardens/${gardenId}/log-rain`, { rainfall_in: 0.75 });
 
     const log = await api(request, 'get', `/api/gardens/${gardenId}/rain-log`);
     const entries = Array.isArray(log) ? log : log.entries;
