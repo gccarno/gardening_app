@@ -1,26 +1,31 @@
 """
-Build a ChromaDB vector database from gardening guides and books.
+Build the growing-guides vector index from gardening guides and books.
 
 Sources indexed:
   1. TAMU Easy Gardening PDFs (~27 plants) — scripts/tamu_pdfs/easy_*.pdf
   2. TAMU Commercial Crop Guide PDFs (~40 plants) — scripts/tamu_pdfs/commercial_*.pdf
   3. Local Black & Decker gardening books — BOOKS_DIR (see below)
 
-The resulting ChromaDB collection is used by the chat tool `search_growing_guides`
-to answer unstructured questions ("What pests affect tomatoes?", "How do I fertilize
+The resulting chunks are used by the chat tool `search_growing_guides` to answer
+unstructured questions ("What pests affect tomatoes?", "How do I fertilize
 peppers?") with passages from authoritative gardening sources.
 
-Stored at: apps/api/instance/rag_db/  (alongside garden.db SQLite)
+Stored in Postgres (the `guide_chunk` table) with pgvector embeddings. This
+replaced a ChromaDB store at apps/api/instance/rag_db/, which was gitignored —
+so it never reached Render — and which pulled onnxruntime plus a 79 MB embedding
+model into the request process when opened. Embeddings are now an API call; see
+apps/ml_service/app/embed_provider.py.
 
-Usage:
-    python scripts/build_rag.py                    # index all sources
-    python scripts/build_rag.py --source tamu      # TAMU PDFs only
-    python scripts/build_rag.py --source books     # local books only
-    python scripts/build_rag.py --rebuild          # wipe and rebuild from scratch
-    python scripts/build_rag.py --stats            # show collection stats
+Usage (from the repo root):
+    uv run python scripts/build_rag.py                 # index all sources
+    uv run python scripts/build_rag.py --source tamu   # TAMU PDFs only
+    uv run python scripts/build_rag.py --source books  # local books only
+    uv run python scripts/build_rag.py --rebuild       # wipe and rebuild
+    uv run python scripts/build_rag.py --stats         # show index stats
 
 Requirements:
-    pdfplumber, chromadb (both in pyproject.toml)
+    pdfplumber + the embedding provider's SDK (both in pyproject.toml)
+    Run `uv run alembic upgrade head` first to create the table.
     Run tamu_sync.py --download-only first to populate scripts/tamu_pdfs/
 """
 import argparse
@@ -33,9 +38,13 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# The `apps.*` imports below resolve against the repo root. The chat tool
+# imports this module with scripts/ on sys.path, where that is not guaranteed.
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 PDF_DIR   = os.path.join(os.path.dirname(__file__), 'tamu_pdfs')
 BOOKS_DIR = r'C:\Users\gccar\Documents\books\gardening_books'
-RAG_DB    = os.path.join(_REPO_ROOT, 'apps', 'api', 'instance', 'rag_db')
 
 # Map filename substrings → region label for B&D books
 _REGION_MAP = {
@@ -52,7 +61,6 @@ _REGION_MAP = {
     'landscape':       'General',
 }
 
-COLLECTION_NAME = 'growing_guides'
 CHUNK_SIZE      = 1500   # characters per chunk
 CHUNK_OVERLAP   = 150    # overlap between consecutive chunks
 
@@ -106,55 +114,60 @@ def detect_region(filename):
     return 'General'
 
 
-# ── ChromaDB helpers ───────────────────────────────────────────────────────────
+# ── Postgres helpers ───────────────────────────────────────────────────────────
 
 def get_collection(rebuild=False):
-    """Open (or create) the ChromaDB collection."""
-    try:
-        import chromadb
-    except ImportError:
-        raise ImportError('chromadb required: uv add chromadb')
+    """Open a DB session for indexing, optionally clearing existing chunks.
 
-    os.makedirs(RAG_DB, exist_ok=True)
-    client = chromadb.PersistentClient(path=RAG_DB)
+    Kept under the original name so index_tamu_pdfs / index_books read the same
+    as before; the "collection" is now the guide_chunk table.
+    """
+    from apps.backend.app.db.session import SessionLocal
+    from apps.backend.app.db.models import GuideChunk
 
+    db = SessionLocal()
     if rebuild:
-        try:
-            client.delete_collection(COLLECTION_NAME)
-            print(f'Deleted existing collection {COLLECTION_NAME!r}')
-        except Exception:
-            pass
-
-    collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={'hnsw:space': 'cosine'},
-    )
-    return collection
+        deleted = db.query(GuideChunk).delete()
+        db.commit()
+        print(f'Deleted {deleted} existing chunks')
+    return db
 
 
-def add_chunks(collection, chunks, metadatas, id_prefix):
-    """Add a list of text chunks to the collection with metadata."""
+def add_chunks(db, chunks, metadatas, id_prefix):
+    """Embed a list of text chunks and insert them with their metadata.
+
+    `id_prefix` is no longer used for identity — the table has a serial primary
+    key — but the parameter stays so callers are unchanged.
+    """
     if not chunks:
         return 0
 
-    # ChromaDB requires unique IDs
-    ids = [f'{id_prefix}_{i}' for i in range(len(chunks))]
+    from apps.backend.app.db.models import GuideChunk
+    from apps.ml_service.app.embed_provider import embed
 
-    # Add in batches of 100
     batch_size = 100
     added = 0
     for start in range(0, len(chunks), batch_size):
         batch_chunks = chunks[start:start + batch_size]
         batch_meta   = metadatas[start:start + batch_size]
-        batch_ids    = ids[start:start + batch_size]
         try:
-            collection.add(
-                documents=batch_chunks,
-                metadatas=batch_meta,
-                ids=batch_ids,
-            )
+            vectors = embed(batch_chunks)
+            db.add_all([
+                GuideChunk(
+                    text=chunk,
+                    source=meta.get('source', ''),
+                    plant_name=meta.get('plant_name', ''),
+                    region=meta.get('region', ''),
+                    # TAMU guides carry no page number; books do.
+                    page=meta.get('page') or None,
+                    embedding=vector,
+                )
+                for chunk, meta, vector in zip(batch_chunks, batch_meta, vectors)
+            ])
+            db.commit()
             added += len(batch_chunks)
         except Exception as e:
+            db.rollback()
             print(f'    add error: {e}')
     return added
 
@@ -272,55 +285,51 @@ def index_books(collection):
 
 def search_guides(query, plant_name=None, n_results=3, region_filter=None):
     """
-    Search the growing guides collection. Returns list of result dicts.
+    Search the growing guides. Returns list of result dicts.
 
-    Called by the chat tool `search_growing_guides` at runtime.
-    Returns [] gracefully if the collection doesn't exist yet.
+    Called by the chat tool `search_growing_guides` at runtime. Embeds the query
+    via an API call, then runs one pgvector nearest-neighbour query — nothing is
+    loaded into the process, which is what makes this survive a 512 MB instance.
+
+    Returns [] gracefully if the table is empty or the embedding call fails, so
+    a retrieval outage degrades the answer rather than breaking the chat turn.
     """
-    try:
-        import chromadb
-    except ImportError:
-        return []
+    from sqlalchemy import select
 
-    if not os.path.isdir(RAG_DB):
-        return []
+    from apps.backend.app.db.session import SessionLocal
+    from apps.backend.app.db.models import GuideChunk
+    from apps.ml_service.app.embed_provider import embed_one
 
     try:
-        client = chromadb.PersistentClient(path=RAG_DB)
-        collection = client.get_collection(COLLECTION_NAME)
+        vector = embed_one(query, is_query=True)
     except Exception:
         return []
 
-    where = None
+    # `<=>` is pgvector's cosine distance; 1 - distance gives back the cosine
+    # similarity the old Chroma path reported, so scores stay comparable.
+    distance = GuideChunk.embedding.cosine_distance(vector).label('distance')
+
+    stmt = select(GuideChunk, distance).order_by(distance).limit(n_results)
     if region_filter:
-        where = {'region': {'$eq': region_filter}}
+        stmt = stmt.where(GuideChunk.region == region_filter)
 
     try:
-        results = collection.query(
-            query_texts=[query],
-            n_results=n_results,
-            where=where,
-            include=['documents', 'metadatas', 'distances'],
-        )
+        with SessionLocal() as db:
+            rows = db.execute(stmt).all()
     except Exception:
         return []
 
-    output = []
-    docs      = results.get('documents', [[]])[0]
-    metas     = results.get('metadatas', [[]])[0]
-    distances = results.get('distances', [[]])[0]
-
-    for doc, meta, dist in zip(docs, metas, distances):
-        output.append({
-            'text':     doc,
-            'source':   meta.get('source', ''),
-            'plant':    meta.get('plant_name', ''),
-            'region':   meta.get('region', ''),
-            'page':     meta.get('page', ''),
-            'score':    round(1 - float(dist), 3),   # cosine similarity
-        })
-
-    return output
+    return [
+        {
+            'text':   chunk.text,
+            'source': chunk.source or '',
+            'plant':  chunk.plant_name or '',
+            'region': chunk.region or '',
+            'page':   chunk.page or '',
+            'score':  round(1 - float(dist), 3),   # cosine similarity
+        }
+        for chunk, dist in rows
+    ]
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -339,31 +348,47 @@ def parse_args():
 def main():
     args = parse_args()
 
+    from apps.backend.app.db.models import GuideChunk
+    from apps.ml_service.app.embed_provider import DIMS, PROVIDER, _model
+
     if args.stats:
+        from sqlalchemy import func, select
+        from apps.backend.app.db.session import SessionLocal
         try:
-            import chromadb
-            client = chromadb.PersistentClient(path=RAG_DB)
-            col = client.get_collection(COLLECTION_NAME)
-            print(f'Collection: {COLLECTION_NAME}')
-            print(f'Documents:  {col.count()}')
+            with SessionLocal() as db:
+                total = db.scalar(select(func.count()).select_from(GuideChunk))
+                by_source = db.execute(
+                    select(GuideChunk.source, func.count())
+                    .group_by(GuideChunk.source)
+                    .order_by(func.count().desc())
+                ).all()
+            print(f'Chunks: {total}')
+            for source, count in by_source:
+                print(f'  {count:>6}  {source or "(no source)"}')
         except Exception as e:
-            print(f'Error reading collection: {e}')
+            print(f'Error reading guide_chunk: {e}')
         return
 
-    collection = get_collection(rebuild=args.rebuild)
+    print(f'Embedding with {PROVIDER}/{_model(PROVIDER)} at {DIMS} dims')
+
+    db = get_collection(rebuild=args.rebuild)
     total_added = 0
+    try:
+        if args.source in ('tamu', 'all'):
+            print('\n=== Indexing TAMU PDFs ===')
+            total_added += index_tamu_pdfs(db)
 
-    if args.source in ('tamu', 'all'):
-        print('\n=== Indexing TAMU PDFs ===')
-        total_added += index_tamu_pdfs(collection)
+        if args.source in ('books', 'all'):
+            print('\n=== Indexing Local Gardening Books ===')
+            total_added += index_books(db)
 
-    if args.source in ('books', 'all'):
-        print('\n=== Indexing Local Gardening Books ===')
-        total_added += index_books(collection)
+        from sqlalchemy import func, select
+        total = db.scalar(select(func.count()).select_from(GuideChunk))
+    finally:
+        db.close()
 
     print(f'\nDone. Total chunks added: {total_added}')
-    print(f'Collection now has {collection.count()} documents')
-    print(f'RAG database at: {RAG_DB}')
+    print(f'guide_chunk now has {total} rows')
 
 
 if __name__ == '__main__':

@@ -129,7 +129,7 @@ gardening_app/
 │   ├── trefle_sync.py              # Trefle botanical data sync
 │   ├── permapeople_sync.py         # Bulk companion planting sync
 │   ├── backfill_images_wiki.py     # Wikimedia/iNaturalist image download
-│   ├── build_rag.py                # Build ChromaDB RAG index for growing guides
+│   ├── build_rag.py                # Build pgvector RAG index for growing guides
 │   ├── backfill_frost_dates.py     # Backfill frost dates from NOAA
 │   └── usda_nutrition_sync.py      # USDA nutritional data
 │
@@ -194,7 +194,7 @@ uv run python ml/training/train_recommender.py
 
 ```bash
 uv run python scripts/build_rag.py
-# Populates a ChromaDB collection used by the search_growing_guides chat tool
+# Populates the guide_chunk table used by the search_growing_guides chat tool
 ```
 
 ### Optional: EDA plots
@@ -262,7 +262,7 @@ An AI chat widget backed by a **server-side agentic loop**. Claude (or any suppo
 | `get_weather_forecast` | 7-day Open-Meteo forecast with ET₀ |
 | `get_watering_history` | Recent rainfall + last-watered dates per bed |
 | `get_watering_recommendation` | Full watering deficit + urgency scores per bed |
-| `search_growing_guides` | RAG search over TAMU/extension growing guides (ChromaDB) |
+| `search_growing_guides` | RAG search over TAMU/extension growing guides (pgvector) |
 
 Conversation history is maintained client-side (a React state array) and sent with every request. This keeps the server stateless while giving Claude full multi-turn context. Conversations are logged server-side to `logs/` for debugging and analysis.
 
@@ -389,7 +389,9 @@ All tool execution is Python — no HTTP round-trips back to the API. Tools acce
 
 ### RAG Growing Guides
 
-`search_growing_guides` uses a [ChromaDB](https://www.trychroma.com/) vector store built from university extension growing guides (TAMU and others). Build the index once with `scripts/build_rag.py`. The chat assistant falls back gracefully if the index doesn't exist.
+`search_growing_guides` uses a [pgvector](https://github.com/pgvector/pgvector) index in Postgres (the `guide_chunk` table), built from university extension growing guides (TAMU and others). Build the index once with `scripts/build_rag.py`. The chat assistant falls back gracefully if the table is empty.
+
+Query embeddings are an API call (`apps/ml_service/app/embed_provider.py`, `EMBED_PROVIDER` = `gemini` by default), so nothing is loaded into the request process. This replaced a ChromaDB store that was gitignored — it never reached Render — and that pulled onnxruntime plus a 79 MB embedding model into memory when opened, which a 512 MB free instance cannot absorb.
 
 ### Recommender Training
 

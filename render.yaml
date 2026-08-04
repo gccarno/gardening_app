@@ -41,6 +41,17 @@ services:
         sync: false
       - key: TOMORROW_IO_KEY
         sync: false
+      # Powers photo plant/pest ID *and* the chat assistant. Never declared here
+      # before, so it was never set on the live service — /api/chat answered
+      # every question with "The garden assistant is not configured" while still
+      # returning HTTP 200, which is why it never surfaced as an error.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Growing-guide retrieval embeds the query through this. Optional: without
+      # it search_growing_guides returns nothing and the assistant falls back to
+      # its own knowledge. See EMBED_PROVIDER in apps/ml_service/app/embed_provider.py.
+      - key: GEMINI_API_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: '3.11'
       # Error tracking + nightly-job cron monitors. Paste the DSN into the

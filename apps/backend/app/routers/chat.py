@@ -144,9 +144,11 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
         reply = run_agentic_loop(system_prompt, messages, garden, db)
         return {'reply': reply, 'conversation_history': messages, 'session_id': session_id}
     except RuntimeError as exc:
-        # Missing API key — production deliberately runs without ANTHROPIC_API_KEY,
-        # so this is the configured behaviour, not a fault. Reporting it opened a
-        # Sentry issue on every probe of /api/chat. The reply is unchanged.
+        # Missing API key. Deliberately not reported to Sentry: it opened an issue
+        # on every probe of /api/chat, and the key is legitimately absent in local
+        # and test environments. The tradeoff is that a genuinely unconfigured
+        # deployment looks healthy — it answers HTTP 200 with the message below
+        # rather than failing — so check this reply first when chat "does nothing".
         return {'reply': str(exc), 'conversation_history': messages, 'session_id': session_id}
     except Exception as exc:
         sentry_sdk.capture_exception(exc)

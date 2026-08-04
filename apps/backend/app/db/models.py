@@ -6,8 +6,9 @@ standard SQLAlchemy equivalents.
 """
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Float, ForeignKey,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Index,
     Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, backref, relationship
@@ -557,3 +558,42 @@ class GardenMember(Base):
 
     def __repr__(self):
         return f'<GardenMember g={self.garden_id} u={self.user_id} {self.role}>'
+
+
+class GuideChunk(Base):
+    """A chunk of an indexed growing guide, with its embedding.
+
+    Replaces the ChromaDB store that used to live at apps/api/instance/rag_db/.
+    That store was gitignored (so it never reached Render) and opening it pulled
+    onnxruntime plus a 79 MB embedding model into the request process. Vectors
+    live here instead and embeddings are an API call — see
+    apps/ml_service/app/embed_provider.py.
+
+    Built by scripts/build_rag.py; read by the search_growing_guides chat tool.
+    """
+    __tablename__ = 'guide_chunk'
+
+    id         = Column(Integer, primary_key=True)
+    text       = Column(Text, nullable=False)
+    source     = Column(String(200))                  # e.g. 'TAMU Easy Gardening Guide'
+    plant_name = Column(String(100))                  # '' for the multi-plant books
+    region     = Column(String(50), index=True)       # filter key; see _STATE_REGION
+    page       = Column(Integer, nullable=True)       # books only; NULL for TAMU guides
+    # Width must match EMBED_DIMS. Changing it needs a migration + full re-index.
+    embedding  = Column(Vector(768), nullable=False)
+
+    # Declared here as well as in the migration so `alembic check` sees a model
+    # that matches the database. The migration builds this index with raw SQL
+    # (autogenerate cannot emit an operator class), and without this the check
+    # reads the index as drift and tries to drop it.
+    __table_args__ = (
+        Index(
+            'ix_guide_chunk_embedding',
+            'embedding',
+            postgresql_using='hnsw',
+            postgresql_ops={'embedding': 'vector_cosine_ops'},
+        ),
+    )
+
+    def __repr__(self):
+        return f'<GuideChunk {self.id} {self.source!r} p={self.page}>'

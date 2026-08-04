@@ -375,6 +375,134 @@ Note: release builds are HTTPS-only (`network_security_config.xml`); debug
 builds also allow `http://` for the emulator (`http://10.0.2.2:8000` reaches
 `localhost:8000` on your PC) and home-LAN development.
 
+### Testing on your phone without a cable
+
+**Bluetooth is not an option for development.** `adb` — the tool Android Studio
+uses to install, launch, debug, and run instrumented tests — only speaks two
+transports: **USB** and **TCP/IP**. There is no Bluetooth transport, and there
+never has been. Bluetooth can only *file-transfer* a finished `.apk` to the
+phone (slow, ~1–2 min for this app's debug APK) which you then tap to install;
+nothing about that gives you Run ▶, logcat, or `connectedAndroidTest`.
+
+**Wi-Fi is the answer.** Which of the three paths below you need depends on
+what you changed:
+
+| What you changed | Cable-free path |
+|---|---|
+| Backend (`apps/backend/`) or web (`apps/web/`) | Nothing to install — `git push`, Render auto-deploys, reopen the app |
+| Android code, just want to use it | Build a debug APK on the PC, sideload it (below) |
+| Android code, want Run ▶ / logcat / E2E tests | **Wireless debugging** (adb over Wi-Fi) |
+
+#### Path 1 — you didn't change the Android app at all
+
+The installed app already points at Render (`ServerConfig.DEFAULT_BASE_URL`),
+so a backend or frontend change reaches your phone with no install step: push
+to `main`, wait for Render's auto-deploy (~2–4 min), then pull-to-refresh in
+the app, or open `https://garden-app-wa0b.onrender.com` in the phone's browser
+to test the web UI. Most days this is the only path you need.
+
+#### Path 2 — sideload a debug APK (no adb, no Studio running)
+
+```powershell
+cd android
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+.\gradlew assembleDebug
+```
+
+Then move `android\app\build\outputs\apk\debug\app-debug.apk` to the phone by
+whatever's convenient — Google Drive, a Nearby Share / Quick Share to the
+phone, or Bluetooth file transfer — and tap it in the phone's Files app
+("allow installing unknown apps" the first time). Installing over the existing
+debug build keeps your data and login (same signing key, same package).
+
+#### Path 3 — Wireless debugging: full Android Studio workflow over Wi-Fi
+
+Requires **Android 11 or newer** on the phone (see the note at the end if
+yours is older) and both devices on the **same Wi-Fi network**.
+
+1. On the phone: **Settings → Developer options → Wireless debugging** → turn
+   it **on**, and allow it for your home network. (Developer options come from
+   tapping **Build number** 7×, as in step 3 above. USB debugging is not
+   needed for this.)
+2. Pair the PC with the phone — **once per PC**. Easiest way, in Android
+   Studio: **Device Manager → the `+` / ⋮ menu → Pair Devices Using Wi-Fi**,
+   which shows a QR code; on the phone tap **Wireless debugging → Pair device
+   with QR code** and scan it. Done — the phone now appears in the Run ▶
+   deployment-target list.
+
+   Or from a terminal, using the phone's **Pair device with pairing code**
+   screen (it shows an `IP:port` and a 6-digit code):
+
+   ```powershell
+   # adb is NOT on this machine's PATH — add it for this shell first
+   $env:Path += ";$env:LOCALAPPDATA\Android\Sdk\platform-tools"
+
+   adb pair 192.168.4.31:37115      # IP:port from the pairing dialog, then type the code
+   adb connect 192.168.4.31:41283   # IP:port from the Wireless debugging MAIN screen
+   adb devices                      # → 192.168.4.31:41283   device
+   ```
+
+   **The two ports are different.** The pairing port is single-use and changes
+   every time you open the dialog; the port you `connect` to is the one listed
+   under the phone's "Wireless debugging" heading. Mixing them up is the usual
+   cause of `failed to authenticate` / `connection refused`.
+3. From here everything cable-based works unchanged, because adb doesn't care
+   how it reached the device:
+
+   ```powershell
+   cd android
+   $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+   .\gradlew installDebug                  # build + install
+   .\gradlew connectedDebugAndroidTest     # the Android E2E phase
+   adb logcat --pid=$(adb shell pidof -s com.gardenapp)   # this app's logs only
+   adb logcat -s AndroidRuntime:E                         # crashes only
+   ```
+
+   Android Studio's green ▶ Run button also just works, including breakpoint
+   debugging and Compose layout inspection.
+4. **Pairing survives reboots; the connection doesn't.** After a phone
+   restart, a Wi-Fi drop, or toggling Wireless debugging off/on, re-run
+   `adb connect <ip>:<port>` with the port currently shown on the phone (no
+   re-pairing). `adb devices` showing nothing after the PC wakes from sleep is
+   normal — `adb kill-server`, then `adb connect` again.
+
+#### Put adb on PATH permanently
+
+`scripts/run_e2e.ps1` and the E2E docs invoke bare `adb`, which fails on this
+machine because platform-tools isn't on PATH. Fix it once:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  'Path',
+  [Environment]::GetEnvironmentVariable('Path','User') + ";$env:LOCALAPPDATA\Android\Sdk\platform-tools",
+  'User')
+```
+
+Open a new terminal afterwards for it to take effect.
+
+#### Wireless troubleshooting
+
+- **`adb connect` times out / phone never appears** — the two devices aren't
+  really on the same network. Common causes: the PC is on Ethernet and the
+  phone on Wi-Fi with different subnets, or the router has client/AP isolation
+  on (typical for guest SSIDs). Confirm the phone's IP from the Wireless
+  debugging screen shares the first three octets with `ipconfig` on the PC.
+- **Device shows `offline`** — `adb disconnect`, then `adb connect` again.
+- **Testing against a *local* backend on the phone** (`http://<PC LAN IP>:8000`
+  instead of Render): uvicorn must bind `--host 0.0.0.0`, *and* Windows
+  Firewall has to allow inbound TCP 8000 — a blocked port looks exactly like
+  a hung app. Allow it once:
+
+  ```powershell
+  New-NetFirewallRule -DisplayName "Garden app uvicorn 8000" `
+    -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private
+  ```
+
+- **Android 10 or older phone** — Wireless debugging doesn't exist; the old
+  `adb tcpip 5555` route requires one USB connection to bootstrap, so a
+  genuinely cable-free debug session isn't possible. Use Path 2 (sideload the
+  APK) and read crashes from the app instead.
+
 ## 6. Photo plant/pest ID (external API)
 
 The identify feature uses Claude vision. Set on the server (and in local
@@ -400,4 +528,18 @@ unaffected.
 | `JOB_TOKEN` | Render + GH secret | guards `/api/admin/run-*` |
 | `ENABLE_SCHEDULER` | Render (`0`) | disable in-process cron on free tier |
 | `CORS_ORIGINS` | optional | comma-separated origins if web is hosted separately |
-| `ANTHROPIC_API_KEY` | Render + local | photo plant/pest ID |
+| `ANTHROPIC_API_KEY` | Render + local | photo plant/pest ID **and the chat assistant** |
+| `LLM_PROVIDER` | optional | `anthropic` (default) \| `openai` \| `ollama` \| `huggingface` |
+| `EMBED_PROVIDER` | optional | `gemini` (default) \| `openai` \| `voyage` — growing-guide search |
+| `EMBED_MODEL` | optional | provider default used if unset |
+| `EMBED_DIMS` | optional | `768` default; **must match the `vector(N)` column** |
+| `GEMINI_API_KEY` | Render + local | required when `EMBED_PROVIDER=gemini` (the default) |
+
+> **The chat assistant needs `ANTHROPIC_API_KEY` set on Render.** Without it
+> `/api/chat` returns HTTP 200 carrying "The garden assistant is not configured"
+> — a friendly message, not an error, so nothing shows up in Sentry and the
+> endpoint looks healthy. Verified live 2026-08-01.
+>
+> `GEMINI_API_KEY` is separate and only powers growing-guide retrieval. Without
+> it `search_growing_guides` returns no passages and the assistant answers from
+> the model's own knowledge; the rest of chat is unaffected.

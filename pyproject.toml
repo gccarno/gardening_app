@@ -11,13 +11,17 @@ dependencies = [
     "pandas",
     "beautifulsoup4",
     "pdfplumber",
-    "chromadb",
+    # Default embedding provider for the growing-guides RAG. Needed at request
+    # time to embed the query, so it belongs in core deps — but it is a thin
+    # HTTP SDK, not a model. Alternate providers live in the `embed-alt` extra.
+    "google-genai",
     # FastAPI backend
     "fastapi",
     "uvicorn[standard]",
     "alembic",
     "python-multipart",
     "sqlalchemy",
+    "pgvector",
     "psycopg[binary]",
     "argon2-cffi",
     "pillow",
@@ -35,6 +39,9 @@ monitoring = ["streamlit"]
 # Render builds with `uv sync --frozen --no-dev`, and MLflow has no business on a
 # 512 MB free instance. Install locally with: uv pip install "mlflow>=3.8"
 evaluation = ["mlflow>=3.8"]
+# Alternate embedding providers. Only needed if EMBED_PROVIDER is switched off
+# the `gemini` default — install the matching one and set the API key.
+embed-alt = ["openai", "voyageai"]
 # Image generation via HuggingFace diffusers (local GPU).
 # NOTE: PyTorch with CUDA must be installed separately — uv cannot pull the CUDA wheel:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121

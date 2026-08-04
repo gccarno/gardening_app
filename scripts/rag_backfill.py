@@ -1,5 +1,5 @@
 """
-Enrich PlantLibrary by querying the RAG system (ChromaDB) for plant-specific
+Enrich PlantLibrary by querying the RAG system (pgvector) for plant-specific
 passages and using an LLM to extract structured field data.
 
 Designed for iterative use:
