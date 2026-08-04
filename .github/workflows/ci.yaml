@@ -26,7 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18
+        # pgvector's image, not stock postgres:18 — the guide_chunk revision runs
+        # CREATE EXTENSION vector, and stock Postgres does not ship that extension
+        # ("extension \"vector\" is not available"). Neon has it, so this only
+        # ever fails in CI.
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: garden_ci
