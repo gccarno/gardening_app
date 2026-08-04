@@ -81,6 +81,41 @@ means the app doesn't boot, the health check fails, and Render rolls back — th
 database can't end up ahead of the running code. Cost is one extra query per cold
 start when nothing is pending.
 
+## The guard against migrating production by hand (added 2026-08-04)
+
+`.env` points `DATABASE_URL` at the production Neon endpoint, so a bare
+`uv run alembic upgrade head` migrates **production** — which is how the
+2026-08-01 outage happened. The `guide_chunk` revision was applied to Neon from a
+laptop while the revision file was still uncommitted. Alembic then found the live
+database stamped at a revision the deployed code had never heard of, and every
+startup died in the lifespan:
+
+```
+CommandError: Can't locate revision identified by 'b41c7d92e5a3'
+```
+
+The app never served a request. Production was down for two days; the nightly
+jobs and live E2E both failed with connection timeouts, which read as "Render is
+being flaky" rather than as a schema fault. The process above was already
+correct — step 3 says *never production* — but nothing enforced it.
+
+`apps/backend/alembic/env.py` now refuses `upgrade`, `downgrade` and `stamp` from
+the CLI when `DATABASE_URL` points anywhere that isn't localhost:
+
+```
+alembic upgrade: refusing to write to the remote database at ep-crimson-star-….neon.tech.
+```
+
+- Read-only commands (`current`, `history`, `check`) still work against
+  production — that is how you diagnose a drift like this one.
+- `revision --autogenerate` still works too; it only writes a local file, and
+  diffing against the real schema is the point of it.
+- The app is unaffected. The guard keys off `config.cmd_opts`, which Alembic only
+  populates in its own argv parser, so `_run_alembic_upgrade()` calling
+  `command.upgrade()` comes through as not-a-CLI-invocation.
+- For a deliberate recovery step, such as re-stamping a restored backup:
+  `ALEMBIC_ALLOW_REMOTE=1 uv run alembic stamp head`
+
 ## The CI check (the actual safety net)
 
 `.github/workflows/ci.yaml` gained a `migrations` job that, against a throwaway
@@ -91,6 +126,10 @@ Postgres service container:
 3. `alembic downgrade base` — asserts the revisions are reversible
 
 No Neon credential, no contact with production.
+
+The service container is `pgvector/pgvector:pg18`, not stock `postgres:18`. The
+`guide_chunk` revision opens with `CREATE EXTENSION vector`, which stock Postgres
+does not ship — Neon has it, so that gap only ever shows up in CI.
 
 **This is what would have caught the July 21 bug.** Verified by simulating it:
 adding `wind_mph` to the `WeatherLog` model without a revision made `check` fail
@@ -145,5 +184,8 @@ named-column access. Stamping was therefore truthful.
 - `_GARDEN_MIGRATIONS` / `_PLANT_LIBRARY_MIGRATIONS` (the SQLite PRAGMA
   backfills) are untouched. They only run on SQLite, which is the frozen
   pre-migration backup and local dev.
-- No revision has yet been written *by* this workflow in anger — the only one is
-  the initial schema. The first real column change is the true test.
+- ~~No revision has yet been written *by* this workflow in anger — the only one
+  is the initial schema. The first real column change is the true test.~~
+  The first real revision was `b41c7d92e5a3` (`guide_chunk`), and it failed the
+  test: not because the tooling was wrong, but because the revision was applied
+  to production before it was committed. Hence the guard above.
