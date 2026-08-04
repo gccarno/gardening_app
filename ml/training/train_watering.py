@@ -30,6 +30,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import Ridge
 from sklearn.model_selection import KFold
 
+from ml.evaluation.metrics_history import append_run
 from ml.evaluation.watering_metrics import evaluate
 from ml.features.watering_features import FEATURE_ORDER, to_vector
 
@@ -112,7 +113,17 @@ def main():
     gate_label = 'decision_accuracy_vs_rule' if 'decision_accuracy_vs_rule' in winner_metrics else 'decision_accuracy'
     gate_value = winner_metrics[gate_label]
     print(f'\nEvaluation gate: {gate_label}={gate_value:.4f} (must be >= {GATE_MIN_DECISION_ACCURACY})')
-    if gate_value < GATE_MIN_DECISION_ACCURACY:
+    gate_passed = gate_value >= GATE_MIN_DECISION_ACCURACY
+
+    append_run('watering', winner_metrics, {
+        'model_type': winner,
+        'n_rows': len(X),
+        'n_with_rule': n_with_rule,
+        'gate_metric': gate_label,
+        'gate_passed': gate_passed,
+    })
+
+    if not gate_passed:
         print('GATE FAILED — not saving model.')
         sys.exit(1)
 

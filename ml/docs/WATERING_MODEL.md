@@ -134,6 +134,13 @@ compare against). Training exits non-zero and does not save a pickle if the
 gate isn't met — this is what CI uses to decide whether a retrain is safe to
 promote.
 
+Every training run (pass *or* fail) appends its metrics to a local,
+gitignored history file (`ml/models/watering_metrics_history.jsonl`) via
+`ml/evaluation/metrics_history.py`, so improvement across retrains is
+answerable — see step 9. CI still keeps its own per-run `train_report.txt`
+artifact; the history file grows unbounded and is a local operational record,
+not source.
+
 ## 7. Model deployment
 
 **Decision:** the trained artifact (`ml/models/watering.pkl`) is committed
@@ -190,11 +197,15 @@ that forecast is. This is a live-serving-cost tradeoff, not a training gap.
 run locally or on demand — **not** part of the product app, per the user's
 explicit intent to keep monitoring separate from what gardeners see. It
 reads `MlWateringSnapshot` directly and shows: forecast-vs-actual rainfall
-error, how much the model's predictions diverge from the rule engine over
-time, the rate at which users actually water when the system recommends it,
-and feature drift (are the gardens/seasons/species in the data changing
-shape over time). These are the signals that would tell us the model needs
-attention before a gardener notices bad recommendations.
+error (including a rolling over-time trend and a "defer-to-rain" view — does
+the model back off when real rain fell?), how much the model's predictions
+diverge from the rule engine over time, the rate at which users actually
+water when the system recommends it, feature drift (are the
+gardens/seasons/species in the data changing shape over time), and — from the
+local `*_metrics_history.jsonl` files written at training time (step 6) — the
+improvement trajectory across training runs. These are the signals that would
+tell us the model needs attention before a gardener notices bad
+recommendations.
 
 ## 10. Model maintenance
 
@@ -205,9 +216,9 @@ assumptions are drifting, and `export_watering_snapshots.py` +
 `train_watering.py` is how a retrain incorporates that real data. When to
 retrain, and when it's worth moving past Ridge/GBR to something more
 complex, should be a judgment call made by looking at the dashboard's
-divergence and drift charts — not an automatic trigger — since at this
-data volume automated retraining risks overfitting to a small, seasonal,
-single-app dataset.
+divergence, drift, and cross-run improvement charts — not an automatic
+trigger — since at this data volume automated retraining risks overfitting to
+a small, seasonal, single-app dataset.
 
 ---
 
@@ -221,6 +232,7 @@ ml/
 ├── data/export_watering_snapshots.py    # v2+ real flywheel data from the live DB
 ├── training/train_watering.py        # Ridge vs GBR, 5-fold CV, saves the pickle
 ├── evaluation/watering_metrics.py    # MAE/RMSE + decision accuracy vs. baseline
+├── evaluation/metrics_history.py     # append/load per-run training history (gitignored)
 ├── models/watering.pkl               # committed artifact, loaded at serve time
 └── monitoring/dashboard.py           # Streamlit, run locally, reads MlWateringSnapshot
 ```

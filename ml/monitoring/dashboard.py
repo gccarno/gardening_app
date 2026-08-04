@@ -45,6 +45,41 @@ def load_snapshots() -> pd.DataFrame:
 st.title('🌱 Watering Model Monitor')
 st.caption('Reads MlWateringSnapshot directly — not part of the product app.')
 
+# ── Model improvement across training runs ────────────────────────────────
+# Rendered before the snapshot sections (and the empty-data st.stop() below)
+# because it reads the local training history, not MlWateringSnapshot — it's
+# useful even before any flywheel data has accumulated.
+from ml.evaluation.metrics_history import load_history
+
+
+def _runs_panel(model_name: str, metric_cols: list[str]) -> None:
+    hist = load_history(model_name)
+    if hist.empty:
+        st.info(f'No `{model_name}` history yet. Run '
+               f'`uv run python ml/training/train_{model_name}.py` to start accumulating it.')
+        return
+    hist = hist.sort_values('ts')
+    present = [c for c in metric_cols if c in hist.columns]
+    if present:
+        st.line_chart(hist.set_index('ts')[present])
+    if 'gate_passed' in hist.columns:
+        passed = int(hist['gate_passed'].sum())
+        st.metric('Training runs recorded', len(hist),
+                 help=f'{passed} passed the gate, {len(hist) - passed} failed.')
+    else:
+        st.metric('Training runs recorded', len(hist))
+    st.dataframe(hist.sort_values('ts', ascending=False))
+
+
+st.header('Model improvement across training runs')
+st.caption('Reads the local ml/models/*_metrics_history.jsonl written by the training '
+          'scripts (gitignored — accrues on whichever machine runs training).')
+st.subheader('Watering model')
+_runs_panel('watering', ['decision_accuracy', 'decision_accuracy_vs_rule', 'mae'])
+st.subheader('Plant recommender')
+_runs_panel('recommender', ['precision@5', 'recall@5', 'ndcg@5'])
+
+st.divider()
 df = load_snapshots()
 
 if df.empty:
@@ -70,6 +105,33 @@ else:
     fc['forecast_error_mm'] = fc['forecast_precip_mm_d1_d2'] - fc['rain_next_day_mm']
     st.line_chart(fc.set_index('snapshot_date')[['forecast_precip_mm_d1_d2', 'rain_next_day_mm']])
     st.metric('Mean absolute forecast error (mm)', round(fc['forecast_error_mm'].abs().mean(), 2))
+
+# ── Model performance over time on actual rainfall ────────────────────────
+st.header('Model performance over time on actual rainfall')
+perf = labeled.dropna(subset=['forecast_precip_mm_d1_d2', 'rain_next_day_mm'])
+if perf.empty:
+    st.info('No rows yet with both a d1/d2 forecast and a backfilled actual rainfall.')
+else:
+    perf = perf.sort_values('snapshot_date').copy()
+    perf['abs_forecast_error_mm'] = (perf['forecast_precip_mm_d1_d2'] - perf['rain_next_day_mm']).abs()
+    window = min(7, len(perf))
+    perf['rolling_mae_mm'] = perf['abs_forecast_error_mm'].rolling(window, min_periods=1).mean()
+    st.caption(f'Rolling {window}-snapshot mean absolute forecast error vs. actual next-day rain '
+              f'(n={len(perf)}). A rising line means the rain signal the model relies on is degrading.')
+    st.line_chart(perf.set_index('snapshot_date')[['rolling_mae_mm']])
+
+    # Defer-to-rain: when meaningful rain actually fell, does the model back off?
+    RAIN_MM = 5.0
+    scored_perf = perf.dropna(subset=['model_pred_mm'])
+    rained = scored_perf[scored_perf['rain_next_day_mm'] >= RAIN_MM]
+    st.subheader(f'Defer-to-rain: model prediction on days ≥{RAIN_MM:.0f} mm rain actually fell')
+    if rained.empty:
+        st.info('No scored rows yet where meaningful rain actually fell '
+               '(needs model_used=True rows with a backfilled wet day).')
+    else:
+        st.caption(f'On days the bed got real rain, model_pred_mm should trend low — the model '
+                  f'correctly not calling for water (n={len(rained)}).')
+        st.line_chart(rained.set_index('snapshot_date')[['model_pred_mm', 'rain_next_day_mm']])
 
 # ── Model vs rule divergence ──────────────────────────────────────────────
 st.header('Model vs. rule engine divergence')

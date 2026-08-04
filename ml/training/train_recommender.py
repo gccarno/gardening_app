@@ -28,6 +28,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 
 from ml.evaluation.metrics import evaluate_recommendations
+from ml.evaluation.metrics_history import append_run
 
 DATA_PATH  = _ROOT / 'ml' / 'data' / 'synthetic_training.csv'
 MODEL_DIR  = _ROOT / 'ml' / 'models'
@@ -115,6 +116,11 @@ def main():
     print('\nAverage metrics:')
     for m, v in avg_metrics.items():
         print(f'  {m} = {v:.4f}')
+
+    append_run('recommender', avg_metrics, {
+        'model_type': 'GradientBoostingClassifier',
+        'n_rows': len(X),
+    })
 
     print('\nTraining final model on full dataset…')
     clf = train_final(X, y)
