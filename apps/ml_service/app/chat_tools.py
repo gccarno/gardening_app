@@ -709,7 +709,7 @@ def _tool_get_watering_recommendation(input_data: dict, garden, db) -> dict:
         return {'error': 'No garden selected.'}
 
     from apps.ml_service.app.watering_engine import (
-        fetch_forecast_today, get_watering_recommendations,
+        fetch_forecast_window, get_watering_recommendations,
     )
 
     cutoff = date.today() - timedelta(days=14)
@@ -718,11 +718,11 @@ def _tool_get_watering_recommendation(input_data: dict, garden, db) -> dict:
                     .filter(WeatherLog.date >= cutoff)
                     .all())
 
-    forecast_today = None
+    forecast_today, precip_d1_d2 = None, None
     if garden.latitude and garden.longitude:
-        forecast_today = fetch_forecast_today(garden.latitude, garden.longitude)
+        forecast_today, precip_d1_d2 = fetch_forecast_window(garden.latitude, garden.longitude)
 
-    beds = get_watering_recommendations(garden, weather_logs, forecast_today)
+    beds = get_watering_recommendations(garden, weather_logs, forecast_today, precip_d1_d2)
 
     if not beds:
         return {

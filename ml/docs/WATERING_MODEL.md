@@ -47,9 +47,21 @@ benefit is visible, for no functional gain.
   recommendation — nothing older is read at serving time.
 - **Training/monitoring (unbounded):** `MlWateringSnapshot`, one row per bed
   per day, accumulates indefinitely. It's the flywheel: features computed
-  each night, plus the label backfilled the following night (did the bed get
+  each night, plus the label backfilled two nights later (did the bed get
   watered? how much rain actually fell?). This is what training and the
   monitoring dashboard read from.
+
+  **Why two nights, not one (fixed 2026-08-05):** a snapshot taken on day D
+  asks what happened on D+1, and neither answer exists while D+1 is still
+  running. The job fires around 04:00 local, so labelling D-1 from "today"
+  meant asking whether the gardener had watered in the four hours since
+  midnight, and reading a `WeatherLog` row for today that is never written by
+  design (the fetcher skips today as a partial day). Both labels were
+  therefore constants: **66 labelled rows, 0 positives, every
+  `rain_next_day_mm` 0.0** — including across 2.03in of rain on 2026-08-02.
+  `_backfill_labels` now labels every still-unlabelled snapshot from D-2 back
+  to the 7-day retention edge, so a missed night is recoverable rather than a
+  permanent null.
 
 **Rainfall source — decision:** stop asking the user to log rainfall.
 Tomorrow.io's `/history/recent` endpoint gives yesterday's observed rainfall
@@ -61,6 +73,27 @@ manually logging rain next to an automatic feed just invites double-counting
 and conflicting values.
 **Why:** the user's explicit instruction — rainfall should come from the
 weather API, not be a chore for the gardener.
+
+Because Tomorrow.io's history window is only ~24h, a missed nightly run used
+to leave a permanent hole in the 7-day window (2026-08-01 is one) that
+silently understated `rain_7d_mm`. The fetcher now diffs the window against
+what's stored and closes any gaps from the Open-Meteo archive, which does
+cover 7 days. Gap-fill never raises — yesterday's data is the point of the
+run — and never overwrites a day that already has a row, so manual rain logs
+survive.
+
+**Rain counts as watering — decision (2026-08-05):** a day with ≥5mm
+*effective* rain (~0.2in, after the existing 2mm interception allowance)
+credits every planted bed with a `WateringEvent(source='rain')` and advances
+`last_watered`, exactly as if the gardener had watered by hand. Amount bands
+mirror the mm-per-event mapping training already uses: light <8mm,
+moderate <15mm, heavy above. It is idempotent per bed/day, a gardener's own
+logged event always wins, and `last_watered` only ever moves forward.
+**Why:** the user's instruction — "previous rain should be treated the same
+as a gardener doing the watering." It also fixes a real distortion: with no
+watering ever logged, `days_since_watered` sat at 999 for every bed on every
+snapshot, permanently pinning the deficit calculation to its 7-day cap and
+denying the flywheel any positive examples.
 
 **Bootstrapping labels — decision:** before any real usage data exists,
 synthetic training data is generated from the *existing rule-based engine*
@@ -178,18 +211,23 @@ deploy and keep alive on free-tier hosting for no real benefit yet. Worth
 reconsidering only if the model grows into something with real cold-start
 cost (e.g. a neural network).
 
-**One deliberate feature gap on the live path:** `forecast_precip_mm_d1_d2`
-(tomorrow + the day after's predicted rain — the signal that lets the model
-decide "skip today because rain's coming tomorrow," per the original goal)
-requires an extra forecast API call beyond what the watering-status endpoint
-already fetches. Fetching it on every dashboard load would burn through
-Tomorrow.io's free-tier quota (~500 requests/day) across every user's every
-page view. So the live serving path leaves it at its default ("no rain
-expected") and the trained model still uses every other feature normally;
-the nightly snapshot job (`apps/backend/app/jobs/ml_snapshot.py`) *does*
-fetch it once per garden, so the training data the model actually learns
-from has the real signal, and the monitoring dashboard can track how good
-that forecast is. This is a live-serving-cost tradeoff, not a training gap.
+**`forecast_precip_mm_d1_d2` is fetched everywhere (fixed 2026-08-05).** This
+feature — tomorrow + the day after's predicted rain, the signal that lets the
+model decide "skip today because rain's coming tomorrow," per the original
+goal — used to be skipped on the live path to save an API call, leaving it at
+its default of "no rain expected" while the nightly snapshot fetched it for
+real.
+
+That was not the cheap tradeoff it looked like. On 2026-08-01, with 96.2mm
+forecast over the following two days, the same bed scored **40 (consider) in
+the nightly snapshot and 100 (urgent) from the API** — the endpoint told the
+gardener to water urgently on the eve of four inches of rain.
+
+Both paths now call `watering_engine.fetch_forecast_window()`, which returns
+`(forecast_today, precip_d1_d2)` from a *single* 7-day request. The quota
+concern that motivated the gap does not apply: the watering-status endpoint
+was already making one forecast call, so this costs no extra requests, and
+the nightly job dropped from two calls per garden to one.
 
 ## 9. Model monitoring
 

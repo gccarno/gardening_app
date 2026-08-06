@@ -67,6 +67,11 @@ _KC_DEFAULT = {'kc': 0.85, 'mm_day': 4.0, 'drought': 'medium'}
 # Rain below this threshold (mm) is mostly intercepted — not counted as effective
 _EFFECTIVE_RAIN_THRESHOLD_MM = 2.0
 
+# A day with at least this much *effective* rain counts as the bed having been
+# watered (~0.2in of actual rainfall). Roughly one real watering for a typical
+# bed, where mm_day_avg runs 3.4–5.0. See rain_watering_amount().
+RAIN_AS_WATERING_MIN_MM = 5.0
+
 
 # ── Public helpers ────────────────────────────────────────────────────────────
 
@@ -121,6 +126,26 @@ def _effective_rain_mm(rainfall_in: float | None) -> float:
         return 0.0
     mm = rainfall_in * 25.4
     return max(0.0, mm - _EFFECTIVE_RAIN_THRESHOLD_MM)
+
+
+def rain_watering_amount(rainfall_in: float | None) -> str | None:
+    """Return the WateringEvent amount category a day's rainfall is worth, or
+    None if it was too light to count as a watering.
+
+    Rain the gardener didn't have to supply counts the same as rain they did —
+    it resets the watering clock. Bands mirror the mm-per-event mapping training
+    already uses for gardener-logged amounts (light 3mm / moderate 6mm /
+    heavy 10mm in ml/data/export_watering_snapshots.py), floored at
+    RAIN_AS_WATERING_MIN_MM.
+    """
+    mm = _effective_rain_mm(rainfall_in)
+    if mm < RAIN_AS_WATERING_MIN_MM:
+        return None
+    if mm < 8.0:
+        return 'light'
+    if mm < 15.0:
+        return 'moderate'
+    return 'heavy'
 
 
 def calculate_deficit(bed, kc_data: dict, weather_logs: list, lookback_days: int = 7) -> float:
@@ -215,7 +240,8 @@ def get_urgency_label(score: int) -> str:
     return 'ok'
 
 
-def get_watering_recommendations(garden, weather_logs: list, forecast_today: dict | None = None) -> list:
+def get_watering_recommendations(garden, weather_logs: list, forecast_today: dict | None = None,
+                                 forecast_precip_d1_d2: float | None = None) -> list:
     """
     Return per-bed watering recommendations for a garden.
 
@@ -223,6 +249,11 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
         garden:         Garden ORM object (with .beds, .beds[].bed_plants loaded)
         weather_logs:   List of WeatherLog objects for this garden (any date range)
         forecast_today: Optional dict {temp_max_c, wind_kmh, precip_prob, precip_mm}
+        forecast_precip_d1_d2: Predicted rainfall (mm) for tomorrow + the day
+                        after. Callers get this alongside forecast_today from
+                        fetch_forecast_window(); passing None makes the model
+                        assume no rain is coming, which is a materially
+                        different recommendation.
 
     Returns:
         List of bed recommendation dicts, sorted by urgency score descending.
@@ -278,11 +309,7 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
                 'humidity_pct':             latest_log.humidity_pct if latest_log else None,
                 'forecast_precip_mm_d0':    (forecast_today or {}).get('precip_mm'),
                 'forecast_precip_prob_d0':  (forecast_today or {}).get('precip_prob'),
-                # Not fetched on the live path (would cost an extra forecast
-                # call per request) — defaults to "no rain expected" via
-                # ml/features/watering_features.py. The nightly snapshot job
-                # fetches it for real; see ml/docs/WATERING_MODEL.md §8.
-                'forecast_precip_mm_d1_d2': None,
+                'forecast_precip_mm_d1_d2': forecast_precip_d1_d2,
                 'forecast_temp_max_c':      (forecast_today or {}).get('temp_max_c'),
                 'days_since_watered':       dsw,
                 'maturity_days':            round(sum(maturity_days) / len(maturity_days)) if maturity_days else None,
@@ -384,23 +411,56 @@ def fetch_forecast_today(lat: float, lon: float) -> dict | None:
     return _fetch_forecast_today_tomorrow_io(lat, lon)
 
 
-def _fetch_forecast_today_tomorrow_io(lat: float, lon: float) -> dict | None:
+def _tomorrow_io_daily(lat: float, lon: float) -> list | None:
+    """Tomorrow.io's daily forecast, today first, normalised to the same key
+    shape fetch_7day_forecast returns."""
     try:
         from apps.backend.app.services import tomorrow_io
         days = tomorrow_io.fetch_forecast_days(lat, lon, units='metric')
-        if not days:
-            return None
-        d = days[0]
+    except Exception:
+        return None
+    if not days:
+        return None
+    out = []
+    for d in days:
         wind_ms = d.get('wind_max')  # tomorrow.io metric wind is m/s
-        return {
+        out.append({
             'date':        d['date'],
             'temp_max_c':  d['temp_max'],
             'wind_kmh':    round(wind_ms * 3.6, 1) if wind_ms is not None else None,
             'precip_prob': d['precip_prob'],
             'precip_mm':   d['precip_sum'],
-        }
-    except Exception:
-        return None
+        })
+    return out
+
+
+def _fetch_forecast_today_tomorrow_io(lat: float, lon: float) -> dict | None:
+    days = _tomorrow_io_daily(lat, lon)
+    return days[0] if days else None
+
+
+def fetch_forecast_window(lat: float, lon: float) -> tuple[dict | None, float | None]:
+    """
+    Return (forecast_today, precip_d1_d2_mm) from a single forecast call.
+
+    Both numbers describe the same forecast, so fetching them together keeps
+    every caller consistent. They used to be fetched separately — and the live
+    recommendation path skipped the d1_d2 call entirely, letting the feature
+    encoder default it to "no rain coming". On 2026-08-01, with 96mm forecast
+    over the next two days, that made the API say urgency 100 for a bed the
+    nightly snapshot scored 40.
+    """
+    days = fetch_7day_forecast(lat, lon) or _tomorrow_io_daily(lat, lon)
+    if not days:
+        return None, None
+    today = {k: days[0].get(k) for k in
+             ('date', 'temp_max_c', 'wind_kmh', 'precip_prob', 'precip_mm')}
+    return today, _precip_sum(days[1:3])
+
+
+def _precip_sum(days: list) -> float | None:
+    vals = [d.get('precip_mm') for d in days if d.get('precip_mm') is not None]
+    return round(sum(vals), 1) if vals else None
 
 
 def fetch_7day_forecast(lat: float, lon: float) -> list | None:

@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 from ..db.models import Garden, User, WeatherLog
 from ..db.session import SessionLocal, get_db
 from ..services.auth import get_current_user, require_garden
-from ..services.helpers import FROST_DATES, REPO_ROOT, WMO, get_or_404, rainfall_summary
+from ..services.helpers import (
+    FROST_DATES, REPO_ROOT, WMO, apply_rain_as_watering, get_or_404, rainfall_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,38 +157,14 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
     if not garden or not garden.latitude or not garden.longitude:
         return 0
 
+    end_date   = date.today() - timedelta(days=1)
+    start_date = end_date - timedelta(days=6)
+
     rows = _tomorrow_io_history_rows(garden)
     if rows is None:
-        end_date   = date.today() - timedelta(days=1)
-        start_date = end_date - timedelta(days=6)
-        try:
-            resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
-                'latitude':           garden.latitude,
-                'longitude':          garden.longitude,
-                'start_date':         start_date.isoformat(),
-                'end_date':           end_date.isoformat(),
-                'daily':              ('precipitation_sum,temperature_2m_max,temperature_2m_min,'
-                                       'relative_humidity_2m_mean,et0_fao_evapotranspiration'),
-                'temperature_unit':   'fahrenheit',
-                'precipitation_unit': 'inch',
-                'timezone':           'auto',
-            }, timeout=10)
-            resp.raise_for_status()
-            daily = resp.json().get('daily', {})
-            times = daily.get('time', [])
-            humidity = daily.get('relative_humidity_2m_mean', [None] * len(times))
-            et0      = daily.get('et0_fao_evapotranspiration', [None] * len(times))
-            rows = [(date.fromisoformat(d_str),
-                     daily['precipitation_sum'][i],
-                     daily['temperature_2m_max'][i],
-                     daily['temperature_2m_min'][i],
-                     humidity[i],
-                     et0[i])
-                    for i, d_str in enumerate(times)]
-        except http.exceptions.RequestException as e:
-            logger.warning('[weather] open-meteo archive failed for garden %d '
-                           '(tomorrow.io also unavailable): %s', garden_id, e)
-            raise
+        rows = _open_meteo_archive_rows(garden, start_date, end_date)  # raises on failure
+    else:
+        rows += _gap_fill_rows(db, garden, rows, start_date, end_date)
 
     created = 0
     for d, rainfall, hi, lo, hum, et0_val in rows:
@@ -202,8 +180,77 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
             source='api',
         ))
         created += 1
+    db.flush()
+    apply_rain_as_watering(db, garden)
     db.commit()
     return created
+
+
+def _open_meteo_archive_rows(garden: Garden, start_date: date, end_date: date) -> list:
+    """Historical dailies from the Open-Meteo archive. Raises on HTTP failure.
+
+    Returns list of (date, rainfall_in, temp_high_f, temp_low_f, humidity_pct, et0_mm).
+    """
+    try:
+        resp = http.get('https://archive-api.open-meteo.com/v1/archive', params={
+            'latitude':           garden.latitude,
+            'longitude':          garden.longitude,
+            'start_date':         start_date.isoformat(),
+            'end_date':           end_date.isoformat(),
+            'daily':              ('precipitation_sum,temperature_2m_max,temperature_2m_min,'
+                                   'relative_humidity_2m_mean,et0_fao_evapotranspiration'),
+            'temperature_unit':   'fahrenheit',
+            'precipitation_unit': 'inch',
+            'timezone':           'auto',
+        }, timeout=10)
+        resp.raise_for_status()
+    except http.exceptions.RequestException as e:
+        logger.warning('[weather] open-meteo archive failed for garden %d: %s', garden.id, e)
+        raise
+    daily = resp.json().get('daily', {})
+    times = daily.get('time', [])
+    humidity = daily.get('relative_humidity_2m_mean', [None] * len(times))
+    et0      = daily.get('et0_fao_evapotranspiration', [None] * len(times))
+    return [(date.fromisoformat(d_str),
+             daily['precipitation_sum'][i],
+             daily['temperature_2m_max'][i],
+             daily['temperature_2m_min'][i],
+             humidity[i],
+             et0[i])
+            for i, d_str in enumerate(times)]
+
+
+def _gap_fill_rows(db: Session, garden: Garden, fetched: list,
+                   start_date: date, end_date: date) -> list:
+    """Rows for days in the 7-day window that neither WeatherLog nor this run's
+    Tomorrow.io fetch covers, pulled from the Open-Meteo archive.
+
+    Tomorrow.io's recent-history endpoint only returns yesterday, so a single
+    missed nightly run used to leave a permanent hole (2026-08-01 is one) that
+    silently understated rain_7d_mm until it aged out. The archive is a 7-day
+    window, so it can close gaps the primary source structurally cannot.
+
+    Never raises: yesterday's data is already in hand and is the point of the
+    nightly run — a failed gap-fill is not worth losing it over. Days that
+    already have a row (including manual rain logs) are left untouched.
+    """
+    have = {d for (d,) in db.query(WeatherLog.date)
+            .filter(WeatherLog.garden_id == garden.id,
+                    WeatherLog.date >= start_date, WeatherLog.date <= end_date).all()}
+    have |= {r[0] for r in fetched}
+    missing = {start_date + timedelta(days=i)
+               for i in range((end_date - start_date).days + 1)} - have
+    if not missing:
+        return []
+
+    logger.info('[weather] garden %d: gap-filling %d missing day(s): %s',
+                garden.id, len(missing), ', '.join(d.isoformat() for d in sorted(missing)))
+    try:
+        rows = _open_meteo_archive_rows(garden, min(missing), max(missing))
+    except Exception as e:
+        logger.warning('[weather] gap-fill failed for garden %d: %s', garden.id, e)
+        return []
+    return [r for r in rows if r[0] in missing]
 
 
 def _tomorrow_io_history_rows(garden: Garden) -> Optional[list]:
@@ -313,7 +360,7 @@ class RainLogBody(BaseModel):
 def api_log_rain(garden_id: int, body: RainLogBody,
                  user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
-    require_garden(db, user, garden_id, 'editor')
+    garden = require_garden(db, user, garden_id, 'editor')
     log_date = date.fromisoformat(body.entry_date) if body.entry_date else date.today()
     rainfall = max(0.0, min(20.0, body.rainfall_in))
 
@@ -323,6 +370,10 @@ def api_log_rain(garden_id: int, body: RainLogBody,
         existing.source = 'manual'
     else:
         db.add(WeatherLog(garden_id=garden_id, date=log_date, rainfall_in=rainfall, source='manual'))
+    db.flush()
+    # Hand-logged rain counts the same as fetched rain — and the same as the
+    # gardener having watered the beds themselves.
+    apply_rain_as_watering(db, garden)
     db.commit()
     return {'ok': True, 'date': log_date.isoformat(), 'rainfall_in': rainfall}
 
@@ -346,7 +397,7 @@ def api_watering_status(garden_id: int,
                         user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     from apps.ml_service.app.watering_engine import (
-        fetch_forecast_today, get_watering_recommendations,
+        fetch_forecast_window, get_watering_recommendations,
     )
     garden = require_garden(db, user, garden_id, 'viewer')
 
@@ -356,11 +407,11 @@ def api_watering_status(garden_id: int,
                             WeatherLog.date >= cutoff)
                     .all())
 
-    forecast_today = None
+    forecast_today, precip_d1_d2 = None, None
     if garden.latitude and garden.longitude:
-        forecast_today = fetch_forecast_today(garden.latitude, garden.longitude)
+        forecast_today, precip_d1_d2 = fetch_forecast_window(garden.latitude, garden.longitude)
 
-    beds = get_watering_recommendations(garden, weather_logs, forecast_today)
+    beds = get_watering_recommendations(garden, weather_logs, forecast_today, precip_d1_d2)
     return {
         'garden_id':        garden_id,
         'date':             date.today().isoformat(),
