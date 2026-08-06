@@ -34,14 +34,19 @@ jobs:
           curl -sSf -X POST "$APP_URL/api/admin/run-weather-fetch" \
             -H "X-Job-Token: $JOB_TOKEN" \
             --retry 3 --retry-delay 30 --max-time 120
+      # always(): these three jobs are independent, so one flaky external call
+      # must not skip the rest. On 2026-08-02 and -03 a weather-fetch timeout
+      # took the snapshot and backup down with it — two nights of training data
+      # and backups lost to an unrelated failure. The job still reports failure
+      # if any step failed.
       - name: Snapshot watering-model training data
-        if: env.APP_URL != ''
+        if: ${{ always() && env.APP_URL != '' }}
         run: |
           curl -sSf -X POST "$APP_URL/api/admin/run-ml-snapshot" \
             -H "X-Job-Token: $JOB_TOKEN" \
             --retry 3 --retry-delay 30 --max-time 120
       - name: Run backup job
-        if: env.APP_URL != ''
+        if: ${{ always() && env.APP_URL != '' }}
         run: |
           curl -sSf -X POST "$APP_URL/api/admin/run-backup" \
             -H "X-Job-Token: $JOB_TOKEN" \

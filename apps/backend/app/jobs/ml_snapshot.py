@@ -3,8 +3,9 @@ Nightly ML snapshot job for the watering-model flywheel.
 
 Three steps, run in this order (see admin.run_ml_snapshot and
 ml/docs/WATERING_MODEL.md, step 3):
-  1. Backfill yesterday's snapshot labels — did each bed get watered "the
-     next day" (i.e. today), and how much rain actually fell?
+  1. Backfill labels for snapshots whose "next day" has fully elapsed and
+     been recorded — did each bed get watered, and how much rain fell? That
+     is D-2 and older, not yesterday; see _backfill_labels.
   2. Compute today's feature snapshot per bed: the features the watering
      model sees, plus what the rule engine (and, once trained, the model)
      currently recommend.
@@ -13,6 +14,10 @@ ml/docs/WATERING_MODEL.md, step 3):
 Order matters: label backfill and the new snapshot both read from
 WeatherLog/WateringEvent, so pruning has to happen last.  MlWateringSnapshot
 itself is never pruned — it's the accumulating training/monitoring store.
+
+This job must also run *after* the nightly weather fetch, which is what
+writes yesterday's WeatherLog row and credits rain-as-watering events — both
+of which step 1 reads.
 """
 import logging
 from datetime import date, timedelta
@@ -29,53 +34,51 @@ _RETENTION_DAYS = 7
 
 
 def _backfill_labels(db: Session, garden_id: int) -> int:
-    """Fill in yesterday's snapshot labels using today's WateringEvent/WeatherLog rows."""
-    yesterday = date.today() - timedelta(days=1)
+    """Label snapshots whose "next day" has fully elapsed *and* been recorded.
+
+    The window starts at D-2, not D-1. A snapshot taken on day D asks "was this
+    bed watered on D+1, and did it rain?" — neither is knowable while D+1 is
+    still running. This job fires around 04:00 local, so labelling yesterday's
+    snapshot meant asking whether the gardener had watered in the four hours
+    since midnight (answer: never) and reading a WeatherLog row for today that
+    by design is never written (weather.py skips today as a partial day). Both
+    labels were therefore constant: 66 rows, 0 positives, every rain figure
+    0.0mm — including across 2.03in of rain on 2026-08-02.
+
+    Labels every still-unlabelled snapshot back to the retention edge rather
+    than exactly D-2, so a missed night is recoverable instead of leaving a
+    permanent null (2026-08-01 is one).
+    """
     today = date.today()
+    newest = today - timedelta(days=2)                    # its next day (D-1) is complete
+    oldest = today - timedelta(days=_RETENTION_DAYS)      # older source rows are pruned
     snapshots = (db.query(MlWateringSnapshot)
                  .filter(MlWateringSnapshot.garden_id == garden_id,
-                         MlWateringSnapshot.snapshot_date == yesterday,
+                         MlWateringSnapshot.snapshot_date <= newest,
+                         MlWateringSnapshot.snapshot_date >= oldest,
                          MlWateringSnapshot.watered_next_day.is_(None))
                  .all())
     if not snapshots:
         return 0
 
-    today_log = db.query(WeatherLog).filter_by(garden_id=garden_id, date=today).first()
-    rain_next_day_mm = (today_log.rainfall_in * 25.4) if today_log and today_log.rainfall_in else 0.0
-
-    events_by_bed = {}
+    rain_by_date = {lg.date: (lg.rainfall_in or 0) * 25.4 for lg in
+                    db.query(WeatherLog).filter(WeatherLog.garden_id == garden_id,
+                                                WeatherLog.date >= oldest).all()}
+    events_by_bed_date = {}
     for ev in (db.query(WateringEvent)
-               .filter(WateringEvent.garden_id == garden_id, WateringEvent.event_date == today)
+               .filter(WateringEvent.garden_id == garden_id,
+                       WateringEvent.event_date >= oldest)
                .all()):
         if ev.bed_id:
-            events_by_bed.setdefault(ev.bed_id, ev)
+            events_by_bed_date.setdefault((ev.bed_id, ev.event_date), ev)
 
     for snap in snapshots:
-        ev = events_by_bed.get(snap.bed_id)
+        outcome_date = snap.snapshot_date + timedelta(days=1)
+        ev = events_by_bed_date.get((snap.bed_id, outcome_date))
         snap.watered_next_day = ev is not None
         snap.watered_amount = ev.amount if ev else None
-        snap.rain_next_day_mm = rain_next_day_mm
+        snap.rain_next_day_mm = rain_by_date.get(outcome_date, 0.0)
     return len(snapshots)
-
-
-def _forecast_precip_d1_d2(lat: float, lon: float) -> float | None:
-    """Sum of predicted rainfall (mm) for tomorrow + the day after — the
-    forward-looking signal the deficit-based rule engine doesn't use, but
-    the model can (see CLAUDE goal: 'use predicted rainfall to decide,
-    tomorrow or the next day')."""
-    from apps.ml_service.app.watering_engine import fetch_7day_forecast
-    days = fetch_7day_forecast(lat, lon)
-    if not days:
-        try:
-            from ..services import tomorrow_io
-            raw = tomorrow_io.fetch_forecast_days(lat, lon, units='metric')
-            days = [{'precip_mm': d.get('precip_sum')} for d in raw] if raw else None
-        except Exception:
-            days = None
-    if not days or len(days) < 3:
-        return None
-    vals = [d.get('precip_mm') for d in days[1:3] if d.get('precip_mm') is not None]
-    return round(sum(vals), 1) if vals else None
 
 
 def _predict_mm(feature_row: dict) -> tuple[float | None, bool]:
@@ -92,20 +95,19 @@ def _predict_mm(feature_row: dict) -> tuple[float | None, bool]:
 
 
 def _snapshot_garden(db: Session, garden: Garden) -> int:
-    from apps.ml_service.app.watering_engine import fetch_forecast_today, get_watering_recommendations
+    from apps.ml_service.app.watering_engine import fetch_forecast_window, get_watering_recommendations
 
     cutoff = date.today() - timedelta(days=_RETENTION_DAYS)
     weather_logs = (db.query(WeatherLog)
                     .filter(WeatherLog.garden_id == garden.id, WeatherLog.date >= cutoff)
                     .all())
 
-    forecast_today = None
+    forecast_today, precip_d1_d2 = None, None
     if garden.latitude and garden.longitude:
-        forecast_today = fetch_forecast_today(garden.latitude, garden.longitude)
-    precip_d1_d2 = (_forecast_precip_d1_d2(garden.latitude, garden.longitude)
-                    if garden.latitude and garden.longitude else None)
+        forecast_today, precip_d1_d2 = fetch_forecast_window(garden.latitude, garden.longitude)
 
-    recs_by_bed = {r['bed_id']: r for r in get_watering_recommendations(garden, weather_logs, forecast_today)}
+    recs_by_bed = {r['bed_id']: r for r in
+                   get_watering_recommendations(garden, weather_logs, forecast_today, precip_d1_d2)}
     rain_7d_mm = sum((lg.rainfall_in or 0) * 25.4 for lg in weather_logs)
     et0_vals = [lg.et0_mm for lg in weather_logs if lg.et0_mm is not None]
     et0_7d_mm = round(sum(et0_vals), 1) if et0_vals else None

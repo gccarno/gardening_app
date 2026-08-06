@@ -354,7 +354,9 @@ class WateringEvent(Base):
     bed_id     = Column(Integer, ForeignKey('garden_bed.id'), nullable=True, index=True)
     event_date = Column(Date, nullable=False)
     amount     = Column(String(20), nullable=True)   # 'light' | 'moderate' | 'heavy'
-    source     = Column(String(10), nullable=False, default='user')  # 'user' or 'bulk'
+    # 'user' | 'bulk' | 'rain' — rain heavy enough to count as a watering is
+    # credited automatically (services/helpers.py: apply_rain_as_watering).
+    source     = Column(String(10), nullable=False, default='user')
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     def __repr__(self):

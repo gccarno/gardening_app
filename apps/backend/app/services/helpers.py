@@ -83,6 +83,63 @@ def record_watering_event(db: Session, garden_id: int | None, bed_id: int | None
                          amount=amount, source=source))
 
 
+def apply_rain_as_watering(db: Session, garden, lookback_days: int = 7) -> int:
+    """Credit every planted bed in the garden with a watering on days when
+    enough rain fell. Returns the number of WateringEvent rows created.
+
+    Rain the gardener didn't have to supply counts the same as rain they did:
+    it resets days_since_watered for the rule engine, the model and the UI, and
+    it gives the ML flywheel the positive examples it otherwise never records
+    in a rainy week. Caller commits.
+
+    Idempotent — a bed/day that already has a WateringEvent is left alone, so
+    re-running the nightly fetch (or a gap-fill that re-adds an old rain day)
+    can't double-count, and a gardener's own logged amount always wins.
+    """
+    from apps.ml_service.app.watering_engine import rain_watering_amount
+
+    from ..db.models import BedPlant, WateringEvent, WeatherLog
+
+    cutoff = date.today() - timedelta(days=lookback_days)
+    rain_days = [
+        (lg.date, amount)
+        for lg in db.query(WeatherLog).filter(WeatherLog.garden_id == garden.id,
+                                              WeatherLog.date >= cutoff).all()
+        if (amount := rain_watering_amount(lg.rainfall_in))
+    ]
+    bed_ids = [b.id for b in garden.beds]
+    if not rain_days or not bed_ids:
+        return 0
+
+    already = {(ev.bed_id, ev.event_date) for ev in
+               db.query(WateringEvent).filter(WateringEvent.garden_id == garden.id,
+                                              WateringEvent.bed_id.in_(bed_ids),
+                                              WateringEvent.event_date >= cutoff).all()}
+    bps_by_bed: dict[int, list] = {}
+    for bp in db.query(BedPlant).filter(BedPlant.bed_id.in_(bed_ids)).all():
+        bps_by_bed.setdefault(bp.bed_id, []).append(bp)
+
+    created = 0
+    for rain_date, amount in sorted(rain_days):
+        for bed_id, bps in bps_by_bed.items():   # empty beds have nothing to water
+            if (bed_id, rain_date) not in already:
+                db.add(WateringEvent(garden_id=garden.id, bed_id=bed_id,
+                                     event_date=rain_date, amount=amount, source='rain'))
+                already.add((bed_id, rain_date))
+                created += 1
+            # last_watered only ever moves forward — an older rain day must not
+            # roll back a more recent watering.
+            for bp in bps:
+                if bp.last_watered is None or bp.last_watered < rain_date:
+                    bp.last_watered = rain_date
+                    bp.watering_amount = amount
+                if bp.plant and (bp.plant.last_watered is None
+                                 or bp.plant.last_watered < rain_date):
+                    bp.plant.last_watered = rain_date
+                    bp.plant.watering_amount = amount
+    return created
+
+
 def rainfall_summary(db: Session, garden_id: int, days: int = 7) -> dict:
     from ..db.models import WeatherLog
     cutoff = date.today() - timedelta(days=days)
