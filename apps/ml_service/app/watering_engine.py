@@ -376,41 +376,6 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
 
 # ── Weather fetch helpers (used by chat tools) ────────────────────────────────
 
-def fetch_forecast_today(lat: float, lon: float) -> dict | None:
-    """
-    Fetch today's forecast (metric): Open-Meteo first, falling back to
-    Tomorrow.io (key in TOMORROW_IO_KEY / TOMORROW_IO) when Open-Meteo is
-    unreachable — e.g. from Render's shared egress IPs. Returns None on failure.
-    """
-    try:
-        import requests
-        resp = requests.get('https://api.open-meteo.com/v1/forecast', params={
-            'latitude': lat, 'longitude': lon,
-            'daily': (
-                'temperature_2m_max,precipitation_probability_max,'
-                'precipitation_sum,wind_speed_10m_max'
-            ),
-            'temperature_unit': 'celsius',
-            'wind_speed_unit': 'kmh',
-            'precipitation_unit': 'mm',
-            'forecast_days': 1,
-            'timezone': 'auto',
-        }, timeout=6)
-        resp.raise_for_status()
-        d = resp.json().get('daily', {})
-        if d.get('time'):
-            return {
-                'date':       d['time'][0],
-                'temp_max_c': _idx(d.get('temperature_2m_max'), 0),
-                'wind_kmh':   _idx(d.get('wind_speed_10m_max'), 0),
-                'precip_prob': _idx(d.get('precipitation_probability_max'), 0),
-                'precip_mm':  _idx(d.get('precipitation_sum'), 0),
-            }
-    except Exception:
-        pass
-    return _fetch_forecast_today_tomorrow_io(lat, lon)
-
-
 def _tomorrow_io_daily(lat: float, lon: float) -> list | None:
     """Tomorrow.io's daily forecast, today first, normalised to the same key
     shape fetch_7day_forecast returns."""
@@ -432,11 +397,6 @@ def _tomorrow_io_daily(lat: float, lon: float) -> list | None:
             'precip_mm':   d['precip_sum'],
         })
     return out
-
-
-def _fetch_forecast_today_tomorrow_io(lat: float, lon: float) -> dict | None:
-    days = _tomorrow_io_daily(lat, lon)
-    return days[0] if days else None
 
 
 def fetch_forecast_window(lat: float, lon: float) -> tuple[dict | None, float | None]:

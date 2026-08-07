@@ -121,22 +121,26 @@ def test_fetch_functions_return_none_without_key(monkeypatch):
 
 # ── Watering-engine forecast fallback ────────────────────────────────────────
 
-def test_forecast_today_falls_back_to_tomorrow_io(fallback_http):
-    fc = watering_engine.fetch_forecast_today(40.0, -75.2)
-    assert fc == {
+def test_forecast_window_falls_back_to_tomorrow_io(fallback_http):
+    """Exercises the real Tomorrow.io payload, unlike test_forecast_window.py
+    which stubs _tomorrow_io_daily — this is what covers the m/s -> km/h
+    conversion and the response parsing."""
+    forecast_today, precip_d1_d2 = watering_engine.fetch_forecast_window(40.0, -75.2)
+    assert forecast_today == {
         'date': '2026-07-17', 'temp_max_c': 31.0,
         'wind_kmh': 18.0,  # 5.0 m/s * 3.6
         'precip_prob': 65, 'precip_mm': 4.0,
     }
+    assert precip_d1_d2 == 0.0  # only one further day in FORECAST, and it is dry
 
 
-def test_forecast_today_none_when_both_fail(monkeypatch):
+def test_forecast_window_none_when_both_fail(monkeypatch):
     monkeypatch.setenv('TOMORROW_IO_KEY', 'test-key')
 
     def all_fail(url, **kwargs):
         raise requests.ConnectionError('down')
     monkeypatch.setattr(requests, 'get', all_fail)
-    assert watering_engine.fetch_forecast_today(40.0, -75.2) is None
+    assert watering_engine.fetch_forecast_window(40.0, -75.2) == (None, None)
 
 
 # ── Weather-card endpoint fallback ───────────────────────────────────────────
