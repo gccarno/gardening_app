@@ -276,8 +276,11 @@ def test_get_watering_recommendation(db, garden, plant_in_bed, weather_log):
         'et0_mm': 4.0, 'precip_mm': 0.0, 'temp_max_c': 22,
         'temp_min_c': 12, 'wind_kmh': 10, 'precip_prob': 5,
     }
-    with patch('apps.ml_service.app.watering_engine.fetch_forecast_today',
-               return_value=mock_today):
+    # Returns a (forecast_today, precip_d1_d2) tuple — patching the old
+    # single-value fetch_forecast_today here silently stopped intercepting
+    # anything, and the test spent ~24s calling the real Open-Meteo API.
+    with patch('apps.ml_service.app.watering_engine.fetch_forecast_window',
+               return_value=(mock_today, 0.0)):
         result = execute_tool('get_watering_recommendation', {}, garden, db)
     assert 'beds' in result
     assert 'summary' in result
