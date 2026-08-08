@@ -10,7 +10,12 @@ test.describe.configure({ mode: 'serial' });
 test.describe('teardown', () => {
   test('restores the previous default garden', async ({ request }) => {
     const { prevDefaultGardenId } = readRunState();
-    if (prevDefaultGardenId) {
+    // `null` is a real value to restore, not a reason to skip: when there was
+    // no previous default this used to leave the [E2E] garden as the global
+    // default and then delete it two tests later, pointing every client at a
+    // garden that no longer existed. Only `undefined` — no spec recorded a
+    // previous value, e.g. a partial run — means leave the setting alone.
+    if (prevDefaultGardenId !== undefined) {
       await api(request, 'post', '/api/settings/default-garden', { garden_id: prevDefaultGardenId });
     }
   });
