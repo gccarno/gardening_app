@@ -258,6 +258,48 @@ divergence, drift, and cross-run improvement charts — not an automatic
 trigger — since at this data volume automated retraining risks overfitting to
 a small, seasonal, single-app dataset.
 
+### Retrain checkpoint (set 2026-08-07)
+
+The shipped `watering.pkl` is still the 2026-07-23 model: 6,000 synthetic
+rows, `n_with_rule: 0`. The label fixes of 2026-08-05 produced the first real
+training signal, but it is far too thin to retrain on yet:
+
+| | as of 2026-08-07 |
+|---|---|
+| labeled snapshot rows | 24 |
+| positives | 12 |
+| **distinct weather events behind those positives** | **2** |
+
+Twelve positives across six beds on two rain days is two independent
+observations wearing twelve hats — the beds share one garden, one location,
+and one forecast, so they are nowhere near independent samples.
+
+**Do not retrain until all three hold:**
+
+1. **~30+ distinct labeled snapshot days.** Count days, never rows; rows scale
+   with bed count and overstate how much you actually know.
+2. **Positives that are not all rain.** Every positive in the set today comes
+   from `apply_rain_as_watering`. A model trained on this learns "it rained
+   yesterday", which the `rain_next_day_mm` feature already states outright —
+   it would not learn anything about when a *gardener* waters.
+3. **Real negatives.** Dry days where nobody watered and nothing rained. Those
+   are what teach the model where the decision boundary sits.
+
+Check with:
+
+```sql
+SELECT count(DISTINCT snapshot_date) AS days,
+       count(*) FILTER (WHERE watered_next_day) AS positives,
+       count(*) FILTER (WHERE watered_next_day IS FALSE) AS negatives
+FROM ml_watering_snapshot WHERE watered_next_day IS NOT NULL;
+```
+
+Two structural caveats on the counts: snapshots for D-1 and D-2 are always
+unlabeled (the outcome day is not complete yet — see §3), and rows whose
+outcome day has aged past the 7-day retention edge can never be labeled. The
+2026-07-22 → 07-30 rows and the 08-02/08-03 outage gap are permanently lost;
+do not wait on them.
+
 ---
 
 ## Quick reference
