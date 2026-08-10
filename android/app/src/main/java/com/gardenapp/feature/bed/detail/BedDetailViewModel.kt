@@ -32,11 +32,21 @@ data class BedDetailUiState(
     val pickerQuery: String = "",
     val pickerResults: List<LibraryListEntry> = emptyList(),
     val pickerLoading: Boolean = false,
+    // Pending plant removal (long press → confirm)
+    val pendingRemoval: GridPlant? = null,
+    // Rotation conflict confirmation before placing a picked plant
+    val pendingPlacement: LibraryListEntry? = null,
+    val placementWarning: String? = null,
     // Care tracking sheet
     val careSheetPlant: BedPlantDetail? = null,
     val careLastWatered: String = "",
     val careLastFertilized: String = "",
+    val careLastHarvest: String = "",
     val careHealthNotes: String = "",
+    val careStage: String = "",
+    val carePlantedDate: String = "",
+    val careTransplantDate: String = "",
+    val carePlantNotes: String = "",
     val isSavingCare: Boolean = false,
     // Observations (shown in care sheet)
     val observations: List<PlantObservation> = emptyList(),
@@ -63,6 +73,9 @@ class BedDetailViewModel @Inject constructor(
     val uiState: StateFlow<BedDetailUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
+
+    /** Cell (inches) the picker was opened for; survives the rotation-warning confirm step. */
+    private var targetCell: Pair<Int, Int>? = null
 
     init {
         Log.d(TAG, "init bedId=$bedId")
@@ -103,12 +116,17 @@ class BedDetailViewModel @Inject constructor(
 
     // ── Plant placement ──────────────────────────────────────────────────────
 
+    /** Resolves the plant covering this cell — a plant wider than 12in covers several. */
+    private fun plantAt(gridX: Int, gridY: Int): GridPlant? =
+        cellToPlantMap(_uiState.value.placed)[
+            Pair(gridX / INCHES_PER_CELL, gridY / INCHES_PER_CELL)
+        ]
+
     fun onCellTap(gridX: Int, gridY: Int) {
-        val occupied = _uiState.value.placed.any { it.gridX == gridX && it.gridY == gridY }
-        if (occupied) {
+        val bp = plantAt(gridX, gridY)
+        if (bp != null) {
             // Open care sheet
-            val bp = _uiState.value.placed.find { it.gridX == gridX && it.gridY == gridY }
-            bp?.let { openCareSheet(it.id) }
+            openCareSheet(bp.id)
         } else {
             // Open plant picker
             _uiState.value = _uiState.value.copy(
@@ -121,13 +139,29 @@ class BedDetailViewModel @Inject constructor(
     }
 
     fun onCellLongPress(gridX: Int, gridY: Int) {
-        val bp = _uiState.value.placed.find { it.gridX == gridX && it.gridY == gridY } ?: return
+        val bp = plantAt(gridX, gridY) ?: return
+        _uiState.value = _uiState.value.copy(pendingRemoval = bp)
+    }
+
+    fun dismissRemoval() { _uiState.value = _uiState.value.copy(pendingRemoval = null) }
+
+    fun confirmRemoval() {
+        val bp = _uiState.value.pendingRemoval ?: return
+        _uiState.value = _uiState.value.copy(pendingRemoval = null)
         viewModelScope.launch {
-            repository.removePlant(bp.id)
-            _uiState.value = _uiState.value.copy(
-                placed = _uiState.value.placed.filter { it.id != bp.id },
-                message = "${bp.plantName} removed",
-            )
+            when (val r = repository.removePlant(bp.id)) {
+                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(
+                    placed = _uiState.value.placed.filter { it.id != bp.id },
+                    message = "${bp.plantName} removed",
+                )
+                is NetworkResult.Error -> {
+                    Log.e(TAG, "removePlant error: ${r.message}")
+                    _uiState.value = _uiState.value.copy(
+                        error = r.message ?: "Could not remove ${bp.plantName}",
+                    )
+                }
+                else -> Unit
+            }
         }
     }
 
@@ -155,37 +189,72 @@ class BedDetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Checks crop rotation for the candidate before placing. On a conflict the user
+     * gets a confirm step (matching the web's pre-placement warning); otherwise the
+     * plant goes straight in.
+     */
     fun onLibraryEntrySelected(entry: LibraryListEntry) {
         val cell = _uiState.value.showPickerForCell ?: return
-        val spacingIn = entry.spacingIn?.toInt()?.coerceAtLeast(6) ?: 12
-        Log.d(TAG, "placePlant cell=${cell} libraryId=${entry.id} spacing=$spacingIn")
+        targetCell = cell
         _uiState.value = _uiState.value.copy(showPickerForCell = null, isPlacing = true)
         viewModelScope.launch {
-            when (val r = repository.placePlant(bedId, cell.first, cell.second, entry.id, spacingIn)) {
-                is NetworkResult.Success -> {
-                    Log.d(TAG, "placePlant ok id=${r.data.id} name='${r.data.plantName}'")
-                    val newPlant = GridPlant(
-                        id = r.data.id, gridX = cell.first, gridY = cell.second,
-                        plantId = r.data.plantId, plantName = r.data.plantName,
-                        imageFilename = r.data.imageFilename, spacingIn = r.data.spacingIn,
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        placed = _uiState.value.placed + newPlant,
-                        isPlacing = false,
-                        message = "${entry.name} placed",
-                    )
-                }
-                is NetworkResult.Error -> {
-                    Log.e(TAG, "placePlant error: ${r.message}")
-                    _uiState.value = _uiState.value.copy(
-                        isPlacing = false,
-                        error = if (r.message?.contains("409") == true || r.message?.contains("overlap") == true)
-                            "That cell is already occupied" else r.message,
-                    )
-                }
-                else -> Unit
+            val r = repository.getRotationWarnings(bedId, entry.id)
+            val warning = (r as? NetworkResult.Success)
+                ?.data?.takeIf { it.conflict }?.warning
+            if (warning != null) {
+                _uiState.value = _uiState.value.copy(
+                    isPlacing = false, pendingPlacement = entry, placementWarning = warning,
+                )
+            } else {
+                placePlant(entry)
             }
         }
+    }
+
+    fun dismissPlacement() {
+        targetCell = null
+        _uiState.value = _uiState.value.copy(pendingPlacement = null, placementWarning = null)
+    }
+
+    fun confirmPlacement() {
+        val entry = _uiState.value.pendingPlacement ?: return
+        _uiState.value = _uiState.value.copy(
+            pendingPlacement = null, placementWarning = null, isPlacing = true,
+        )
+        viewModelScope.launch { placePlant(entry) }
+    }
+
+    private suspend fun placePlant(entry: LibraryListEntry) {
+        val cell = targetCell ?: return
+        val spacingIn = entry.spacingIn?.toInt()?.coerceAtLeast(6) ?: 12
+        Log.d(TAG, "placePlant cell=${cell} libraryId=${entry.id} spacing=$spacingIn")
+        when (val r = repository.placePlant(bedId, cell.first, cell.second, entry.id, spacingIn)) {
+            is NetworkResult.Success -> {
+                Log.d(TAG, "placePlant ok id=${r.data.id} name='${r.data.plantName}'")
+                val newPlant = GridPlant(
+                    id = r.data.id, gridX = cell.first, gridY = cell.second,
+                    plantId = r.data.plantId, plantName = r.data.plantName,
+                    imageFilename = r.data.imageFilename, spacingIn = r.data.spacingIn,
+                )
+                _uiState.value = _uiState.value.copy(
+                    placed = _uiState.value.placed + newPlant,
+                    isPlacing = false,
+                    message = "${entry.name} placed",
+                )
+                loadRotationWarnings()
+            }
+            is NetworkResult.Error -> {
+                Log.e(TAG, "placePlant error: ${r.message}")
+                _uiState.value = _uiState.value.copy(
+                    isPlacing = false,
+                    error = if (r.message?.contains("409") == true || r.message?.contains("overlap") == true)
+                        "That cell is already occupied" else r.message,
+                )
+            }
+            else -> Unit
+        }
+        targetCell = null
     }
 
     fun dismissPicker() { _uiState.value = _uiState.value.copy(showPickerForCell = null) }
@@ -201,7 +270,12 @@ class BedDetailViewModel @Inject constructor(
                         careSheetPlant = bp,
                         careLastWatered = bp.lastWatered ?: "",
                         careLastFertilized = bp.lastFertilized ?: "",
+                        careLastHarvest = bp.lastHarvest ?: "",
                         careHealthNotes = bp.healthNotes ?: "",
+                        careStage = bp.stage ?: "",
+                        carePlantedDate = bp.plantedDate ?: "",
+                        careTransplantDate = bp.transplantDate ?: "",
+                        carePlantNotes = bp.plantNotes ?: "",
                     )
                     loadObservations(bedPlantId)
                 }
@@ -216,8 +290,23 @@ class BedDetailViewModel @Inject constructor(
     fun onCareFertilizedChange(v: String) = _uiState.value.let {
         _uiState.value = it.copy(careLastFertilized = v)
     }
+    fun onCareHarvestChange(v: String) = _uiState.value.let {
+        _uiState.value = it.copy(careLastHarvest = v)
+    }
     fun onCareNotesChange(v: String) = _uiState.value.let {
         _uiState.value = it.copy(careHealthNotes = v)
+    }
+    fun onCareStageChange(v: String) = _uiState.value.let {
+        _uiState.value = it.copy(careStage = v)
+    }
+    fun onCarePlantedDateChange(v: String) = _uiState.value.let {
+        _uiState.value = it.copy(carePlantedDate = v)
+    }
+    fun onCareTransplantDateChange(v: String) = _uiState.value.let {
+        _uiState.value = it.copy(careTransplantDate = v)
+    }
+    fun onCarePlantNotesChange(v: String) = _uiState.value.let {
+        _uiState.value = it.copy(carePlantNotes = v)
     }
 
     fun saveCare() {
@@ -225,19 +314,32 @@ class BedDetailViewModel @Inject constructor(
         val s = _uiState.value
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSavingCare = true)
-            repository.saveCare(
+            val r = repository.saveCare(
                 bp.id,
                 lastWatered = s.careLastWatered.takeIf { it.isNotBlank() },
                 lastFertilized = s.careLastFertilized.takeIf { it.isNotBlank() },
+                lastHarvest = s.careLastHarvest.takeIf { it.isNotBlank() },
                 healthNotes = s.careHealthNotes.takeIf { it.isNotBlank() },
+                stage = s.careStage.takeIf { it.isNotBlank() },
+                plantedDate = s.carePlantedDate.takeIf { it.isNotBlank() },
+                transplantDate = s.careTransplantDate.takeIf { it.isNotBlank() },
+                plantNotes = s.carePlantNotes.takeIf { it.isNotBlank() },
             )
-            _uiState.value = _uiState.value.copy(isSavingCare = false, careSheetPlant = null, message = "Care saved")
+            _uiState.value = when (r) {
+                is NetworkResult.Error -> _uiState.value.copy(
+                    isSavingCare = false, error = r.message ?: "Could not save care",
+                )
+                else -> _uiState.value.copy(
+                    isSavingCare = false, careSheetPlant = null, message = "Care saved",
+                )
+            }
         }
     }
 
     fun dismissCareSheet() {
         _uiState.value = _uiState.value.copy(
             careSheetPlant = null,
+            careStage = "",
             observations = emptyList(),
             healthScore = null,
             showObsForm = false,

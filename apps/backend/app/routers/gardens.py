@@ -239,15 +239,28 @@ def api_garden_delete(garden_id: int,
 # ── App settings ──────────────────────────────────────────────────────────────
 
 @router.get('/settings/default-garden')
-def api_get_default_garden(db: Session = Depends(get_db)):
+def api_get_default_garden(user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
     setting = db.get(AppSetting, 'default_garden_id')
     gid = int(setting.value) if setting and setting.value else None
+    # The setting is global and outlives the garden it names, so a deleted (or
+    # someone else's) garden would otherwise be handed to clients that trust it
+    # and then 404 on every garden-scoped call. None lets them fall back.
+    if gid is not None and gid not in member_garden_ids(db, user):
+        return {'garden_id': None}
     return {'garden_id': gid}
 
 
 @router.post('/settings/default-garden')
-def api_set_default_garden(body: dict, db: Session = Depends(get_db)):
+def api_set_default_garden(body: dict,
+                           user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
     gid = body.get('garden_id')
+    # One global row shared by every client, so a write must be a garden the
+    # writer can actually reach — otherwise it aims everyone at a garden they
+    # have no membership in. A falsy id clears the setting.
+    if gid:
+        require_garden(db, user, int(gid), 'viewer')
     setting = db.get(AppSetting, 'default_garden_id')
     if setting is None:
         setting = AppSetting(key='default_garden_id', value=str(gid) if gid else None)

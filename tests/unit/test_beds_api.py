@@ -11,6 +11,34 @@ def test_create_bed(client, garden):
     assert data['garden_id'] == garden.id
 
 
+def test_create_bed_persists_soil_profile(client, garden):
+    """A create form that collects a soil profile must not need a follow-up PUT."""
+    r = client.post('/api/beds', json={
+        'name': 'Soil Bed', 'garden_id': garden.id,
+        'soil_notes': 'Sandy loam', 'soil_ph': 6.5,
+        'clay_pct': 20, 'compost_pct': 50, 'sand_pct': 30,
+        'depth_ft': 1.5, 'location': 'South fence', 'description': 'Full sun',
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data['soil_notes'] == 'Sandy loam'
+    assert data['soil_ph'] == 6.5
+    assert data['clay_pct'] == 20.0
+    assert data['compost_pct'] == 50.0
+    assert data['sand_pct'] == 30.0
+    assert data['depth_ft'] == 1.5
+    assert data['location'] == 'South fence'
+    assert data['description'] == 'Full sun'
+
+
+def test_create_bed_without_soil_profile_leaves_fields_unset(client, garden):
+    r = client.post('/api/beds', json={'name': 'Bare Bed', 'garden_id': garden.id})
+    assert r.status_code == 200
+    data = r.json()
+    assert data['soil_ph'] is None
+    assert data['soil_notes'] is None
+
+
 def test_create_bed_requires_name(client, garden):
     r = client.post('/api/beds', json={'garden_id': garden.id})
     assert r.status_code == 400

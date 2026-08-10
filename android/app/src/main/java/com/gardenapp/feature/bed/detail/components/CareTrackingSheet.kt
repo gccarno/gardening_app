@@ -2,26 +2,33 @@ package com.gardenapp.feature.bed.detail.components
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gardenapp.core.model.BedPlantDetail
 import com.gardenapp.core.model.HealthScore
 import com.gardenapp.core.model.PlantObservation
 import com.gardenapp.core.util.DateUtil
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 private val OBS_TYPES = listOf("healthy", "new_growth", "flowering", "harvest_ready",
     "yellowing", "wilting", "pest_damage", "disease")
+
+/** Growth stages accepted by POST /api/bedplants/{id}/care — matches the web planner. */
+private val STAGES = listOf("seedling", "growing", "harvesting", "done")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,7 +36,12 @@ fun CareTrackingSheet(
     plant: BedPlantDetail,
     lastWatered: String,
     lastFertilized: String,
+    lastHarvest: String,
     healthNotes: String,
+    stage: String,
+    plantedDate: String,
+    transplantDate: String,
+    plantNotes: String,
     isSaving: Boolean,
     observations: List<PlantObservation>,
     healthScore: HealthScore?,
@@ -40,7 +52,12 @@ fun CareTrackingSheet(
     obsNotes: String,
     onWateredChange: (String) -> Unit,
     onFertilizedChange: (String) -> Unit,
+    onHarvestChange: (String) -> Unit,
     onNotesChange: (String) -> Unit,
+    onStageChange: (String) -> Unit,
+    onPlantedDateChange: (String) -> Unit,
+    onTransplantDateChange: (String) -> Unit,
+    onPlantNotesChange: (String) -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
     onShowObsForm: () -> Unit,
@@ -72,7 +89,7 @@ fun CareTrackingSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                plant.stage?.let { Badge { Text(it) } }
+                if (stage.isNotBlank()) Badge { Text(stage) }
             }
 
             // Quick stats row
@@ -106,38 +123,32 @@ fun CareTrackingSheet(
             HorizontalDivider()
             Text("Care Log", style = MaterialTheme.typography.titleSmall)
 
-            // Last watered
-            OutlinedTextField(
+            // Last watered — with a "Today" shortcut, the most common action
+            DateField(
                 value = lastWatered,
                 onValueChange = onWateredChange,
-                label = { Text("Last Watered") },
-                placeholder = { Text("YYYY-MM-DD") },
-                trailingIcon = { Icon(Icons.Default.WaterDrop, null, tint = MaterialTheme.colorScheme.primary) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                supportingText = {
-                    plant.lastWatered?.let {
-                        Text("Previously: ${DateUtil.displayDate(it)}")
-                    }
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                label = "Last Watered",
+                previously = plant.lastWatered,
+                leading = { Icon(Icons.Default.WaterDrop, null, tint = MaterialTheme.colorScheme.primary) },
+                showToday = true,
             )
 
-            // Last fertilized
-            OutlinedTextField(
+            DateField(
                 value = lastFertilized,
                 onValueChange = onFertilizedChange,
-                label = { Text("Last Fertilized") },
-                placeholder = { Text("YYYY-MM-DD") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                supportingText = {
-                    plant.lastFertilized?.let {
-                        Text("Previously: ${DateUtil.displayDate(it)}")
-                    }
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                label = "Last Fertilized",
+                previously = plant.lastFertilized,
             )
+
+            DateField(
+                value = lastHarvest,
+                onValueChange = onHarvestChange,
+                label = "Last Harvest",
+                previously = plant.lastHarvest,
+            )
+
+            // Growth stage
+            StageDropdown(stage = stage, onStageChange = onStageChange)
 
             // Health notes
             OutlinedTextField(
@@ -145,6 +156,32 @@ fun CareTrackingSheet(
                 onValueChange = onNotesChange,
                 label = { Text("Health Notes") },
                 placeholder = { Text("e.g. Yellowing lower leaves, aphids on stem…") },
+                maxLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            HorizontalDivider()
+            Text("Planting", style = MaterialTheme.typography.titleSmall)
+
+            DateField(
+                value = plantedDate,
+                onValueChange = onPlantedDateChange,
+                label = "Planted",
+                previously = plant.plantedDate,
+            )
+
+            DateField(
+                value = transplantDate,
+                onValueChange = onTransplantDateChange,
+                label = "Transplanted",
+                previously = plant.transplantDate,
+            )
+
+            OutlinedTextField(
+                value = plantNotes,
+                onValueChange = onPlantNotesChange,
+                label = { Text("Plant Notes") },
+                placeholder = { Text("e.g. Started indoors, variety notes…") },
                 maxLines = 3,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -197,6 +234,103 @@ fun CareTrackingSheet(
                 observations.forEach { obs ->
                     ObservationRow(obs = obs, onDelete = { onDeleteObs(obs.id) })
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Read-only date field that opens a Material date picker. Values round-trip as
+ * ISO `YYYY-MM-DD`, which is what the care endpoint expects.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    previously: String?,
+    leading: (@Composable () -> Unit)? = null,
+    showToday: Boolean = false,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+
+    if (showPicker) {
+        val initialMillis = DateUtil.parseDate(value)
+            ?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli()
+        val state = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let {
+                        onValueChange(
+                            DateUtil.formatDate(
+                                Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate(),
+                            ),
+                        )
+                    }
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel") }
+            },
+        ) { DatePicker(state = state) }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedTextField(
+            value = if (value.isBlank()) "" else DateUtil.displayDate(value),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            placeholder = { Text("Not set") },
+            leadingIcon = leading,
+            trailingIcon = {
+                Row {
+                    if (value.isNotBlank()) {
+                        IconButton(onClick = { onValueChange("") }) {
+                            Icon(Icons.Default.Clear, "Clear $label")
+                        }
+                    }
+                    IconButton(onClick = { showPicker = true }) {
+                        Icon(Icons.Default.DateRange, "Pick $label")
+                    }
+                }
+            },
+            supportingText = previously?.let { { Text("Previously: ${DateUtil.displayDate(it)}") } },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("date-field-$label"),
+        )
+        if (showToday) {
+            TextButton(onClick = { onValueChange(DateUtil.formatDate(LocalDate.now())) }) {
+                Text("Today")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StageDropdown(stage: String, onStageChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = stage.replaceFirstChar(Char::uppercase),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Stage") },
+            placeholder = { Text("Not set") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth().testTag("stage-dropdown"),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            STAGES.forEach { s ->
+                DropdownMenuItem(
+                    text = { Text(s.replaceFirstChar(Char::uppercase)) },
+                    onClick = { onStageChange(s); expanded = false },
+                )
             }
         }
     }

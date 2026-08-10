@@ -2,7 +2,7 @@
 
 Features that exist in the React web app (`apps/web/`) but are not yet implemented in the Android app. Check items off as they are ported.
 
-Last audited: 2026-07-02
+Last audited: 2026-08-08
 
 ---
 
@@ -88,6 +88,38 @@ Last audited: 2026-07-02
 - [ ] **Garden/Bed Background Image Upload**
   - Upload a custom background image behind the planner or bed grid
   - API: `POST /api/gardens/{id}/upload-background`, `POST /api/beds/{id}/upload-background`
+
+- [ ] **Bulk / painted plant placement** (`Planner/Canvas/BedGrid.tsx`)
+  - Web supports block/row/col placement modes and click-drag painting across
+    cells; Android places one plant per tap
+  - API: `POST /api/beds/{id}/grid-plant-bulk` — already wired in `ApiService`
+    as `placePlantsBulk`, no UI yet
+
+- [ ] **Bed appearance & weeding** (`Planner/RightPanel/InfoTab.tsx`)
+  - Bed color swatch, background pattern (grass/mulch/wood chips/straw/dirt),
+    and "weeded today"
+  - API: `PUT /api/beds/{id}` with `color` / `background_pattern` / `last_weeded`
+
+- [x] **All write endpoints (`Map<String, Any?>` request bodies)**
+  - Retrofit had only a kotlinx-serialization converter, which cannot build a
+    serializer for `Any`. Every one of the 41 endpoints declaring a
+    `Map<String, @JvmSuppressWildcards Any?>` body threw
+    "Unable to create @Body converter" at call time — so bed creation, plant
+    placement and care saves silently failed on device
+  - Fixed by `core/network/MapBodyConverterFactory.kt`, registered ahead of the
+    kotlinx factory in `NetworkModule`; typed `@Serializable` bodies still go to
+    kotlinx. Covered by `MapBodyConverterFactoryTest`
+
+- [x] **Bed grid plant placement, removal & care** (`BedDetail.tsx`, planner care panel)
+  - Tap an empty cell to place a plant from the library picker, tap a plant to
+    log care, long press to remove (with confirmation)
+  - Care sheet covers the web planner's full field set: watered, fertilized,
+    harvest, stage, planted/transplant dates, plant notes, health notes
+  - Crop-rotation conflicts are checked for the candidate plant before placing
+  - Grid cells expose `bed-cell-<col>-<row>` test tags so the E2E suite drives
+    real taps rather than calling the API behind the UI
+  - API: `POST /api/beds/{id}/grid-plant`, `POST /api/bedplants/{id}/care`,
+    `POST /api/bedplants/{id}/delete`
 
 - [x] **Plant Health Observations** (BedDetail care sheet)
   - Per-bed-plant health observations with type, severity, notes, and health score

@@ -55,11 +55,10 @@ class BedRepository @Inject constructor(
         else NetworkResult.Error(e.message ?: "Not found")
     }
 
-    suspend fun createBed(gardenId: Int, name: String, widthFt: Float, heightFt: Float): NetworkResult<Bed> =
+    suspend fun createBed(gardenId: Int, fields: Map<String, Any?>): NetworkResult<Bed> =
         try {
-            Log.d(TAG, "createBed gardenId=$gardenId name='$name'")
-            val body = mapOf("name" to name, "garden_id" to gardenId,
-                "width_ft" to widthFt, "height_ft" to heightFt)
+            Log.d(TAG, "createBed gardenId=$gardenId fields=${fields.keys}")
+            val body = fields + mapOf("garden_id" to gardenId)
             val bed = api.createBed(body)
             bedDao.upsertBed(bed.toEntity())
             Log.d(TAG, "createBed ok id=${bed.id}")
@@ -137,13 +136,32 @@ class BedRepository @Inject constructor(
         NetworkResult.Error(e.message ?: "Load failed")
     }
 
-    suspend fun saveCare(bedPlantId: Int, lastWatered: String?, lastFertilized: String?, healthNotes: String?): NetworkResult<Unit> =
+    /**
+     * Only non-null values are sent. The backend writes exactly the keys present in
+     * the body, so omitting a field leaves it untouched.
+     */
+    suspend fun saveCare(
+        bedPlantId: Int,
+        lastWatered: String? = null,
+        lastFertilized: String? = null,
+        lastHarvest: String? = null,
+        healthNotes: String? = null,
+        stage: String? = null,
+        plantedDate: String? = null,
+        transplantDate: String? = null,
+        plantNotes: String? = null,
+    ): NetworkResult<Unit> =
         try {
             Log.d(TAG, "saveCare bedPlantId=$bedPlantId")
             val body = mutableMapOf<String, Any?>()
             lastWatered?.let { body["last_watered"] = it }
             lastFertilized?.let { body["last_fertilized"] = it }
+            lastHarvest?.let { body["last_harvest"] = it }
             healthNotes?.let { body["health_notes"] = it }
+            stage?.let { body["stage"] = it }
+            plantedDate?.let { body["planted_date"] = it }
+            transplantDate?.let { body["transplant_date"] = it }
+            plantNotes?.let { body["plant_notes"] = it }
             api.updateBedPlantCare(bedPlantId, body)
             Log.d(TAG, "saveCare ok")
             NetworkResult.Success(Unit)
@@ -164,8 +182,8 @@ class BedRepository @Inject constructor(
 
     // ── Rotation warnings ────────────────────────────────────────────────────
 
-    suspend fun getRotationWarnings(bedId: Int): NetworkResult<RotationWarnings> = try {
-        NetworkResult.Success(api.getRotationWarnings(bedId))
+    suspend fun getRotationWarnings(bedId: Int, libraryId: Int? = null): NetworkResult<RotationWarnings> = try {
+        NetworkResult.Success(api.getRotationWarnings(bedId, libraryId))
     } catch (e: Exception) {
         Log.e(TAG, "getRotationWarnings error: ${e::class.simpleName}: ${e.message}")
         NetworkResult.Error(e.message ?: "Load failed")

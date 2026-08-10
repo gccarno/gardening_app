@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.backend.app.db.models import GardenMember, User
+from apps.backend.app.db.models import AppSetting, GardenMember, User
 from apps.backend.app.db.session import get_db
 from apps.backend.app.main import app
 from apps.backend.app.services.auth import get_current_user, hash_password
@@ -101,6 +101,11 @@ def test_login_and_bad_password(anon_client, db, user):
 def test_requests_require_token(anon_client, db):
     assert anon_client.get('/api/gardens').status_code == 401
     assert anon_client.get('/api/plants').status_code == 401
+    # The default-garden setting is global and every client follows it, so it
+    # must stay behind the token even if it moves off the gardens router.
+    assert anon_client.get('/api/settings/default-garden').status_code == 401
+    assert anon_client.post('/api/settings/default-garden',
+                            json={'garden_id': 1}).status_code == 401
     assert anon_client.get('/api/health').status_code == 200  # stays open
 
 
@@ -151,6 +156,20 @@ def test_non_member_gets_404(db, user, garden, bed):
     assert c.get(f'/api/beds/{bed.id}').status_code == 404
     assert c.get('/api/gardens').json() == []
     assert c.get('/api/beds').json() == []
+
+
+def test_non_member_cannot_set_default_garden(db, user, garden):
+    """The global setting must not accept a garden the writer can't reach.
+
+    Otherwise any logged-in user could aim every client at a garden they have
+    no membership in — and the id would outlive the garden itself.
+    """
+    outsider = _make_user(db, 'outsider@example.com')
+    c = _client_as(db, outsider)
+
+    assert c.post('/api/settings/default-garden',
+                  json={'garden_id': garden.id}).status_code == 404
+    assert db.get(AppSetting, 'default_garden_id') is None
 
 
 def test_owner_can_share_and_change_roles(db, user, garden, client):

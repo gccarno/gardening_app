@@ -78,6 +78,22 @@ def test_default_garden_setting(client, garden):
     assert client.get('/api/settings/default-garden').json()['garden_id'] is None
     client.post('/api/settings/default-garden', json={'garden_id': garden.id})
     assert client.get('/api/settings/default-garden').json()['garden_id'] == garden.id
+    # E2E teardown restores a "no default" state through this same path.
+    client.post('/api/settings/default-garden', json={'garden_id': None})
+    assert client.get('/api/settings/default-garden').json()['garden_id'] is None
+
+
+def test_default_garden_setting_ignores_unreachable_garden(client, garden):
+    """A default pointing at a garden the caller can't reach reads back as None.
+
+    The setting is global and was returned unvalidated, so after an E2E run left
+    it on a since-deleted garden the mobile dashboard — which does
+    `defaultId ?: gardens.first()` — sent every request to a 404 instead of
+    falling back to a garden the user actually has.
+    """
+    client.post('/api/settings/default-garden', json={'garden_id': garden.id})
+    client.delete(f'/api/gardens/{garden.id}')
+    assert client.get('/api/settings/default-garden').json()['garden_id'] is None
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────

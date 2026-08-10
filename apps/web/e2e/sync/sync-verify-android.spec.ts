@@ -63,7 +63,9 @@ test.describe('sync: verify android mutations on web', () => {
     for (const bin of await api(request, 'get', `/api/gardens/${syncGardenId}/compost`)) {
       await api(request, 'delete', `/api/compost/${bin.id}`);
     }
-    if (prevDefaultGardenId) {
+    // `null` must be restored too — skipping it leaves this garden as the
+    // global default and the delete below then strands it (see 99-teardown).
+    if (prevDefaultGardenId !== undefined) {
       await api(request, 'post', '/api/settings/default-garden', { garden_id: prevDefaultGardenId });
     }
 

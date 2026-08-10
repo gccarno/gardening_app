@@ -1,6 +1,7 @@
 package com.gardenapp.feature.bed.detail.components
 
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,15 +15,22 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gardenapp.core.model.GridPlant
-import kotlin.math.ceil
+import com.gardenapp.feature.bed.detail.INCHES_PER_CELL
+import com.gardenapp.feature.bed.detail.cellSpan
+import com.gardenapp.feature.bed.detail.cellToPlantMap
 
 /** Cell size in dp — 1ft per cell */
 private val CELL_SIZE_DP: Dp = 56.dp
+
+/** Test tag for the cell at (col, row) — used by the instrumented bed-grid test. */
+fun bedCellTag(col: Int, row: Int) = "bed-cell-$col-$row"
 
 // Plant colours by first letter, deterministic
 private val PLANT_COLORS = listOf(
@@ -37,9 +45,15 @@ private fun plantColor(name: String) = PLANT_COLORS[name.hashCode().and(0x7FFFFF
  * Grid positions are in inches: gridX/gridY are inch offsets.
  * At 12in/cell, column = gridX / 12, row = gridY / 12.
  *
- * Tap empty cell  → onCellTap(gridX, gridY)  in inches
+ * The grid is drawn on a single canvas (so a plant can span several cells) with a
+ * transparent, clickable Box per cell layered on top. The per-cell Boxes are what
+ * make taps work: a single `combinedClickable` disambiguates click from long-click,
+ * whereas stacked `detectTapGestures` modifiers fight over the same pointer-down.
+ *
+ * Tap cell        → onCellTap(gridX, gridY)  in inches
  * Long press cell → onCellLongPress(gridX, gridY) in inches
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PlantGrid(
     widthFt: Int,
@@ -58,21 +72,7 @@ fun PlantGrid(
     val emptyFill = MaterialTheme.colorScheme.surfaceVariant
     val textColor = MaterialTheme.colorScheme.onSurface
 
-    // Build a lookup map: (col, row) -> GridPlant for fast hit testing
-    // A plant at (gridX, gridY) with spacing S occupies cells from
-    // col=gridX/12 .. col+(S/12)-1, row=gridY/12 .. row+(S/12)-1
-    val cellToPlant: Map<Pair<Int, Int>, GridPlant> = remember(placed) {
-        buildMap {
-            placed.forEach { gp ->
-                val col = gp.gridX / 12
-                val row = gp.gridY / 12
-                val span = ceil((gp.spacingIn ?: 12f) / 12f).toInt().coerceAtLeast(1)
-                for (dc in 0 until span) for (dr in 0 until span) {
-                    put(Pair(col + dc, row + dr), gp)
-                }
-            }
-        }
-    }
+    val cellToPlant = remember(placed) { cellToPlantMap(placed) }
 
     Box(
         modifier = modifier
@@ -83,24 +83,37 @@ fun PlantGrid(
                 .size(width = CELL_SIZE_DP * cols, height = CELL_SIZE_DP * rows)
                 .drawWithCache {
                     onDrawBehind {
-                        drawGrid(cols, rows, cellPx, emptyFill, gridColor, placed, cellToPlant, textColor)
+                        drawGrid(cols, rows, cellPx, emptyFill, gridColor, cellToPlant, textColor)
                     }
-                }
-                .pointerInput(placed, cols, rows) {
-                    detectTapGestures { offset ->
-                        val col = (offset.x / cellPx).toInt().coerceIn(0, cols - 1)
-                        val row = (offset.y / cellPx).toInt().coerceIn(0, rows - 1)
-                        onCellTap(col * 12, row * 12)
-                    }
-                }
-                .pointerInput(placed, cols, rows) {
-                    detectTapGestures(onLongPress = { offset ->
-                        val col = (offset.x / cellPx).toInt().coerceIn(0, cols - 1)
-                        val row = (offset.y / cellPx).toInt().coerceIn(0, rows - 1)
-                        onCellLongPress(col * 12, row * 12)
-                    })
                 },
-        )
+        ) {
+            Column {
+                for (row in 0 until rows) {
+                    Row {
+                        for (col in 0 until cols) {
+                            val gp = cellToPlant[Pair(col, row)]
+                            Box(
+                                modifier = Modifier
+                                    .size(CELL_SIZE_DP)
+                                    .testTag(bedCellTag(col, row))
+                                    .semantics {
+                                        contentDescription =
+                                            gp?.plantName ?: "Empty cell $col,$row"
+                                    }
+                                    .combinedClickable(
+                                        onClick = {
+                                            onCellTap(col * INCHES_PER_CELL, row * INCHES_PER_CELL)
+                                        },
+                                        onLongClick = {
+                                            onCellLongPress(col * INCHES_PER_CELL, row * INCHES_PER_CELL)
+                                        },
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -110,7 +123,6 @@ private fun DrawScope.drawGrid(
     cellPx: Float,
     emptyFill: Color,
     gridColor: Color,
-    placed: List<GridPlant>,
     cellToPlant: Map<Pair<Int, Int>, GridPlant>,
     textColor: Color,
 ) {
@@ -118,8 +130,6 @@ private fun DrawScope.drawGrid(
     drawRect(emptyFill)
 
     // Draw occupied plant cells first
-    // Track which plants we've already drawn the label for
-    val drawnLabels = mutableSetOf<Int>()
     for (col in 0 until cols) {
         for (row in 0 until rows) {
             val gp = cellToPlant[Pair(col, row)] ?: continue
@@ -128,10 +138,10 @@ private fun DrawScope.drawGrid(
             val top = row * cellPx
 
             // Only draw fill + label once for the top-left cell of this plant
-            val originCol = gp.gridX / 12
-            val originRow = gp.gridY / 12
+            val originCol = gp.gridX / INCHES_PER_CELL
+            val originRow = gp.gridY / INCHES_PER_CELL
             if (col == originCol && row == originRow) {
-                val span = ceil((gp.spacingIn ?: 12f) / 12f).toInt().coerceAtLeast(1)
+                val span = cellSpan(gp.spacingIn)
                 val w = (span * cellPx).coerceAtMost(cols * cellPx - left)
                 val h = (span * cellPx).coerceAtMost(rows * cellPx - top)
                 drawRect(color = color.copy(alpha = 0.7f), topLeft = Offset(left, top), size = Size(w, h))
