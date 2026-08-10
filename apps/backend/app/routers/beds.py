@@ -62,6 +62,12 @@ def api_create_bed(body: dict,
         height_ft=height_ft,
         garden_id=int(garden_id),
     )
+    # Same optional fields PUT /beds/{id} accepts, so a create form that collects a
+    # soil profile does not need a follow-up update to persist it.
+    for f in ('location', 'description', 'soil_notes'):
+        if body.get(f): setattr(bed, f, body[f])
+    for f in ('soil_ph', 'clay_pct', 'compost_pct', 'sand_pct', 'depth_ft'):
+        if body.get(f) is not None: setattr(bed, f, float(body[f]))
     db.add(bed)
     db.commit()
     db.refresh(bed)

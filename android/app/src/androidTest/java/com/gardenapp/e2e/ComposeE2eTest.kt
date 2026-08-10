@@ -4,10 +4,16 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import com.gardenapp.MainActivity
 import org.junit.Assert.fail
 import org.junit.Before
@@ -98,6 +104,39 @@ abstract class ComposeE2eTest {
 
     protected fun navTo(tab: String) {
         tap(tab, substring = false)
+        rule.waitForIdle()
+    }
+
+    // ── Test-tag interactions ────────────────────────────────────────────────
+    // The bed grid draws itself on a canvas, so its cells carry testTags rather
+    // than text. These let a test tap a real cell instead of calling the API.
+
+    protected fun waitForTag(tag: String, timeout: Long = loadTimeout) {
+        rule.waitUntil(timeoutMillis = timeout) {
+            rule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    protected fun tapTag(tag: String) {
+        waitForTag(tag)
+        runCatching { rule.onNodeWithTag(tag).performScrollTo() }
+        rule.onNodeWithTag(tag).performClick()
+        rule.waitForIdle()
+    }
+
+    protected fun longPressTag(tag: String) {
+        waitForTag(tag)
+        runCatching { rule.onNodeWithTag(tag).performScrollTo() }
+        rule.onNodeWithTag(tag).performTouchInput { longClick() }
+        rule.waitForIdle()
+    }
+
+    /** Tap a node by its contentDescription (icon buttons). */
+    protected fun tapDescription(description: String) {
+        rule.waitUntil(timeoutMillis = loadTimeout) {
+            rule.onAllNodesWithContentDescription(description).fetchSemanticsNodes().isNotEmpty()
+        }
+        rule.onNodeWithContentDescription(description).performClick()
         rule.waitForIdle()
     }
 }

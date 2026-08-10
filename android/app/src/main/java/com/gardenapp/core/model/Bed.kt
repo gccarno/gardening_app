@@ -54,8 +54,12 @@ data class BedPlantDetail(
     @SerialName("days_to_harvest") val daysToHarvest: Int? = null,
     @SerialName("last_watered") val lastWatered: String? = null,
     @SerialName("last_fertilized") val lastFertilized: String? = null,
+    @SerialName("last_harvest") val lastHarvest: String? = null,
     @SerialName("health_notes") val healthNotes: String? = null,
     val stage: String? = null,
+    @SerialName("planted_date") val plantedDate: String? = null,
+    @SerialName("transplant_date") val transplantDate: String? = null,
+    @SerialName("plant_notes") val plantNotes: String? = null,
 )
 
 @Serializable

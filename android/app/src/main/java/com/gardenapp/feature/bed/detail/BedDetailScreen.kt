@@ -47,13 +47,47 @@ fun BedDetailScreen(
         )
     }
 
+    // Confirm plant removal (long press)
+    uiState.pendingRemoval?.let { gp ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissRemoval,
+            title = { Text("Remove Plant") },
+            text = { Text("Remove \"${gp.plantName}\" from this bed?") },
+            confirmButton = {
+                TextButton(
+                    onClick = viewModel::confirmRemoval,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = viewModel::dismissRemoval) { Text("Cancel") } },
+        )
+    }
+
+    // Crop-rotation conflict for the plant being placed
+    uiState.pendingPlacement?.let { entry ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissPlacement,
+            title = { Text("Crop rotation warning") },
+            text = { Text(uiState.placementWarning ?: "This family already grows in this bed.") },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmPlacement) { Text("Plant anyway") }
+            },
+            dismissButton = { TextButton(onClick = viewModel::dismissPlacement) { Text("Cancel") } },
+        )
+    }
+
     // Care tracking sheet
     uiState.careSheetPlant?.let { bp ->
         CareTrackingSheet(
             plant = bp,
             lastWatered = uiState.careLastWatered,
             lastFertilized = uiState.careLastFertilized,
+            lastHarvest = uiState.careLastHarvest,
             healthNotes = uiState.careHealthNotes,
+            stage = uiState.careStage,
+            plantedDate = uiState.carePlantedDate,
+            transplantDate = uiState.careTransplantDate,
+            plantNotes = uiState.carePlantNotes,
             isSaving = uiState.isSavingCare,
             observations = uiState.observations,
             healthScore = uiState.healthScore,
@@ -64,7 +98,12 @@ fun BedDetailScreen(
             obsNotes = uiState.obsNotes,
             onWateredChange = viewModel::onCareWateredChange,
             onFertilizedChange = viewModel::onCareFertilizedChange,
+            onHarvestChange = viewModel::onCareHarvestChange,
             onNotesChange = viewModel::onCareNotesChange,
+            onStageChange = viewModel::onCareStageChange,
+            onPlantedDateChange = viewModel::onCarePlantedDateChange,
+            onTransplantDateChange = viewModel::onCareTransplantDateChange,
+            onPlantNotesChange = viewModel::onCarePlantNotesChange,
             onSave = viewModel::saveCare,
             onDismiss = viewModel::dismissCareSheet,
             onShowObsForm = viewModel::showObsForm,

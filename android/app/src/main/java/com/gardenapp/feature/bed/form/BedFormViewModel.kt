@@ -80,24 +80,27 @@ class BedFormViewModel @Inject constructor(
         val w = s.widthFt.toFloatOrNull() ?: run { update { copy(error = "Invalid width") }; return }
         val h = s.heightFt.toFloatOrNull() ?: run { update { copy(error = "Invalid height") }; return }
 
+        // One field set for both create and update, so the soil profile the user
+        // typed is persisted either way.
+        val fields = buildMap<String, Any?> {
+            put("name", s.name.trim())
+            put("width_ft", w)
+            put("height_ft", h)
+            s.soilNotes.takeIf { it.isNotBlank() }?.let { put("soil_notes", it) }
+            s.soilPh.toFloatOrNull()?.let { put("soil_ph", it) }
+            s.clayPct.toFloatOrNull()?.let { put("clay_pct", it) }
+            s.compostPct.toFloatOrNull()?.let { put("compost_pct", it) }
+            s.sandPct.toFloatOrNull()?.let { put("sand_pct", it) }
+        }
+
         viewModelScope.launch {
             update { copy(isSaving = true, error = null) }
             val result = if (bedId == null) {
                 val gid = gardenId ?: run {
                     update { copy(isSaving = false, error = "No garden selected") }; return@launch
                 }
-                repository.createBed(gid, s.name.trim(), w, h)
+                repository.createBed(gid, fields)
             } else {
-                val fields = buildMap<String, Any?> {
-                    put("name", s.name.trim())
-                    put("width_ft", w)
-                    put("height_ft", h)
-                    s.soilNotes.takeIf { it.isNotBlank() }?.let { put("soil_notes", it) }
-                    s.soilPh.toFloatOrNull()?.let { put("soil_ph", it) }
-                    s.clayPct.toFloatOrNull()?.let { put("clay_pct", it) }
-                    s.compostPct.toFloatOrNull()?.let { put("compost_pct", it) }
-                    s.sandPct.toFloatOrNull()?.let { put("sand_pct", it) }
-                }
                 repository.updateBed(bedId, fields).let { r ->
                     if (r is NetworkResult.Success) NetworkResult.Success(repository.getBed(bedId).let {
                         if (it is NetworkResult.Success) it.data else null

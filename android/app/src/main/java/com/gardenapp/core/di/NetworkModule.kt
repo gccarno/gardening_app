@@ -3,6 +3,7 @@ package com.gardenapp.core.di
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.AuthInterceptor
 import com.gardenapp.core.network.DynamicBaseUrlInterceptor
+import com.gardenapp.core.network.MapBodyConverterFactory
 import com.gardenapp.core.network.ServerConfig
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import dagger.Module
@@ -49,6 +50,9 @@ object NetworkModule {
         // Placeholder base URL — DynamicBaseUrlInterceptor rewrites it per-request
         .baseUrl(ServerConfig.apiBaseUrl)
         .client(client)
+        // Must precede the kotlinx factory: it handles the Map<String, Any?> bodies
+        // kotlinx cannot serialize, and defers every other type back to kotlinx.
+        .addConverterFactory(MapBodyConverterFactory())
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
 
