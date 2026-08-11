@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gardenapp.core.model.Bed
+import com.gardenapp.core.model.BedGridResponse
 import com.gardenapp.core.model.BedPlantDetail
 import com.gardenapp.core.model.GridPlant
 import com.gardenapp.core.model.HealthScore
@@ -23,6 +24,8 @@ import javax.inject.Inject
 data class BedDetailUiState(
     val bed: Bed? = null,
     val placed: List<GridPlant> = emptyList(),
+    val gridFetchedAt: Long? = null,
+    val refreshFailed: Boolean = false,
     val isLoading: Boolean = false,
     val isPlacing: Boolean = false,
     val error: String? = null,
@@ -82,27 +85,51 @@ class BedDetailViewModel @Inject constructor(
         loadGrid()
     }
 
-    fun loadGrid() {
+    fun loadGrid(force: Boolean = false) {
         viewModelScope.launch {
             Log.d(TAG, "loadGrid bedId=$bedId")
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            when (val r = repository.getBedGrid(bedId)) {
+            // Paint whatever is on disk before going near the network.
+            repository.cachedBedGrid(bedId)?.let { cached ->
+                _uiState.value = _uiState.value.copy(
+                    bed = cached.value.bed,
+                    placed = cached.value.placed,
+                    gridFetchedAt = cached.fetchedAt,
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                isLoading = true, error = null, refreshFailed = false,
+            )
+            when (val r = repository.refreshBedGrid(bedId, force)) {
                 is NetworkResult.Success -> {
-                    Log.d(TAG, "loadGrid ok bed='${r.data.bed.name}' placed=${r.data.placed.size}")
+                    Log.d(TAG, "loadGrid ok bed='${r.data.value.bed.name}' placed=${r.data.value.placed.size}")
                     _uiState.value = _uiState.value.copy(
-                        bed = r.data.bed, placed = r.data.placed, isLoading = false,
+                        bed = r.data.value.bed,
+                        placed = r.data.value.placed,
+                        gridFetchedAt = r.data.fetchedAt,
+                        isLoading = false,
                     )
                 }
                 is NetworkResult.Error -> {
                     Log.e(TAG, "loadGrid error: ${r.message}")
+                    // Keep the cached grid on screen; only claim failure outright when
+                    // there is nothing to show.
                     _uiState.value = _uiState.value.copy(
-                        isLoading = false, error = r.message,
+                        isLoading = false,
+                        refreshFailed = true,
+                        error = r.message.takeIf { _uiState.value.bed == null },
                     )
                 }
                 else -> Unit
             }
             loadRotationWarnings()
         }
+    }
+
+    /** Keeps the cache in step with an edit the server has already accepted. */
+    private suspend fun persistGrid(placed: List<GridPlant>) {
+        val bed = _uiState.value.bed ?: return
+        val fetchedAt = repository.cacheBedGrid(bedId, BedGridResponse(bed = bed, placed = placed))
+        _uiState.value = _uiState.value.copy(gridFetchedAt = fetchedAt)
     }
 
     private fun loadRotationWarnings() {
@@ -150,10 +177,14 @@ class BedDetailViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(pendingRemoval = null)
         viewModelScope.launch {
             when (val r = repository.removePlant(bp.id)) {
-                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(
-                    placed = _uiState.value.placed.filter { it.id != bp.id },
-                    message = "${bp.plantName} removed",
-                )
+                is NetworkResult.Success -> {
+                    val remaining = _uiState.value.placed.filter { it.id != bp.id }
+                    _uiState.value = _uiState.value.copy(
+                        placed = remaining,
+                        message = "${bp.plantName} removed",
+                    )
+                    persistGrid(remaining)
+                }
                 is NetworkResult.Error -> {
                     Log.e(TAG, "removePlant error: ${r.message}")
                     _uiState.value = _uiState.value.copy(
@@ -237,11 +268,13 @@ class BedDetailViewModel @Inject constructor(
                     plantId = r.data.plantId, plantName = r.data.plantName,
                     imageFilename = r.data.imageFilename, spacingIn = r.data.spacingIn,
                 )
+                val updated = _uiState.value.placed + newPlant
                 _uiState.value = _uiState.value.copy(
-                    placed = _uiState.value.placed + newPlant,
+                    placed = updated,
                     isPlacing = false,
                     message = "${entry.name} placed",
                 )
+                persistGrid(updated)
                 loadRotationWarnings()
             }
             is NetworkResult.Error -> {

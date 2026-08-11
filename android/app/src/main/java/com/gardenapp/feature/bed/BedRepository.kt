@@ -2,6 +2,9 @@ package com.gardenapp.feature.bed
 
 import android.util.Log
 import com.gardenapp.core.database.dao.BedDao
+import com.gardenapp.core.database.dao.CacheDao
+import com.gardenapp.core.database.entities.BedGridCacheEntity
+import com.gardenapp.core.database.entities.Cached
 import com.gardenapp.core.database.entities.toBed
 import com.gardenapp.core.database.entities.toEntity
 import com.gardenapp.core.model.Bed
@@ -16,8 +19,12 @@ import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
 import com.gardenapp.core.network.toNetworkError
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +32,8 @@ import javax.inject.Singleton
 class BedRepository @Inject constructor(
     private val api: ApiService,
     private val bedDao: BedDao,
+    private val cacheDao: CacheDao,
+    private val json: Json,
 ) {
     val beds: Flow<List<Bed>> = bedDao.getAllBeds().map { list -> list.map { it.toBed() } }
 
@@ -93,14 +102,55 @@ class BedRepository @Inject constructor(
 
     // ── Grid operations ──────────────────────────────────────────────────────
 
-    suspend fun getBedGrid(bedId: Int): NetworkResult<BedGridResponse> = try {
-        Log.d(TAG, "getBedGrid bedId=$bedId")
-        val result = api.getBedGrid(bedId)
-        Log.d(TAG, "getBedGrid ok bed='${result.bed.name}' placed=${result.placed.size}")
-        NetworkResult.Success(result)
+    /** Local only, so the grid can be on screen before the network is touched. */
+    suspend fun cachedBedGrid(bedId: Int): Cached<BedGridResponse>? =
+        cacheDao.getBedGrid(bedId)?.let { row ->
+            Cached(
+                withContext(Dispatchers.Default) { json.decodeFromString(row.data) },
+                row.fetchedAt,
+            )
+        }
+
+    suspend fun refreshBedGrid(
+        bedId: Int,
+        force: Boolean = false,
+    ): NetworkResult<Cached<BedGridResponse>> = try {
+        val row = cacheDao.getBedGrid(bedId)
+        if (!force && row != null && !row.isStale(GRID_TTL_MS)) {
+            Log.d(TAG, "refreshBedGrid bedId=$bedId served from cache")
+            NetworkResult.Success(
+                Cached(
+                    withContext(Dispatchers.Default) { json.decodeFromString(row.data) },
+                    row.fetchedAt,
+                )
+            )
+        } else {
+            Log.d(TAG, "refreshBedGrid bedId=$bedId")
+            val result = api.getBedGrid(bedId)
+            Log.d(TAG, "refreshBedGrid ok bed='${result.bed.name}' placed=${result.placed.size}")
+            NetworkResult.Success(Cached(result, cacheBedGrid(bedId, result)))
+        }
     } catch (e: Exception) {
-        Log.e(TAG, "getBedGrid error: ${e::class.simpleName}: ${e.message}")
-        NetworkResult.Error(e.message ?: "Grid load failed")
+        Log.e(TAG, "refreshBedGrid error: ${e::class.simpleName}: ${e.message}")
+        e.toNetworkError("BedRepository")
+    }
+
+    /**
+     * Write-through after a placement or removal. Without it, leaving the screen and
+     * coming back inside the TTL would show the plant the user just deleted.
+     *
+     * @return the timestamp stored, so callers can keep their staleness line honest.
+     */
+    suspend fun cacheBedGrid(bedId: Int, grid: BedGridResponse): Long {
+        val now = System.currentTimeMillis()
+        cacheDao.upsertBedGrid(
+            BedGridCacheEntity(
+                bedId = bedId,
+                data = withContext(Dispatchers.Default) { json.encodeToString(grid) },
+                fetchedAt = now,
+            )
+        )
+        return now
     }
 
     suspend fun placePlant(bedId: Int, gridX: Int, gridY: Int, libraryId: Int, spacingIn: Int): NetworkResult<GridPlant> =
@@ -234,5 +284,8 @@ class BedRepository @Inject constructor(
 
     companion object {
         private const val TAG = "BedRepo"
+
+        /** Short: the grid is edited from this very screen, and edits write through. */
+        private const val GRID_TTL_MS = 2 * 60 * 1000L
     }
 }

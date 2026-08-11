@@ -3,7 +3,9 @@ package com.gardenapp.core.di
 import android.content.Context
 import androidx.room.Room
 import com.gardenapp.core.database.GardenDatabase
+import com.gardenapp.core.database.MIGRATION_6_7
 import com.gardenapp.core.database.dao.BedDao
+import com.gardenapp.core.database.dao.CacheDao
 import com.gardenapp.core.database.dao.GardenDao
 import com.gardenapp.core.database.dao.NotificationSettingsDao
 import com.gardenapp.core.database.dao.PlantDao
@@ -24,6 +26,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): GardenDatabase =
         Room.databaseBuilder(context, GardenDatabase::class.java, "garden_app.db")
+            .addMigrations(MIGRATION_6_7)
             .fallbackToDestructiveMigration()
             .build()
 
@@ -45,4 +48,7 @@ object DatabaseModule {
     @Provides
     fun provideNotificationSettingsDao(db: GardenDatabase): NotificationSettingsDao =
         db.notificationSettingsDao()
+
+    @Provides
+    fun provideCacheDao(db: GardenDatabase): CacheDao = db.cacheDao()
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gardenapp.core.database.CacheCleaner
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.network.NetworkResult
 import com.gardenapp.core.network.ServerConfig
@@ -31,6 +32,7 @@ data class LoginUiState(
 class LoginViewModel @Inject constructor(
     private val repository: AuthRepository,
     @ApplicationContext private val context: Context,
+    private val cacheCleaner: CacheCleaner,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LoginUiState())
@@ -50,6 +52,9 @@ class LoginViewModel @Inject constructor(
             _uiState.value = s.copy(isLoading = true, error = null)
             val url = s.serverUrl.trim().trimEnd('/')
             if (url.isNotBlank() && url != ServerConfig.baseUrl) {
+                // Ids are only unique per server, so anything cached from the old one
+                // would show up under the new one's ids.
+                cacheCleaner.clearAll()
                 ServerConfig.baseUrl = url
                 context.dataStore.edit { prefs -> prefs[SERVER_URL_KEY] = url }
             }

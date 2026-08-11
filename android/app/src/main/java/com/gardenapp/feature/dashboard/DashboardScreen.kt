@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.gardenapp.core.ui.components.CacheStatusLine
+import com.gardenapp.core.ui.components.SkeletonList
 import com.gardenapp.feature.dashboard.components.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,8 +87,8 @@ fun DashboardScreen(
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                uiState.isLoading && uiState.dashboard == null -> {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                uiState.isRefreshing && uiState.dashboard == null -> {
+                    SkeletonList(count = 4)
                 }
                 uiState.error != null && uiState.dashboard == null -> {
                     Column(
@@ -112,6 +114,11 @@ fun DashboardScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
+                        // Refreshing over content already on screen
+                        if (uiState.isRefreshing) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+
                         // Garden selector
                         if (uiState.gardens.size > 1) {
                             GardenSelector(
@@ -126,6 +133,12 @@ fun DashboardScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                         }
+
+                        CacheStatusLine(
+                            fetchedAt = uiState.dashboardFetchedAt,
+                            isRefreshing = uiState.isRefreshing,
+                            refreshFailed = uiState.refreshFailed,
+                        )
 
                         // Metrics
                         uiState.dashboard?.metrics?.let { metrics ->

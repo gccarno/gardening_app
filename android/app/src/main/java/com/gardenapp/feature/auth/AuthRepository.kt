@@ -3,6 +3,7 @@ package com.gardenapp.feature.auth
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.gardenapp.core.database.CacheCleaner
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.model.AuthUser
 import com.gardenapp.core.model.LoginRequest
@@ -20,6 +21,7 @@ val AUTH_TOKEN_KEY = stringPreferencesKey("auth_token")
 class AuthRepository @Inject constructor(
     private val api: ApiService,
     @ApplicationContext private val context: Context,
+    private val cacheCleaner: CacheCleaner,
 ) {
     suspend fun login(email: String, password: String): NetworkResult<AuthUser> = try {
         val response = api.login(LoginRequest(email.trim().lowercase(), password))
@@ -38,5 +40,7 @@ class AuthRepository @Inject constructor(
         }
         AuthConfig.token = null
         context.dataStore.edit { prefs -> prefs.remove(AUTH_TOKEN_KEY) }
+        // Nothing cached belongs to the next person to sign in.
+        cacheCleaner.clearAll()
     }
 }

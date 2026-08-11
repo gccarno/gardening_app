@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gardenapp.SERVER_URL_KEY
+import com.gardenapp.core.database.CacheCleaner
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.network.ServerConfig
 import com.gardenapp.feature.auth.AuthRepository
@@ -26,6 +27,7 @@ data class SettingsUiState(
 class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authRepository: AuthRepository,
+    private val cacheCleaner: CacheCleaner,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -48,6 +50,11 @@ class SettingsViewModel @Inject constructor(
     fun saveUrl() {
         val url = _uiState.value.serverUrl.trimEnd('/')
         viewModelScope.launch {
+            if (url != ServerConfig.baseUrl) {
+                // Ids are only unique per server, so anything cached from the old one
+                // would show up under the new one's ids.
+                cacheCleaner.clearAll()
+            }
             context.dataStore.edit { prefs -> prefs[SERVER_URL_KEY] = url }
             ServerConfig.baseUrl = url
             _uiState.value = _uiState.value.copy(savedMessage = "Saved! Pointing to $url")

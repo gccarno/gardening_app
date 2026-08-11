@@ -9,7 +9,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.gardenapp.core.ui.components.CacheStatusLine
+import com.gardenapp.core.ui.components.SkeletonList
 import com.gardenapp.feature.plant.detail.tabs.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,7 +50,9 @@ fun PlantDetailScreen(
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                uiState.isLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                // Only when there is nothing cached — a background refresh must not
+                // hide content that is already on screen.
+                uiState.isLoading && uiState.plant == null -> SkeletonList(count = 3)
                 uiState.plant != null -> {
                     val plant = uiState.plant!!
                     val tabs = listOf("My Plant", "Overview", "Calendar", "How to Grow", "Companions", "Soil", "Nutrition", "FAQs")
@@ -63,6 +68,15 @@ fun PlantDetailScreen(
                                 )
                             }
                         }
+                        if (uiState.isLoading) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        CacheStatusLine(
+                            fetchedAt = uiState.fetchedAt,
+                            isRefreshing = uiState.isLoading,
+                            refreshFailed = uiState.refreshFailed,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
                         when (selectedTab) {
                             0 -> MyPlantTab(
                                 plant = plant,
@@ -84,7 +98,7 @@ fun PlantDetailScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text("Plant not found")
-                    Button(onClick = { viewModel.load() }) { Text("Retry") }
+                    Button(onClick = { viewModel.load(force = true) }) { Text("Retry") }
                 }
             }
         }

@@ -1,0 +1,537 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 6,
+    "identityHash": "e3e268336b57b144eb45e95a99dbf31f",
+    "entities": [
+      {
+        "tableName": "gardens",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `name` TEXT NOT NULL, `description` TEXT, `unit` TEXT NOT NULL, `zip_code` TEXT, `city` TEXT, `state` TEXT, `latitude` REAL, `longitude` REAL, `usda_zone` TEXT, `zone_temp_range` TEXT, `last_frost_date` TEXT, `first_frost_date` TEXT, `watering_frequency_days` INTEGER, `water_source` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zipCode",
+            "columnName": "zip_code",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "city",
+            "columnName": "city",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "usdaZone",
+            "columnName": "usda_zone",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "zoneTempRange",
+            "columnName": "zone_temp_range",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastFrostDate",
+            "columnName": "last_frost_date",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "firstFrostDate",
+            "columnName": "first_frost_date",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "wateringFrequencyDays",
+            "columnName": "watering_frequency_days",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "waterSource",
+            "columnName": "water_source",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "weather_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`garden_id` INTEGER NOT NULL, `data` TEXT NOT NULL, `fetched_at` INTEGER NOT NULL, PRIMARY KEY(`garden_id`))",
+        "fields": [
+          {
+            "fieldPath": "gardenId",
+            "columnName": "garden_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "data",
+            "columnName": "data",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "garden_id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "beds",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `name` TEXT NOT NULL, `garden_id` INTEGER, `garden_name` TEXT, `width_ft` REAL NOT NULL, `height_ft` REAL NOT NULL, `depth_ft` REAL, `location` TEXT, `description` TEXT, `soil_notes` TEXT, `soil_ph` REAL, `clay_pct` REAL, `compost_pct` REAL, `sand_pct` REAL, `plant_count` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gardenId",
+            "columnName": "garden_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gardenName",
+            "columnName": "garden_name",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "widthFt",
+            "columnName": "width_ft",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heightFt",
+            "columnName": "height_ft",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "depthFt",
+            "columnName": "depth_ft",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "location",
+            "columnName": "location",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "soilNotes",
+            "columnName": "soil_notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "soilPh",
+            "columnName": "soil_ph",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "clayPct",
+            "columnName": "clay_pct",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "compostPct",
+            "columnName": "compost_pct",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sandPct",
+            "columnName": "sand_pct",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "plantCount",
+            "columnName": "plant_count",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "plants",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `name` TEXT NOT NULL, `type` TEXT, `status` TEXT, `notes` TEXT, `planted_date` TEXT, `transplant_date` TEXT, `expected_harvest` TEXT, `garden_id` INTEGER, `library_id` INTEGER, `image_filename` TEXT, `scientific_name` TEXT, `sunlight` TEXT, `days_to_harvest` INTEGER, `days_to_germination` INTEGER, `sow_indoor_weeks` INTEGER, `direct_sow_offset` INTEGER, `transplant_offset` INTEGER, `temp_max_f` REAL, `bed_names` TEXT NOT NULL, `succession_label` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "plantedDate",
+            "columnName": "planted_date",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "transplantDate",
+            "columnName": "transplant_date",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "expectedHarvest",
+            "columnName": "expected_harvest",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gardenId",
+            "columnName": "garden_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "libraryId",
+            "columnName": "library_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "imageFilename",
+            "columnName": "image_filename",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "scientificName",
+            "columnName": "scientific_name",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sunlight",
+            "columnName": "sunlight",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "daysToHarvest",
+            "columnName": "days_to_harvest",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "daysToGermination",
+            "columnName": "days_to_germination",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sowIndoorWeeks",
+            "columnName": "sow_indoor_weeks",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "directSowOffset",
+            "columnName": "direct_sow_offset",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "transplantOffset",
+            "columnName": "transplant_offset",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "tempMaxF",
+            "columnName": "temp_max_f",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bedNames",
+            "columnName": "bed_names",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "successionLabel",
+            "columnName": "succession_label",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "tasks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `title` TEXT NOT NULL, `description` TEXT, `task_type` TEXT, `due_date` TEXT, `completed` INTEGER NOT NULL, `completed_date` TEXT, `plant_id` INTEGER, `garden_id` INTEGER, `bed_id` INTEGER, `plant_name` TEXT, `garden_name` TEXT, `bed_name` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "taskType",
+            "columnName": "task_type",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dueDate",
+            "columnName": "due_date",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "completed",
+            "columnName": "completed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedDate",
+            "columnName": "completed_date",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "plantId",
+            "columnName": "plant_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gardenId",
+            "columnName": "garden_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bedId",
+            "columnName": "bed_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "plantName",
+            "columnName": "plant_name",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gardenName",
+            "columnName": "garden_name",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bedName",
+            "columnName": "bed_name",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "notification_settings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`gardenId` INTEGER NOT NULL, `type` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `frequencyDays` INTEGER NOT NULL, `hourOfDay` INTEGER NOT NULL, `lastNotifiedEpochDay` INTEGER, PRIMARY KEY(`gardenId`, `type`))",
+        "fields": [
+          {
+            "fieldPath": "gardenId",
+            "columnName": "gardenId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frequencyDays",
+            "columnName": "frequencyDays",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hourOfDay",
+            "columnName": "hourOfDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastNotifiedEpochDay",
+            "columnName": "lastNotifiedEpochDay",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "gardenId",
+            "type"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e3e268336b57b144eb45e95a99dbf31f')"
+    ]
+  }
+}

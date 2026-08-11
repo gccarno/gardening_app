@@ -40,6 +40,13 @@ android {
         // android.util.Log etc. return defaults in JVM unit tests instead of throwing
         unitTests.isReturnDefaultValues = true
     }
+    // Room schema JSON (app/schemas) — checked in so MigrationTest can build an old
+    // database and run the real migration against it.
+    sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 val composeBom = "2024.09.00"

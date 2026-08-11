@@ -1,6 +1,7 @@
 package com.gardenapp.feature.bed.detail
 
 import androidx.lifecycle.SavedStateHandle
+import com.gardenapp.core.database.entities.Cached
 import com.gardenapp.core.model.Bed
 import com.gardenapp.core.model.BedGridResponse
 import com.gardenapp.core.model.BedPlantDetail
@@ -9,9 +10,11 @@ import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.NetworkResult
 import com.gardenapp.feature.bed.BedRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -43,8 +46,12 @@ class BedDetailViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         repository = mockk(relaxed = true)
-        coEvery { repository.getBedGrid(7) } returns
-            NetworkResult.Success(BedGridResponse(bed = bed, placed = listOf(wideePlant)))
+        // relaxed mockk would hand back a dummy for this nullable read, not null
+        coEvery { repository.cachedBedGrid(any()) } returns null
+        coEvery { repository.refreshBedGrid(eq(7), any()) } returns
+            NetworkResult.Success(
+                Cached(BedGridResponse(bed = bed, placed = listOf(wideePlant)), 1_000L)
+            )
         coEvery { repository.getRotationWarnings(any(), any()) } returns
             NetworkResult.Success(RotationWarnings(bedId = 7))
         coEvery { repository.getBedPlant(42) } returns NetworkResult.Success(
@@ -126,5 +133,49 @@ class BedDetailViewModelTest {
         advanceUntilIdle()
 
         assertTrue(vm.uiState.value.placed.none { it.id == 42 })
+    }
+
+    @Test
+    fun `the cached grid is on screen before the network answers`() = runTest(dispatcher) {
+        coEvery { repository.cachedBedGrid(7) } returns
+            Cached(BedGridResponse(bed = bed, placed = listOf(wideePlant)), 1_000L)
+        coEvery { repository.refreshBedGrid(any(), any()) } coAnswers { awaitCancellation() }
+
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals("Test Bed", state.bed?.name)
+        assertEquals(1, state.placed.size)
+        assertEquals(1_000L, state.gridFetchedAt)
+    }
+
+    @Test
+    fun `a failed refresh keeps the cached grid instead of emptying it`() = runTest(dispatcher) {
+        coEvery { repository.cachedBedGrid(7) } returns
+            Cached(BedGridResponse(bed = bed, placed = listOf(wideePlant)), 1_000L)
+        coEvery { repository.refreshBedGrid(any(), any()) } returns NetworkResult.Error("offline")
+
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals("cached plants must survive a failed refresh", 1, state.placed.size)
+        assertTrue(state.refreshFailed)
+        assertNull("with a grid on screen the failure belongs in the status line", state.error)
+    }
+
+    @Test
+    fun `a removal is written through to the cache`() = runTest(dispatcher) {
+        coEvery { repository.removePlant(42) } returns NetworkResult.Success(Unit)
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        vm.onCellLongPress(0, 0)
+        vm.confirmRemoval()
+        advanceUntilIdle()
+
+        // Otherwise leaving and returning inside the TTL resurrects the plant.
+        coVerify { repository.cacheBedGrid(7, match { it.placed.none { p -> p.id == 42 } }) }
     }
 }

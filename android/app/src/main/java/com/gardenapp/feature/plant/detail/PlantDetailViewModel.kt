@@ -14,7 +14,9 @@ import javax.inject.Inject
 
 data class PlantDetailUiState(
     val plant: PlantDetail? = null,
+    val fetchedAt: Long? = null,
     val isLoading: Boolean = true,
+    val refreshFailed: Boolean = false,
     val error: String? = null,
     val isSavingStatus: Boolean = false,
     val message: String? = null,
@@ -35,15 +37,29 @@ class PlantDetailViewModel @Inject constructor(
         load()
     }
 
-    fun load() {
+    fun load(force: Boolean = false) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            when (val result = repository.getDetail(plantId)) {
+            // Show what is on disk first, so the screen is never blank while waiting.
+            repository.cachedDetail(plantId)?.let { cached ->
+                _uiState.value = _uiState.value.copy(
+                    plant = cached.value, fetchedAt = cached.fetchedAt,
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                isLoading = true, error = null, refreshFailed = false,
+            )
+            when (val result = repository.refreshDetail(plantId, force)) {
                 is NetworkResult.Success -> _uiState.value = _uiState.value.copy(
-                    plant = result.data, isLoading = false,
+                    plant = result.data.value,
+                    fetchedAt = result.data.fetchedAt,
+                    isLoading = false,
                 )
                 is NetworkResult.Error -> _uiState.value = _uiState.value.copy(
-                    error = result.message, isLoading = false,
+                    // Keep the cached plant on screen; only report failure outright
+                    // when there is nothing to show.
+                    error = result.message.takeIf { _uiState.value.plant == null },
+                    refreshFailed = true,
+                    isLoading = false,
                 )
                 else -> _uiState.value = _uiState.value.copy(isLoading = false)
             }
@@ -59,7 +75,8 @@ class PlantDetailViewModel @Inject constructor(
                         isSavingStatus = false,
                         message = "Status updated to $status",
                     )
-                    load()
+                    // The server recomputes tasks from the status, so bypass the TTL.
+                    load(force = true)
                 }
                 is NetworkResult.Error -> _uiState.value = _uiState.value.copy(
                     isSavingStatus = false, error = result.message,

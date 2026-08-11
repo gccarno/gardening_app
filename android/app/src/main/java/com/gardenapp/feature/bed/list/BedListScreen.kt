@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.gardenapp.core.ui.components.SkeletonList
 import com.gardenapp.core.model.Bed
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,7 +56,7 @@ fun BedListScreen(
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             when {
                 uiState.isRefreshing && uiState.beds.isEmpty() ->
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    SkeletonList()
 
                 uiState.beds.isEmpty() ->
                     Column(

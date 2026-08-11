@@ -24,6 +24,17 @@ object DateUtil {
         return date.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))
     }
 
+    /** How long ago a cache entry was written, e.g. "just now", "5m ago", "2h ago". */
+    fun relativeSince(epochMillis: Long, now: Long = System.currentTimeMillis()): String {
+        val seconds = ((now - epochMillis) / 1000).coerceAtLeast(0)
+        return when {
+            seconds < 60 -> "just now"
+            seconds < 3600 -> "${seconds / 60}m ago"
+            seconds < 86_400 -> "${seconds / 3600}h ago"
+            else -> "${seconds / 86_400}d ago"
+        }
+    }
+
     fun relativeDate(dateStr: String?): String {
         val date = parseDate(dateStr) ?: return dateStr ?: ""
         val days = ChronoUnit.DAYS.between(LocalDate.now(), date)
