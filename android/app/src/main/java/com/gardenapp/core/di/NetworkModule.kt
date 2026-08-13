@@ -34,7 +34,11 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        // Render's free tier spins down after 15 min idle and takes 30-60s to wake,
+        // so 30s made the first request after any idle period fail against a healthy
+        // server. Read timeouts only fire once something is already answering; a
+        // genuinely dead server still fails fast on the connect timeout above.
+        .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .addInterceptor(DynamicBaseUrlInterceptor())
         .addInterceptor(AuthInterceptor())

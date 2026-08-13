@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.gardenapp.core.ui.components.CacheStatusLine
+import com.gardenapp.core.ui.components.SkeletonCard
+import com.gardenapp.core.ui.components.SkeletonLine
 import com.gardenapp.feature.bed.detail.components.CareTrackingSheet
 import com.gardenapp.feature.bed.detail.components.PlantGrid
 import com.gardenapp.feature.bed.detail.components.PlantPickerSheet
@@ -127,7 +130,7 @@ fun BedDetailScreen(
                     uiState.bed?.let { bed ->
                         IconButton(onClick = { onEdit(bed.id) }) { Icon(Icons.Default.Edit, "Edit") }
                     }
-                    IconButton(onClick = { viewModel.loadGrid() }) {
+                    IconButton(onClick = { viewModel.loadGrid(force = true) }) {
                         Icon(Icons.Default.Info, "Refresh")
                     }
                 },
@@ -138,7 +141,13 @@ fun BedDetailScreen(
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             when {
                 uiState.isLoading && uiState.bed == null ->
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        SkeletonCard()
+                        SkeletonLine(height = 220.dp)
+                    }
 
                 uiState.bed != null -> {
                     val bed = uiState.bed!!
@@ -169,6 +178,12 @@ fun BedDetailScreen(
                             }
                         }
 
+                        CacheStatusLine(
+                            fetchedAt = uiState.gridFetchedAt,
+                            isRefreshing = uiState.isLoading,
+                            refreshFailed = uiState.refreshFailed,
+                        )
+
                         // Instructions
                         Surface(
                             shape = MaterialTheme.shapes.small,
@@ -183,7 +198,7 @@ fun BedDetailScreen(
                         }
 
                         // The grid
-                        if (uiState.isPlacing) {
+                        if (uiState.isLoading || uiState.isPlacing) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
 
@@ -218,7 +233,7 @@ fun BedDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text("Could not load bed", style = MaterialTheme.typography.titleMedium)
-                    Button(onClick = { viewModel.loadGrid() }) { Text("Retry") }
+                    Button(onClick = { viewModel.loadGrid(force = true) }) { Text("Retry") }
                 }
             }
         }

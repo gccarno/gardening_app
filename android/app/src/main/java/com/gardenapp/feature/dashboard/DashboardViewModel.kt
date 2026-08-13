@@ -2,15 +2,22 @@ package com.gardenapp.feature.dashboard
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gardenapp.core.database.entities.Cached
 import com.gardenapp.core.model.DashboardData
 import com.gardenapp.core.model.Garden
 import com.gardenapp.core.model.WeatherData
 import com.gardenapp.core.network.ApiService
 import com.gardenapp.core.network.NetworkResult
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -25,8 +32,10 @@ data class DashboardUiState(
     val gardens: List<Garden> = emptyList(),
     val selectedGardenId: Int? = null,
     val dashboard: DashboardData? = null,
+    val dashboardFetchedAt: Long? = null,
     val weather: WeatherData? = null,
-    val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
+    val refreshFailed: Boolean = false,
     val error: String? = null,
     // Tip of the day
     val tipOfDay: String? = null,
@@ -58,92 +67,139 @@ class DashboardViewModel @Inject constructor(
     }
 
     init {
-        loadInitialData()
-        loadTipOfDay()
+        repository.gardens
+            .onEach { gardens -> _uiState.update { it.copy(gardens = gardens) } }
+            .launchIn(viewModelScope)
+        start()
     }
 
-    private fun loadInitialData() {
+    /** Paints from disk first — no network in the critical path — then refreshes. */
+    private fun start() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-
-            val defaultId = repository.getDefaultGardenId()
-            val gardensResult = repository.getGardens()
-
-            when (gardensResult) {
-                is NetworkResult.Success -> {
-                    val gardens = gardensResult.data
-                    val gardenId = defaultId ?: gardens.firstOrNull()?.id
-                    _uiState.value = _uiState.value.copy(
-                        gardens = gardens,
-                        selectedGardenId = gardenId,
-                        isLoading = false,
-                    )
-                    gardenId?.let { loadDashboardAndWeather(it) }
-                }
-                is NetworkResult.Error -> {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = gardensResult.message,
-                    )
-                }
-                NetworkResult.Loading -> Unit
+            val gardenId = repository.cachedDefaultGardenId()
+                ?: repository.gardens.first().firstOrNull()?.id
+            val cached = gardenId?.let { repository.cachedDashboard(it) }
+            _uiState.update {
+                it.copy(
+                    selectedGardenId = gardenId ?: it.selectedGardenId,
+                    dashboard = cached?.value ?: it.dashboard,
+                    dashboardFetchedAt = cached?.fetchedAt ?: it.dashboardFetchedAt,
+                    tipOfDay = repository.cachedTipForToday() ?: it.tipOfDay,
+                )
             }
+            refresh(force = false)
+        }
+    }
+
+    /**
+     * The single network entry point. Everything that can go out at once does; on a
+     * warm start the garden id is already known, so nothing waits on anything else.
+     */
+    fun refresh(force: Boolean = true) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshing = true, error = null, refreshFailed = false) }
+            val known = _uiState.value.selectedGardenId
+
+            // Neither of these blocks the dashboard: gardens reach the UI through the
+            // Room flow, and the id is only needed when we don't already have one.
+            // Both swallow their own failures, so nothing here can escape.
+            val gardensJob = async { repository.refreshGardens() }
+            val defaultIdJob = async { repository.refreshDefaultGardenId() }
+
+            // The tip lands on its own so a slow tip can't hold up the dashboard.
+            launch {
+                repository.refreshTipOfDay()?.let { tip ->
+                    _uiState.update { it.copy(tipOfDay = tip) }
+                }
+            }
+
+            // Only a first-ever launch gets here without an id, and only that pays for
+            // the extra round trip.
+            val gardenId = known
+                ?: defaultIdJob.await()
+                ?: (gardensJob.await() as? NetworkResult.Success)?.data?.firstOrNull()?.id
+
+            if (gardenId == null) {
+                // No id and nothing cached is what a first launch against an
+                // unreachable server looks like. Surface the failure, or the screen
+                // is blank with no way back -- an empty garden list is not an error.
+                val failure = (gardensJob.await() as? NetworkResult.Error)?.message
+                _uiState.update {
+                    it.copy(
+                        isRefreshing = false,
+                        refreshFailed = failure != null,
+                        error = failure?.takeIf { _ -> it.dashboard == null },
+                    )
+                }
+                return@launch
+            }
+            _uiState.update { it.copy(selectedGardenId = gardenId) }
+            loadGarden(gardenId, force)
         }
     }
 
     fun selectGarden(gardenId: Int) {
-        _uiState.value = _uiState.value.copy(selectedGardenId = gardenId)
-        loadDashboardAndWeather(gardenId)
-    }
-
-    fun refresh() {
-        val gardenId = _uiState.value.selectedGardenId
-        _uiState.value = _uiState.value.copy(error = null)
-        loadInitialData()
-        gardenId?.let { loadDashboardAndWeather(it) }
-    }
-
-    private fun loadDashboardAndWeather(gardenId: Int) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-
-            val dashResult = repository.getDashboard(gardenId)
-            val weatherResult = repository.getWeather(gardenId)
-
-            _uiState.value = _uiState.value.copy(
-                dashboard = (dashResult as? NetworkResult.Success)?.data,
-                weather = (weatherResult as? NetworkResult.Success)?.data,
-                isLoading = false,
-                error = (dashResult as? NetworkResult.Error)?.message,
-            )
+            val cached = repository.cachedDashboard(gardenId)
+            _uiState.update {
+                it.copy(
+                    selectedGardenId = gardenId,
+                    dashboard = cached?.value,
+                    dashboardFetchedAt = cached?.fetchedAt,
+                    weather = null,
+                    isRefreshing = true,
+                    error = null,
+                    refreshFailed = false,
+                )
+            }
+            repository.setDefaultGardenIdLocally(gardenId)
+            loadGarden(gardenId, force = false)
         }
     }
 
-    // ── Tip of the day ───────────────────────────────────────────────────────
+    /** Dashboard + weather for one garden, in parallel. */
+    private suspend fun loadGarden(gardenId: Int, force: Boolean) = coroutineScope {
+        val dashJob = async { repository.refreshDashboard(gardenId, force) }
+        val weatherJob = async { repository.getWeather(gardenId) }
+        val dashResult = dashJob.await()
+        val weatherResult = weatherJob.await()
+        val dashboard = (dashResult as? NetworkResult.Success)?.data
 
-    private fun loadTipOfDay() {
-        viewModelScope.launch {
-            val tip = repository.getTipOfDay()
-            _uiState.value = _uiState.value.copy(tipOfDay = tip)
+        _uiState.update { state ->
+            state.copy(
+                // Keep what is already on screen when a refresh fails — a flaky
+                // network must never blank a populated dashboard.
+                dashboard = dashboard?.value ?: state.dashboard,
+                dashboardFetchedAt = dashboard?.fetchedAt ?: state.dashboardFetchedAt,
+                weather = (weatherResult as? NetworkResult.Success)?.data ?: state.weather,
+                isRefreshing = false,
+                refreshFailed = dashResult is NetworkResult.Error,
+                // Only worth a full error screen when there is nothing to show;
+                // otherwise the staleness line carries the message.
+                error = (dashResult as? NetworkResult.Error)?.message
+                    ?.takeIf { state.dashboard == null },
+            )
         }
     }
 
     // ── Chat ─────────────────────────────────────────────────────────────────
 
-    fun openChat() { _uiState.value = _uiState.value.copy(chatOpen = true) }
-    fun closeChat() { _uiState.value = _uiState.value.copy(chatOpen = false) }
-    fun setChatInput(v: String) { _uiState.value = _uiState.value.copy(chatInput = v) }
+    fun openChat() { _uiState.update { it.copy(chatOpen = true) } }
+    fun closeChat() { _uiState.update { it.copy(chatOpen = false) } }
+    fun setChatInput(v: String) { _uiState.update { it.copy(chatInput = v) } }
 
     fun sendChat(overrideText: String? = null) {
         val text = (overrideText ?: _uiState.value.chatInput).trim()
         if (text.isEmpty() || _uiState.value.chatLoading) return
 
         val userMsg = ChatMessage(java.util.UUID.randomUUID().toString(), "user", text)
-        _uiState.value = _uiState.value.copy(
-            chatMessages = _uiState.value.chatMessages + userMsg,
-            chatInput = "",
-            chatLoading = true,
-        )
+        _uiState.update {
+            it.copy(
+                chatMessages = it.chatMessages + userMsg,
+                chatInput = "",
+                chatLoading = true,
+            )
+        }
         conversationHistory.add(mapOf("role" to "user", "content" to text))
 
         viewModelScope.launch {
@@ -174,20 +230,18 @@ class DashboardViewModel @Inject constructor(
                 conversationHistory.add(mapOf("role" to "assistant", "content" to reply))
                 trimConversationHistory()
                 val botMsg = ChatMessage(java.util.UUID.randomUUID().toString(), "bot", reply)
-                _uiState.value = _uiState.value.copy(
-                    chatMessages = _uiState.value.chatMessages + botMsg,
-                    chatLoading = false,
-                )
+                _uiState.update {
+                    it.copy(chatMessages = it.chatMessages + botMsg, chatLoading = false)
+                }
             } catch (e: Exception) {
                 conversationHistory.removeLastOrNull()
                 val errMsg = ChatMessage(
                     java.util.UUID.randomUUID().toString(), "bot",
                     "Could not reach the assistant. Check your connection and try again.",
                 )
-                _uiState.value = _uiState.value.copy(
-                    chatMessages = _uiState.value.chatMessages + errMsg,
-                    chatLoading = false,
-                )
+                _uiState.update {
+                    it.copy(chatMessages = it.chatMessages + errMsg, chatLoading = false)
+                }
             }
         }
     }

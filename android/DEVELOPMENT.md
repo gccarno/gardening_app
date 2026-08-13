@@ -294,6 +294,63 @@ Notes:
 
 ---
 
+### ✅ Session — Startup caching + loading states
+**Status: COMPLETE**
+
+The app felt slow to start. The cause was the Dashboard: it is the nav start destination
+and had no local cache at all, so launch meant four **serial** round trips
+(`settings/default-garden` → `gardens` → `dashboard` → `weather`) before anything rendered
+— against a Render free instance that takes 30–60 s to wake.
+
+Deliverables:
+- [x] Room caches for the dashboard, bed grid, plant detail, and two scalars (default garden, tip)
+- [x] Every cached read is a pair: `cachedX()` (disk only, instant) + `refreshX(force)` (TTL-gated)
+- [x] Dashboard refresh is parallel; a warm launch has **zero** serial dependencies
+- [x] A failed refresh no longer blanks a populated screen (the old code clobbered to `null`)
+- [x] `refresh()` no longer double-fetches the dashboard
+- [x] Shimmer skeletons on cold load; thin progress bar over cached content while refreshing
+- [x] "Updated 2h ago" / "Offline — showing saved data" status line
+- [x] Room schema export enabled + real `Migration(6,7)` + `MigrationTest`
+- [x] Cache cleared on sign-out and on server-URL change
+
+Key files created:
+```
+core/database/entities/CacheEntities.kt   ← 4 JSON-blob entities + Cached<T> wrapper
+core/database/dao/CacheDao.kt             ← one DAO for all 4 cache tables
+core/database/Migrations.kt               ← MIGRATION_6_7 (SQL copied from schemas/7.json)
+core/database/CacheCleaner.kt             ← clearAll() in one transaction
+core/ui/components/CacheStatusLine.kt     ← staleness / offline line
+app/schemas/…/6.json, 7.json              ← exported Room schemas (checked in)
+androidTest/…/CacheDaoTest.kt             ← 8 in-memory Room tests
+androidTest/…/MigrationTest.kt            ← runMigrationsAndValidate + settings-survive-upgrade
+test/…/DashboardViewModelTest.kt          ← 8 tests (cache-first, null-clobber, double-fetch, parallelism)
+test/…/PlantDetailViewModelTest.kt        ← 5 tests
+test/…/core/util/DateUtilTest.kt          ← relativeSince boundaries
+```
+
+Notes:
+- **TTLs**: dashboard 5 min, bed grid 2 min (edits write through), plant detail 5 min,
+  default garden 24 h (refresh gate only — the cached value is always returned),
+  tip of day is **day-keyed, not TTL-keyed** (the backend derives it from the date).
+- **Blobs, not columns.** `plant_detail_cache` in particular must stay out of the `plants`
+  table: `PlantDetail` and `Plant` carry different fields and every upsert is `REPLACE`, so
+  folding one into the other would null the list screen's columns.
+- **Room now exports schemas** (`app/schemas`, wired as an androidTest asset dir). This is
+  what makes `MigrationTest` possible — Room throws rather than falling back destructively
+  when a migration exists but leaves an unexpected schema, so a typo would be a launch crash.
+  Regenerate migration SQL from the exported JSON; never retype it.
+- **`notification_settings` is not a cache** — it is device-local, opt-in, and unrecoverable.
+  `CacheCleaner` and the migration both deliberately preserve it.
+- The cache is **not** keyed by server URL; instead it is wiped whenever the URL changes
+  (`SettingsViewModel.saveUrl`, `LoginViewModel.login` — both writers must do it). Prod and a
+  LAN backend reuse the same integer ids, so a mixed database shows the wrong garden.
+- OkHttp `readTimeout` 30 s → 60 s: 30 s reliably failed on Render's cold start. The connect
+  timeout stays at 15 s, so a genuinely dead server still fails fast.
+- Writes are still online-only. There is no offline mutation queue, and no incremental sync —
+  the backend has no `updated_at`, ETag, `?since=`, or tombstones, so refresh is full-replace.
+
+---
+
 ## Features Deferred to v2
 
 | Feature | Reason |

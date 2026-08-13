@@ -26,4 +26,7 @@ interface BedDao {
 
     @Query("DELETE FROM beds WHERE garden_id = :gardenId")
     suspend fun deleteBedsByGarden(gardenId: Int)
+
+    @Query("DELETE FROM beds")
+    suspend fun deleteAll()
 }

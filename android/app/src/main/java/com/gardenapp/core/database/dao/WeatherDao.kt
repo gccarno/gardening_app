@@ -13,4 +13,7 @@ interface WeatherDao {
 
     @Query("DELETE FROM weather_cache WHERE garden_id = :gardenId")
     suspend fun deleteWeatherCache(gardenId: Int)
+
+    @Query("DELETE FROM weather_cache")
+    suspend fun deleteAll()
 }

@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.gardenapp.core.ui.components.SkeletonList
 import com.gardenapp.core.model.Task
 import com.gardenapp.feature.task.list.components.MonthGrid
 import com.gardenapp.feature.task.list.components.TaskRow
@@ -100,7 +101,7 @@ fun TaskListScreen(
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             when {
                 uiState.isLoading && uiState.tasks.isEmpty() -> {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    SkeletonList()
                 }
                 uiState.mode == TaskViewMode.Calendar -> {
                     val (month, year) = uiState.currentMonthYear

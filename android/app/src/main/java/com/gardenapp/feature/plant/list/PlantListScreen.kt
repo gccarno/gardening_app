@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.gardenapp.core.ui.components.SkeletonList
 import com.gardenapp.core.model.Plant
 import com.gardenapp.core.model.SyncChange
 import com.gardenapp.feature.plant.list.components.GanttChart
@@ -82,9 +83,7 @@ fun PlantListScreen(
 
             when {
                 uiState.isLoading && uiState.plants.isEmpty() -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
+                    SkeletonList()
                 }
                 else -> {
                     when (uiState.tab) {

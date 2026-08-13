@@ -54,9 +54,11 @@ class PlantFormViewModel @Inject constructor(
 
     private fun loadPlant() {
         viewModelScope.launch {
-            when (val result = plantRepository.getDetail(plantId!!)) {
+            // Forced: prefilling an edit form from a stale cache would let a save
+            // silently revert a change made elsewhere.
+            when (val result = plantRepository.refreshDetail(plantId!!, force = true)) {
                 is NetworkResult.Success -> {
-                    val p = result.data
+                    val p = result.data.value
                     _uiState.value = _uiState.value.copy(
                         name = p.name,
                         notes = p.notes ?: "",
