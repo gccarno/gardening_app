@@ -120,7 +120,17 @@ class DashboardViewModel @Inject constructor(
                 ?: (gardensJob.await() as? NetworkResult.Success)?.data?.firstOrNull()?.id
 
             if (gardenId == null) {
-                _uiState.update { it.copy(isRefreshing = false) }
+                // No id and nothing cached is what a first launch against an
+                // unreachable server looks like. Surface the failure, or the screen
+                // is blank with no way back -- an empty garden list is not an error.
+                val failure = (gardensJob.await() as? NetworkResult.Error)?.message
+                _uiState.update {
+                    it.copy(
+                        isRefreshing = false,
+                        refreshFailed = failure != null,
+                        error = failure?.takeIf { _ -> it.dashboard == null },
+                    )
+                }
                 return@launch
             }
             _uiState.update { it.copy(selectedGardenId = gardenId) }

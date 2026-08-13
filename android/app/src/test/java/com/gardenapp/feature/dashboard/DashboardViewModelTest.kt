@@ -152,6 +152,38 @@ class DashboardViewModelTest {
     }
 
     @Test
+    fun `a cold start against an unreachable server reports the failure`() = runTest(dispatcher) {
+        // Nothing cached and no id to be had -- caught on the phone showing a blank
+        // dashboard, because the early return left error null.
+        every { repository.gardens } returns flowOf(emptyList())
+        coEvery { repository.cachedDefaultGardenId() } returns null
+        coEvery { repository.refreshDefaultGardenId() } returns null
+        coEvery { repository.refreshGardens() } returns NetworkResult.Error("Unable to resolve host")
+
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        assertNull(vm.uiState.value.dashboard)
+        assertFalse(vm.uiState.value.isRefreshing)
+        assertTrue(vm.uiState.value.refreshFailed)
+        assertEquals("Unable to resolve host", vm.uiState.value.error)
+    }
+
+    @Test
+    fun `having no gardens yet is not reported as an error`() = runTest(dispatcher) {
+        every { repository.gardens } returns flowOf(emptyList())
+        coEvery { repository.cachedDefaultGardenId() } returns null
+        coEvery { repository.refreshDefaultGardenId() } returns null
+        coEvery { repository.refreshGardens() } returns NetworkResult.Success(emptyList())
+
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        assertNull(vm.uiState.value.error)
+        assertFalse(vm.uiState.value.refreshFailed)
+    }
+
+    @Test
     fun `selecting a garden paints its cache and remembers it`() = runTest(dispatcher) {
         val vm = viewModel()
         advanceUntilIdle()
