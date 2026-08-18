@@ -212,6 +212,7 @@ export default function Compost() {
                     <button
                       className="btn btn--ghost"
                       style={{ fontSize: '0.82rem' }}
+                      disabled={advanceMut.isPending}
                       onClick={() => advanceMut.mutate(bin.id)}
                     >
                       Advance to next stage →

@@ -110,10 +110,10 @@ test.describe('compost', () => {
     await expect(bin.getByText('kitchen scraps')).toBeVisible();
 
     // building → active → curing → ready
-    for (let i = 0; i < 3; i++) {
+    for (const stage of ['active', 'curing', 'ready']) {
       await bin.getByRole('button', { name: 'Advance to next stage →' }).click();
+      await expect(bin.getByText(stage, { exact: true })).toBeVisible();
     }
-    await expect(bin.getByText('ready')).toBeVisible();
     await expect(bin.getByRole('button', { name: 'Advance to next stage →' })).toHaveCount(0);
   });
 });
