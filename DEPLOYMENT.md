@@ -529,7 +529,8 @@ unaffected.
 | `ENABLE_SCHEDULER` | Render (`0`) | disable in-process cron on free tier |
 | `CORS_ORIGINS` | optional | comma-separated origins if web is hosted separately |
 | `ANTHROPIC_API_KEY` | Render + local | photo plant/pest ID **and the chat assistant** |
-| `LLM_PROVIDER` | optional | `anthropic` (default) \| `openai` \| `ollama` \| `huggingface` |
+| `LLM_PROVIDER` | optional | `anthropic` (default) \| `openai` \| `hetzner` \| `ollama` \| `huggingface` |
+| `HETZNER_API_KEY` | Render + local | required when `LLM_PROVIDER=hetzner` (Hetzner AI Inference) |
 | `EMBED_PROVIDER` | optional | `gemini` (default) \| `openai` \| `voyage` — growing-guide search |
 | `EMBED_MODEL` | optional | provider default used if unset |
 | `EMBED_DIMS` | optional | `768` default; **must match the `vector(N)` column** |

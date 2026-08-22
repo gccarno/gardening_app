@@ -241,7 +241,7 @@ TOOL_SCHEMAS = [
 
 # Ollama / OpenAI-style tool schemas (converted from TOOL_SCHEMAS at import time)
 # Ollama 0.3+ accepts `tools` in this format for models that support tool calling (llama3.1+, gemma4+).
-_OLLAMA_TOOL_SCHEMAS = [
+_OPENAI_TOOL_SCHEMAS = [
     {
         'type': 'function',
         'function': {
@@ -908,7 +908,7 @@ def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 
                 json={
                     'model':    model,
                     'messages': working,
-                    'tools':    _OLLAMA_TOOL_SCHEMAS,
+                    'tools':    _OPENAI_TOOL_SCHEMAS,
                     'stream':   False,
                     **({'options': _options} if _options else {}),
                 },
@@ -943,6 +943,77 @@ def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 
     return 'I ran into a loop. Please try rephrasing your question.'
 
 
+@trace(name='hetzner_agentic_loop', span_type=SpanType.AGENT)
+def _run_hetzner_loop(system: str, messages: list, garden, db, max_rounds: int = 5) -> str:
+    """
+    Agentic loop for Hetzner AI Inference (Qwen) over its OpenAI-compatible API.
+
+    Kept separate from the Ollama loop because the OpenAI protocol requires each
+    tool result to name the `tool_call_id` it answers, while Ollama accepts a
+    bare tool message. No MLflow autolog covers this client, so — as on the
+    Ollama path — each round gets an explicit LLM span.
+    """
+    from openai import OpenAI
+    from .llm_provider import HETZNER_BASE_URL, _model
+
+    key = os.environ.get('HETZNER_API_KEY', '')
+    if not key:
+        raise RuntimeError(
+            'The garden assistant is not configured. '
+            'Add HETZNER_API_KEY to your .env file.'
+        )
+    client = OpenAI(api_key=key, base_url=HETZNER_BASE_URL)
+    model  = _model('hetzner')
+
+    working = [{'role': 'system', 'content': system}] + list(messages)
+
+    for round_num in range(1, max_rounds + 1):
+        with span(f'hetzner_round_{round_num}',
+                  span_type=SpanType.LLM,
+                  inputs={'model': model, 'message_count': len(working)}) as llm_span:
+            resp   = client.chat.completions.create(
+                model=model,
+                messages=working,
+                tools=_OPENAI_TOOL_SCHEMAS,
+                max_tokens=1024,
+            )
+            choice = resp.choices[0]
+            msg    = choice.message
+            tool_calls = msg.tool_calls or []
+            set_outputs(llm_span, {
+                'content':      msg.content,
+                'tool_calls':   [tc.function.name for tc in tool_calls],
+                'stop_reason':  choice.finish_reason,
+                'prompt_tokens':     resp.usage.prompt_tokens if resp.usage else None,
+                'completion_tokens': resp.usage.completion_tokens if resp.usage else None,
+            })
+
+        # Rebuilt by hand rather than msg.model_dump(): the SDK carries provider
+        # extras (refusal, annotations) that the endpoint rejects on the way back.
+        assistant_turn = {'role': 'assistant', 'content': msg.content or ''}
+        if tool_calls:
+            assistant_turn['tool_calls'] = [
+                {'id': tc.id, 'type': 'function',
+                 'function': {'name': tc.function.name,
+                              'arguments': tc.function.arguments}}
+                for tc in tool_calls
+            ]
+        working.append(assistant_turn)
+
+        if not tool_calls:
+            return (msg.content or '').strip() or 'Done.'
+
+        for tc in tool_calls:
+            args = tc.function.arguments or {}
+            if isinstance(args, str):
+                args = json.loads(args)
+            result = execute_tool(tc.function.name, args, garden, db)
+            working.append({'role': 'tool', 'tool_call_id': tc.id,
+                            'content': json.dumps(result)})
+
+    return 'I ran into a loop. Please try rephrasing your question.'
+
+
 @trace(name='run_agentic_loop', span_type=SpanType.CHAIN)
 def run_agentic_loop(
     system: str,
@@ -961,6 +1032,9 @@ def run_agentic_loop(
 
     if PROVIDER == 'ollama':
         return _run_ollama_loop(system, messages, garden, db, max_tool_rounds)
+
+    if PROVIDER == 'hetzner':
+        return _run_hetzner_loop(system, messages, garden, db, max_tool_rounds)
 
     if PROVIDER != 'anthropic':
         # Other non-Anthropic providers: pass the last user message only (no tool support)
