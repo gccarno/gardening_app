@@ -349,15 +349,17 @@ One important distinction: **`Plant`** is an instance you're growing ("my tomato
 ```
 LLM_PROVIDER=anthropic   → Anthropic API (default)
 LLM_PROVIDER=openai      → OpenAI API (gpt-4o-mini default)
+LLM_PROVIDER=hetzner     → Hetzner AI Inference (Qwen3.8-27B default)
 LLM_PROVIDER=ollama      → Local Ollama server (gemma4 default)
 LLM_PROVIDER=huggingface → HuggingFace Inference API
 ```
 
-Two providers support full multi-round tool use; others fall back to a single-turn plain completion:
+Three providers support full multi-round tool use; others fall back to a single-turn plain completion:
 
 | Provider | Tool use | Notes |
 |---|---|---|
 | `ollama` | Yes — `_run_ollama_loop` | OpenAI-compatible tool-calling format; models must support it (gemma4, llama3.1+) |
+| `hetzner` | Yes — `_run_hetzner_loop` | OpenAI chat-completions API; tool results carry `tool_call_id` |
 | `anthropic` | Yes — native `tool_use` stop reason | Structured tool result messages |
 | `openai` | No — single turn | Falls back to `complete()` |
 | `huggingface` | No — single turn | Falls back to `complete()` |
@@ -533,12 +535,13 @@ Copy `.env.example` to `.env` and fill in what you need:
 # AI Chat — at least one is required to use the chat assistant
 ANTHROPIC_API_KEY=sk-ant-...       # https://console.anthropic.com
 OPENAI_API_KEY=sk-...              # https://platform.openai.com
+HETZNER_API_KEY=...                # https://console.hetzner.com — AI Inference
 OLLAMA_BASE_URL=http://localhost:11434  # local Ollama (no key needed)
 HF_TOKEN=hf_...                    # HuggingFace (optional for public models)
 
 # Which LLM to use for completions
-# anthropic | openai | ollama | huggingface
-LLM_PROVIDER=ollama
+# anthropic | openai | hetzner | ollama | huggingface
+LLM_PROVIDER=hetzner
 
 # Which model to use for the chat assistant
 CHAT_MODEL=claude-sonnet-4-6

@@ -29,6 +29,7 @@ dependencies = [
     "google-cloud-storage>=2.14",
     # Error tracking + cron monitors. >=2.35 is the floor for enable_logs.
     "sentry-sdk[fastapi]>=2.35",
+    "openai",
 ]
 
 [project.optional-dependencies]

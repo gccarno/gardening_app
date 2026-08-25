@@ -1,13 +1,15 @@
 """
-Integration tests for the agentic chat loop using the real local Ollama model.
+Integration tests for the agentic chat loop against a real model.
 
-These tests call run_agentic_loop() with the actual gemma4:e2b model and assert
-that the model correctly invokes the expected tool for each prompt.
+These tests call run_agentic_loop() with whatever LLM_PROVIDER names in .env
+(ollama or hetzner — the two providers with a tool-calling loop) and assert that
+the model correctly invokes the expected tool for each prompt.
 
 Run with:
     uv run pytest tests/integration/ -v
 
-Skip condition: tests are skipped automatically if Ollama is not running.
+Skip condition: tests skip automatically when the configured provider is not
+reachable — Ollama not running, or HETZNER_API_KEY unset.
 Excluded from default test runs via: pytest -m "not integration"
 """
 from dotenv import load_dotenv
@@ -41,10 +43,15 @@ def _ollama_running() -> bool:
 
 @pytest.fixture
 def tool_calls(monkeypatch):
-    """Ensure Ollama provider and record every execute_tool call."""
-    if not _ollama_running():
+    """Pin the configured provider and record every execute_tool call."""
+    provider = os.environ.get('LLM_PROVIDER', 'ollama').lower()
+    if provider == 'ollama' and not _ollama_running():
         pytest.skip('Ollama not running at ' + os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434'))
-    monkeypatch.setattr(_llm, 'PROVIDER', 'ollama')
+    if provider == 'hetzner' and not os.environ.get('HETZNER_API_KEY'):
+        pytest.skip('HETZNER_API_KEY not set')
+    if provider not in ('ollama', 'hetzner'):
+        pytest.skip(f'No tool-calling loop for LLM_PROVIDER={provider!r}')
+    monkeypatch.setattr(_llm, 'PROVIDER', provider)
     called = []
     original = _ct.execute_tool
 

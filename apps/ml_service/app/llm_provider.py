@@ -2,12 +2,13 @@
 Model-agnostic LLM provider for the garden assistant chat.
 
 Configure via .env:
-    LLM_PROVIDER=anthropic   # anthropic | openai | ollama | huggingface
+    LLM_PROVIDER=anthropic   # anthropic | openai | hetzner | ollama | huggingface
     LLM_MODEL=claude-haiku-4-5-20251001   # optional — provider default used if unset
 
 Provider-specific keys:
     ANTHROPIC_API_KEY=sk-ant-...
     OPENAI_API_KEY=sk-...
+    HETZNER_API_KEY=...                      # Hetzner AI Inference (OpenAI-compatible)
     OLLAMA_BASE_URL=http://localhost:11434   # optional, this is the default
     HF_TOKEN=hf_...                         # optional for public HF models
 """
@@ -18,9 +19,15 @@ PROVIDER   = os.environ.get('LLM_PROVIDER', 'anthropic').lower()
 _MODEL     = os.environ.get('LLM_MODEL') or None   # None → provider default below
 CHAT_MODEL = os.environ.get('CHAT_MODEL', 'claude-sonnet-4-6')
 
+# Hetzner serves an OpenAI-compatible API, so the OpenAI SDK drives it with only
+# the base URL swapped. Overridable for a self-hosted/proxied endpoint.
+HETZNER_BASE_URL = os.environ.get(
+    'HETZNER_BASE_URL', 'https://inference.hetzner.com/api/v1')
+
 _DEFAULTS = {
     'anthropic':   'claude-haiku-4-5-20251001',
     'openai':      'gpt-4o-mini',
+    'hetzner':     'Qwen3.8-27B',
     'ollama':      'gemma4:e2b',
     'huggingface': 'mistralai/Mistral-7B-Instruct-v0.2',
 }
@@ -38,6 +45,7 @@ def complete(system: str, user: str) -> str:
     dispatch = {
         'anthropic':   _anthropic,
         'openai':      _openai,
+        'hetzner':     _hetzner,
         'ollama':      _ollama,
         'huggingface': _huggingface,
     }
@@ -118,6 +126,27 @@ def _openai(system: str, user: str) -> str:
         )
     resp = OpenAI(api_key=key).chat.completions.create(
         model=_model('openai'),
+        max_tokens=512,
+        messages=[
+            {'role': 'system', 'content': system},
+            {'role': 'user',   'content': user},
+        ],
+    )
+    return resp.choices[0].message.content
+
+
+def _hetzner(system: str, user: str) -> str:
+    """Hetzner AI Inference — an OpenAI-compatible endpoint serving Qwen models."""
+    from openai import OpenAI   # pip install openai
+    key = os.environ.get('HETZNER_API_KEY', '')
+    if not key:
+        raise RuntimeError(
+            'The garden assistant is not configured. '
+            'Add HETZNER_API_KEY to your .env file.'
+        )
+    client = OpenAI(api_key=key, base_url=HETZNER_BASE_URL)
+    resp = client.chat.completions.create(
+        model=_model('hetzner'),
         max_tokens=512,
         messages=[
             {'role': 'system', 'content': system},
