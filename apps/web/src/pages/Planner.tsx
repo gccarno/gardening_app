@@ -986,12 +986,19 @@ export default function Planner() {
               <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
                 const file = e.target.files?.[0]; if (!file || !gardenId) return;
                 const fd = new FormData(); fd.append('image', file);
-                await apiFetch(`/api/gardens/${gardenId}/upload-background`, { method: 'POST', body: fd });
-                queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] });
+                const res = await apiFetch(`/api/gardens/${gardenId}/upload-background`, { method: 'POST', body: fd });
+                if (res.ok) {
+                  queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] });
+                }
               }} />
             </label>
             {garden?.background_image && (
-              <button title="Remove canvas image" onClick={async () => { await api('POST', `/api/gardens/${gardenId}/remove-background`, {}); queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] }); }}
+              <button title="Remove canvas image" onClick={async () => {
+                const res = await apiFetch(`/api/gardens/${gardenId}/remove-background`, { method: 'POST' });
+                if (res.ok) {
+                  queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] });
+                }
+              }}
                 style={{ background: 'none', border: 'none', color: '#b84040', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}>✕</button>
             )}
           </div>

@@ -196,6 +196,11 @@ test.describe('canvas planner', () => {
       expect(g.background_image).toBeTruthy();
     }).toPass({ timeout: 15_000 });
 
+    // Wait for React Query to refetch and the button to mount before clicking —
+    // the API check above proves the upload committed, but the cache invalidation
+    // is fire-and-forget and can land later than the .toPass() returns.
+    await expect(page.locator('.planner-sidebar button[title="Remove canvas image"]'))
+      .toBeVisible({ timeout: 20_000 });
     await page.locator('.planner-sidebar button[title="Remove canvas image"]').click();
     await expect(async () => {
       const g = await api(request, 'get', `/api/gardens/${gardenId}`);
