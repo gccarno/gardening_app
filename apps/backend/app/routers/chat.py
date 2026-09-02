@@ -122,6 +122,14 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
     except Exception:
         pass
 
+    # Close the read-only transaction before the long Hetzner call below.
+    # run_agentic_loop can run for up to 5 rounds × 120 s, and Neon's
+    # idle_in_transaction_session_timeout would otherwise kill the connection
+    # mid-flight, surfacing as an IdleInTransactionSessionTimeout on cleanup
+    # (GARDEN-APP-BACKEND-D). All work above is reads; a commit/rollback here
+    # is safe.
+    db.commit()
+
     system_prompt = (
         f"You are a knowledgeable, friendly garden assistant helping a home gardener. "
         f"Today is {today.strftime('%B %d, %Y')} — {season} in the Northern Hemisphere.\n\n"

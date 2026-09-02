@@ -7,6 +7,7 @@ models directly -- no HTTP round-trips to other routes.
 
 import json
 import os
+import time
 from datetime import date, timedelta, datetime
 
 from .tracing import SpanType, set_outputs, span, trace
@@ -967,16 +968,36 @@ def _run_hetzner_loop(system: str, messages: list, garden, db, max_rounds: int =
 
     working = [{'role': 'system', 'content': system}] + list(messages)
 
+    # Heray (Hetzner's gateway) returns intermittent 504s under load; one retry
+    # masks them without paying a round-trip on every call. GARDEN-APP-BACKEND-C.
+    from openai import APIStatusError
+
+    def _create_round():
+        return client.chat.completions.create(
+            model=model,
+            messages=working,
+            tools=_OPENAI_TOOL_SCHEMAS,
+            max_tokens=1024,
+            # Cap a single round at 120 s — well under Neon's
+            # idle_in_transaction_session_timeout when the request-scoped db
+            # session is held across this call. The companion backend fix
+            # (chat.py: db.commit() before run_agentic_loop) closes that
+            # transaction, but keep this belt to the suspenders.
+            timeout=120,
+        )
+
     for round_num in range(1, max_rounds + 1):
         with span(f'hetzner_round_{round_num}',
                   span_type=SpanType.LLM,
                   inputs={'model': model, 'message_count': len(working)}) as llm_span:
-            resp   = client.chat.completions.create(
-                model=model,
-                messages=working,
-                tools=_OPENAI_TOOL_SCHEMAS,
-                max_tokens=1024,
-            )
+            try:
+                resp = _create_round()
+            except APIStatusError as exc:
+                if exc.status_code == 504 and round_num <= max_rounds:
+                    time.sleep(2)
+                    resp = _create_round()
+                else:
+                    raise
             choice = resp.choices[0]
             msg    = choice.message
             tool_calls = msg.tool_calls or []
