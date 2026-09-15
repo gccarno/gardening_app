@@ -47,6 +47,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# Must happen before embed_provider is imported anywhere below — it reads
+# EMBED_PROVIDER/EMBED_MODEL/EMBED_DIMS from os.environ at import time, and
+# this script (unlike the FastAPI app) has no other path that loads .env
+# first.
+from dotenv import load_dotenv
+load_dotenv(os.path.join(_REPO_ROOT, '.env'))
+
 PDF_DIR   = os.path.join(os.path.dirname(__file__), 'tamu_pdfs')
 BOOKS_DIR = r'C:\Users\gccar\Documents\books\gardening_books'
 
@@ -173,17 +180,21 @@ def _filter_new(chunks, metadatas, existing_hashes):
 
 
 def _load_existing_hashes(db):
-    """Content hashes already in guide_chunk, for resume-without-a-state-file."""
+    """Content hashes already indexed, for resume-without-a-state-file."""
     from sqlalchemy import func, select
-    from apps.backend.app.db.models import GuideChunk
 
-    rows = db.execute(select(func.md5(GuideChunk.text))).scalars().all()
+    Model = _guide_chunk_model()
+    rows = db.execute(select(func.md5(Model.text))).scalars().all()
     return set(rows)
 
 
 def _is_rate_limit_error(exc):
-    """True for a Gemini 429 RESOURCE_EXHAUSTED, by duck-typed error shape."""
+    """True for a 429, by duck-typed error shape (Gemini's RESOURCE_EXHAUSTED,
+    or a `requests` HTTPError from the OpenRouter provider)."""
     if getattr(exc, 'code', None) == 429 or getattr(exc, 'status_code', None) == 429:
+        return True
+    response = getattr(exc, 'response', None)
+    if getattr(response, 'status_code', None) == 429:
         return True
     return 'RESOURCE_EXHAUSTED' in str(exc)
 
@@ -265,18 +276,33 @@ class IndexConfig:
 
 # ── Postgres helpers ───────────────────────────────────────────────────────────
 
+def _guide_chunk_model():
+    """The guide_chunk table matching the active EMBED_PROVIDER.
+
+    Vectors from different embedding models aren't cosine-comparable even at
+    the same width, so each provider gets its own table rather than sharing
+    guide_chunk — see apps/ml_service/app/embed_provider.py and
+    GuideChunkOpenRouter in apps/backend/app/db/models.py.
+    """
+    from apps.backend.app.db.models import GuideChunk, GuideChunkOpenRouter
+    from apps.ml_service.app.embed_provider import PROVIDER
+
+    return GuideChunkOpenRouter if PROVIDER == 'openrouter' else GuideChunk
+
+
 def get_collection(rebuild=False):
     """Open a DB session for indexing, optionally clearing existing chunks.
 
     Kept under the original name so index_tamu_pdfs / index_books read the same
-    as before; the "collection" is now the guide_chunk table.
+    as before; the "collection" is now the guide-chunk table for the active
+    provider (see _guide_chunk_model).
     """
     from apps.backend.app.db.session import SessionLocal
-    from apps.backend.app.db.models import GuideChunk
 
+    Model = _guide_chunk_model()
     db = SessionLocal()
     if rebuild:
-        deleted = db.query(GuideChunk).delete()
+        deleted = db.query(Model).delete()
         db.commit()
         print(f'Deleted {deleted} existing chunks')
     return db
@@ -298,8 +324,9 @@ def add_chunks(db, chunks, metadatas, id_prefix, cfg):
     if not chunks:
         return 0, 0
 
-    from apps.backend.app.db.models import GuideChunk
     from apps.ml_service.app.embed_provider import embed
+
+    Model = _guide_chunk_model()
 
     chunks, metadatas, skipped = _filter_new(chunks, metadatas, cfg.existing_hashes)
     if not chunks:
@@ -340,7 +367,7 @@ def add_chunks(db, chunks, metadatas, id_prefix, cfg):
                 time.sleep(delay)
 
         db.add_all([
-            GuideChunk(
+            Model(
                 text=chunk,
                 source=meta.get('source', ''),
                 plant_name=meta.get('plant_name', ''),
@@ -485,7 +512,6 @@ def search_guides(query, plant_name=None, n_results=3, region_filter=None):
     from sqlalchemy import select
 
     from apps.backend.app.db.session import SessionLocal
-    from apps.backend.app.db.models import GuideChunk
     from apps.ml_service.app.embed_provider import embed_one
 
     try:
@@ -493,13 +519,15 @@ def search_guides(query, plant_name=None, n_results=3, region_filter=None):
     except Exception:
         return []
 
+    Model = _guide_chunk_model()
+
     # `<=>` is pgvector's cosine distance; 1 - distance gives back the cosine
     # similarity the old Chroma path reported, so scores stay comparable.
-    distance = GuideChunk.embedding.cosine_distance(vector).label('distance')
+    distance = Model.embedding.cosine_distance(vector).label('distance')
 
-    stmt = select(GuideChunk, distance).order_by(distance).limit(n_results)
+    stmt = select(Model, distance).order_by(distance).limit(n_results)
     if region_filter:
-        stmt = stmt.where(GuideChunk.region == region_filter)
+        stmt = stmt.where(Model.region == region_filter)
 
     try:
         with SessionLocal() as db:
@@ -540,25 +568,26 @@ def parse_args():
 def main():
     args = parse_args()
 
-    from apps.backend.app.db.models import GuideChunk
     from apps.ml_service.app.embed_provider import DIMS, PROVIDER, _model
+
+    Model = _guide_chunk_model()
 
     if args.stats:
         from sqlalchemy import func, select
         from apps.backend.app.db.session import SessionLocal
         try:
             with SessionLocal() as db:
-                total = db.scalar(select(func.count()).select_from(GuideChunk))
+                total = db.scalar(select(func.count()).select_from(Model))
                 by_source = db.execute(
-                    select(GuideChunk.source, func.count())
-                    .group_by(GuideChunk.source)
+                    select(Model.source, func.count())
+                    .group_by(Model.source)
                     .order_by(func.count().desc())
                 ).all()
-            print(f'Chunks: {total}')
+            print(f'Chunks in {Model.__tablename__}: {total}')
             for source, count in by_source:
                 print(f'  {count:>6}  {source or "(no source)"}')
         except Exception as e:
-            print(f'Error reading guide_chunk: {e}')
+            print(f'Error reading {Model.__tablename__}: {e}')
         return
 
     print(f'Embedding with {PROVIDER}/{_model(PROVIDER)} at {DIMS} dims')
@@ -581,7 +610,7 @@ def main():
             total_added += index_books(db, cfg)
 
         from sqlalchemy import func, select
-        total = db.scalar(select(func.count()).select_from(GuideChunk))
+        total = db.scalar(select(func.count()).select_from(Model))
     except (RateLimitBudgetExceeded, KeyboardInterrupt) as e:
         print(f'\nStopped after adding {total_added} chunks this run: {e}')
         print(f'Already-indexed chunks are skipped automatically — resume with:\n  {resume_cmd}')
@@ -590,7 +619,7 @@ def main():
         db.close()
 
     print(f'\nDone. Total chunks added: {total_added}')
-    print(f'guide_chunk now has {total} rows')
+    print(f'{Model.__tablename__} now has {total} rows')
 
 
 if __name__ == '__main__':

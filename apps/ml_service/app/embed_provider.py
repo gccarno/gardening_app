@@ -2,7 +2,7 @@
 Model-agnostic embedding provider for the growing-guides RAG.
 
 Configure via .env:
-    EMBED_PROVIDER=gemini    # gemini | openai | voyage
+    EMBED_PROVIDER=gemini    # gemini | openai | voyage | openrouter
     EMBED_MODEL=gemini-embedding-001   # optional — provider default used if unset
     EMBED_DIMS=768                     # optional — provider default used if unset
 
@@ -10,6 +10,7 @@ Provider-specific keys:
     GEMINI_API_KEY=...
     OPENAI_API_KEY=sk-...
     VOYAGE_API_KEY=pa-...
+    OPENROUTER_API_KEY=sk-or-...
 
 Embeddings are always an HTTP call, never a local model. Loading a
 sentence-transformers / ONNX model into the request process is what walked the
@@ -28,10 +29,12 @@ _DEFAULTS = {
     'gemini': 'gemini-embedding-001',
     'openai': 'text-embedding-3-large',
     'voyage': 'voyage-3-large',
+    'openrouter': 'nvidia/llama-nemotron-embed-vl-1b-v2:free',
 }
 
-# Gemini and OpenAI support Matryoshka truncation, so 768 is a real choice
-# rather than a lossy crop. Voyage emits 1024 and ignores the setting.
+# Gemini, OpenAI and OpenRouter's nemotron model support Matryoshka
+# truncation, so 768 is a real choice rather than a lossy crop. Voyage emits
+# 1024 and ignores the setting.
 DIMS = int(os.environ.get('EMBED_DIMS', '768'))
 
 # Query-time embeddings are a few dozen tokens; the index build is ~2.1M tokens
@@ -59,6 +62,7 @@ def embed(texts: list[str], *, is_query: bool = False) -> list[list[float]]:
         'gemini': _gemini,
         'openai': _openai,
         'voyage': _voyage,
+        'openrouter': _openrouter,
     }
     fn = dispatch.get(PROVIDER)
     if fn is None:
@@ -130,3 +134,26 @@ def _voyage(texts: list[str], is_query: bool) -> list[list[float]]:
         input_type='query' if is_query else 'document',
     )
     return resp.embeddings
+
+
+def _openrouter(texts: list[str], is_query: bool) -> list[list[float]]:
+    import requests
+
+    resp = requests.post(
+        url='https://openrouter.ai/api/v1/embeddings',
+        headers={
+            'Authorization': f'Bearer {_key("OPENROUTER_API_KEY")}',
+            'Content-Type': 'application/json',
+        },
+        json={
+            'model': _model('openrouter'),
+            'input': texts,
+            'dimensions': DIMS,
+            'input_type': 'search_query' if is_query else 'search_document',
+            'encoding_format': 'float',
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()['data']
+    return [d['embedding'] for d in data]

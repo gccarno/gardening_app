@@ -599,3 +599,35 @@ class GuideChunk(Base):
 
     def __repr__(self):
         return f'<GuideChunk {self.id} {self.source!r} p={self.page}>'
+
+
+class GuideChunkOpenRouter(Base):
+    """Growing-guide chunks embedded via the OpenRouter provider.
+
+    Kept in a separate table from GuideChunk (Gemini embeddings): vectors
+    from different embedding models aren't comparable by cosine similarity
+    even at the same width, so mixing them in one table would silently
+    corrupt nearest-neighbour search. See
+    apps/ml_service/app/embed_provider.py.
+    """
+    __tablename__ = 'guide_chunk_openrouter'
+
+    id         = Column(Integer, primary_key=True)
+    text       = Column(Text, nullable=False)
+    source     = Column(String(200))
+    plant_name = Column(String(100))
+    region     = Column(String(50), index=True)
+    page       = Column(Integer, nullable=True)
+    embedding  = Column(Vector(768), nullable=False)
+
+    __table_args__ = (
+        Index(
+            'ix_guide_chunk_openrouter_embedding',
+            'embedding',
+            postgresql_using='hnsw',
+            postgresql_ops={'embedding': 'vector_cosine_ops'},
+        ),
+    )
+
+    def __repr__(self):
+        return f'<GuideChunkOpenRouter {self.id} {self.source!r} p={self.page}>'
