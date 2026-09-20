@@ -308,6 +308,30 @@ def get_collection(rebuild=False):
     return db
 
 
+def _commit_batch(Model, batch_chunks, batch_meta, vectors):
+    """Insert a batch in its own short-lived session.
+
+    Each batch commits through a fresh SessionLocal() so the Postgres socket
+    is never held idle across the embedding API call that follows in the next
+    iteration. This survives Neon's server-side idle connection timeout that
+    would otherwise kill a long-lived connection mid-run.
+    """
+    from apps.backend.app.db.session import SessionLocal
+    with SessionLocal() as batch_db:
+        batch_db.add_all([
+            Model(
+                text=chunk,
+                source=meta.get('source', ''),
+                plant_name=meta.get('plant_name', ''),
+                region=meta.get('region', ''),
+                page=meta.get('page') or None,
+                embedding=vector,
+            )
+            for chunk, meta, vector in zip(batch_chunks, batch_meta, vectors)
+        ])
+        batch_db.commit()
+
+
 def add_chunks(db, chunks, metadatas, id_prefix, cfg):
     """Embed a list of text chunks and insert them with their metadata.
 
@@ -366,19 +390,7 @@ def add_chunks(db, chunks, metadatas, id_prefix, cfg):
                 print(f'    embed error (attempt {attempt}), retrying in {delay}s: {e}')
                 time.sleep(delay)
 
-        db.add_all([
-            Model(
-                text=chunk,
-                source=meta.get('source', ''),
-                plant_name=meta.get('plant_name', ''),
-                region=meta.get('region', ''),
-                # TAMU guides carry no page number; books do.
-                page=meta.get('page') or None,
-                embedding=vector,
-            )
-            for chunk, meta, vector in zip(batch_chunks, batch_meta, vectors)
-        ])
-        db.commit()
+        _commit_batch(Model, batch_chunks, batch_meta, vectors)
         added += len(batch_chunks)
         cfg.existing_hashes.update(_text_hash(c) for c in batch_chunks)
 
@@ -596,6 +608,7 @@ def main():
     existing_hashes = _load_existing_hashes(db)
     if existing_hashes:
         print(f'{len(existing_hashes)} chunks already indexed — will be skipped')
+    db.close()  # close before the long indexing loop — all inserts go through _commit_batch
     cfg = IndexConfig(existing_hashes, max_wait=args.max_wait, wait_forever=args.wait_forever)
 
     resume_cmd = ' '.join(sys.argv)
@@ -610,13 +623,18 @@ def main():
             total_added += index_books(db, cfg)
 
         from sqlalchemy import func, select
-        total = db.scalar(select(func.count()).select_from(Model))
+        from apps.backend.app.db.session import SessionLocal
+        with SessionLocal() as stats_db:
+            total = stats_db.scalar(select(func.count()).select_from(Model))
     except (RateLimitBudgetExceeded, KeyboardInterrupt) as e:
         print(f'\nStopped after adding {total_added} chunks this run: {e}')
         print(f'Already-indexed chunks are skipped automatically — resume with:\n  {resume_cmd}')
         sys.exit(1)
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass  # connection may already be terminated by the server
 
     print(f'\nDone. Total chunks added: {total_added}')
     print(f'{Model.__tablename__} now has {total} rows')
