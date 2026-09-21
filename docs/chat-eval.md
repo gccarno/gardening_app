@@ -45,6 +45,8 @@ still starts.
 | `run_agentic_loop` | CHAIN | root of every agent run |
 | `ollama_agentic_loop` | AGENT | Ollama tool loop |
 | `ollama_round_N` | LLM | one per round, records token counts |
+| `openai_compatible_agentic_loop` | AGENT | shared Hetzner/OpenRouter tool loop |
+| `hetzner_round_N` / `openrouter_round_N` | LLM | one per round; `openrouter_round_N` also carries `reasoning_details` when reasoning is enabled |
 | `execute_tool` | TOOL | one per tool call — all 12 route through here |
 | `search_growing_guides_retriever` | RETRIEVER | the RAG lookup |
 

@@ -347,19 +347,21 @@ One important distinction: **`Plant`** is an instance you're growing ("my tomato
 `apps/ml_service/app/llm_provider.py` provides a single `complete(system, user) → str` function that dispatches to any supported backend:
 
 ```
-LLM_PROVIDER=anthropic   → Anthropic API (default)
+LLM_PROVIDER=anthropic   → Anthropic API
 LLM_PROVIDER=openai      → OpenAI API (gpt-4o-mini default)
 LLM_PROVIDER=hetzner     → Hetzner AI Inference (Qwen3.8-27B default)
+LLM_PROVIDER=openrouter  → OpenRouter (nvidia/nemotron-3.5-lightning:free default, default provider)
 LLM_PROVIDER=ollama      → Local Ollama server (gemma4 default)
 LLM_PROVIDER=huggingface → HuggingFace Inference API
 ```
 
-Three providers support full multi-round tool use; others fall back to a single-turn plain completion:
+Four providers support full multi-round tool use; others fall back to a single-turn plain completion:
 
 | Provider | Tool use | Notes |
 |---|---|---|
 | `ollama` | Yes — `_run_ollama_loop` | OpenAI-compatible tool-calling format; models must support it (gemma4, llama3.1+) |
-| `hetzner` | Yes — `_run_hetzner_loop` | OpenAI chat-completions API; tool results carry `tool_call_id` |
+| `hetzner` | Yes — `_run_openai_compatible_loop` | OpenAI chat-completions API; tool results carry `tool_call_id` |
+| `openrouter` | Yes — `_run_openai_compatible_loop` | Same loop as `hetzner`; also sends `reasoning: {enabled: true}` and round-trips `reasoning_details` between rounds |
 | `anthropic` | Yes — native `tool_use` stop reason | Structured tool result messages |
 | `openai` | No — single turn | Falls back to `complete()` |
 | `huggingface` | No — single turn | Falls back to `complete()` |
@@ -536,16 +538,17 @@ Copy `.env.example` to `.env` and fill in what you need:
 ANTHROPIC_API_KEY=sk-ant-...       # https://console.anthropic.com
 OPENAI_API_KEY=sk-...              # https://platform.openai.com
 HETZNER_API_KEY=...                # https://console.hetzner.com — AI Inference
+OPENROUTER_API_KEY=sk-or-...       # https://openrouter.ai — free-tier models available
 OLLAMA_BASE_URL=http://localhost:11434  # local Ollama (no key needed)
 HF_TOKEN=hf_...                    # HuggingFace (optional for public models)
 
 # Which LLM to use for completions
-# anthropic | openai | hetzner | ollama | huggingface
-LLM_PROVIDER=hetzner
+# anthropic | openai | hetzner | openrouter | ollama | huggingface
+LLM_PROVIDER=openrouter
 
 # Which model to use for the chat assistant
 CHAT_MODEL=claude-sonnet-4-6
-LLM_MODEL=claude-haiku-4-5-20251001
+LLM_MODEL=nvidia/nemotron-3.5-lightning:free
 
 # Data enrichment scripts (not needed to run the app)
 PERENUAL_API_KEY=...

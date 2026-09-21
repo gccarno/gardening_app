@@ -944,40 +944,52 @@ def _run_ollama_loop(system: str, messages: list, garden, db, max_rounds: int = 
     return 'I ran into a loop. Please try rephrasing your question.'
 
 
-@trace(name='hetzner_agentic_loop', span_type=SpanType.AGENT)
-def _run_hetzner_loop(system: str, messages: list, garden, db, max_rounds: int = 5) -> str:
+@trace(name='openai_compatible_agentic_loop', span_type=SpanType.AGENT)
+def _run_openai_compatible_loop(
+    system: str, messages: list, garden, db, *,
+    provider: str, base_url: str, key_env: str, model: str,
+    max_tokens: int = 1024, reasoning: bool = False, max_rounds: int = 5,
+) -> str:
     """
-    Agentic loop for Hetzner AI Inference (Qwen) over its OpenAI-compatible API.
+    Agentic loop shared by any OpenAI-compatible chat-completions endpoint
+    (Hetzner AI Inference, OpenRouter) that requires each tool result to name
+    the `tool_call_id` it answers — unlike Ollama, which accepts a bare tool
+    message and gets its own loop above. No MLflow autolog covers this client,
+    so — as on the Ollama path — each round gets an explicit LLM span.
 
-    Kept separate from the Ollama loop because the OpenAI protocol requires each
-    tool result to name the `tool_call_id` it answers, while Ollama accepts a
-    bare tool message. No MLflow autolog covers this client, so — as on the
-    Ollama path — each round gets an explicit LLM span.
+    `reasoning` turns on OpenRouter's reasoning mode (`extra_body={'reasoning':
+    {'enabled': True}}`) and round-trips the `reasoning_details` the response
+    carries back unmodified on the next round's assistant turn, so the model
+    continues the same chain of thought instead of restarting it. Hetzner
+    rejects unknown fields, which is exactly why the assistant turn below is
+    rebuilt by hand rather than passed through via `msg.model_dump()`.
     """
     from openai import OpenAI
-    from .llm_provider import HETZNER_BASE_URL, _model
 
-    key = os.environ.get('HETZNER_API_KEY', '')
+    key = os.environ.get(key_env, '')
     if not key:
         raise RuntimeError(
             'The garden assistant is not configured. '
-            'Add HETZNER_API_KEY to your .env file.'
+            f'Add {key_env} to your .env file.'
         )
-    client = OpenAI(api_key=key, base_url=HETZNER_BASE_URL)
-    model  = _model('hetzner')
+    client = OpenAI(api_key=key, base_url=base_url)
 
     working = [{'role': 'system', 'content': system}] + list(messages)
 
-    # Heray (Hetzner's gateway) returns intermittent 504s under load; one retry
-    # masks them without paying a round-trip on every call. GARDEN-APP-BACKEND-C.
+    # These gateways return intermittent 429/502/503/504s under load; one
+    # retry masks them without paying a round-trip on every call.
+    # GARDEN-APP-BACKEND-C.
     from openai import APIStatusError
+    _RETRY_STATUS_CODES = {429, 502, 503, 504}
+
+    extra_body = {'reasoning': {'enabled': True}} if reasoning else None
 
     def _create_round():
-        return client.chat.completions.create(
+        kwargs = dict(
             model=model,
             messages=working,
             tools=_OPENAI_TOOL_SCHEMAS,
-            max_tokens=1024,
+            max_tokens=max_tokens,
             # Cap a single round at 120 s — well under Neon's
             # idle_in_transaction_session_timeout when the request-scoped db
             # session is held across this call. The companion backend fix
@@ -985,22 +997,31 @@ def _run_hetzner_loop(system: str, messages: list, garden, db, max_rounds: int =
             # transaction, but keep this belt to the suspenders.
             timeout=120,
         )
+        if extra_body:
+            kwargs['extra_body'] = extra_body
+        return client.chat.completions.create(**kwargs)
 
     for round_num in range(1, max_rounds + 1):
-        with span(f'hetzner_round_{round_num}',
+        with span(f'{provider}_round_{round_num}',
                   span_type=SpanType.LLM,
                   inputs={'model': model, 'message_count': len(working)}) as llm_span:
             try:
                 resp = _create_round()
             except APIStatusError as exc:
-                if exc.status_code == 504 and round_num <= max_rounds:
-                    time.sleep(2)
+                if exc.status_code in _RETRY_STATUS_CODES and round_num <= max_rounds:
+                    retry_after = None
+                    try:
+                        retry_after = float(exc.response.headers.get('retry-after'))
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+                    time.sleep(retry_after if retry_after is not None else 2)
                     resp = _create_round()
                 else:
                     raise
             choice = resp.choices[0]
             msg    = choice.message
             tool_calls = msg.tool_calls or []
+            reasoning_details = (msg.model_extra or {}).get('reasoning_details') if reasoning else None
             set_outputs(llm_span, {
                 'content':      msg.content,
                 'tool_calls':   [tc.function.name for tc in tool_calls],
@@ -1011,7 +1032,11 @@ def _run_hetzner_loop(system: str, messages: list, garden, db, max_rounds: int =
 
         # Rebuilt by hand rather than msg.model_dump(): the SDK carries provider
         # extras (refusal, annotations) that the endpoint rejects on the way back.
+        # reasoning_details is the one extra we deliberately keep, passed back
+        # unmodified so the model's chain of thought continues across rounds.
         assistant_turn = {'role': 'assistant', 'content': msg.content or ''}
+        if reasoning_details:
+            assistant_turn['reasoning_details'] = reasoning_details
         if tool_calls:
             assistant_turn['tool_calls'] = [
                 {'id': tc.id, 'type': 'function',
@@ -1049,13 +1074,29 @@ def run_agentic_loop(
 
     Falls back to a plain complete() call for non-Anthropic providers.
     """
-    from apps.ml_service.app.llm_provider import PROVIDER, complete as _llm_complete
+    from apps.ml_service.app.llm_provider import (
+        PROVIDER, HETZNER_BASE_URL, OPENROUTER_BASE_URL, _model,
+        complete as _llm_complete,
+    )
 
     if PROVIDER == 'ollama':
         return _run_ollama_loop(system, messages, garden, db, max_tool_rounds)
 
     if PROVIDER == 'hetzner':
-        return _run_hetzner_loop(system, messages, garden, db, max_tool_rounds)
+        return _run_openai_compatible_loop(
+            system, messages, garden, db,
+            provider='hetzner', base_url=HETZNER_BASE_URL,
+            key_env='HETZNER_API_KEY', model=_model('hetzner'),
+            max_tokens=1024, reasoning=False, max_rounds=max_tool_rounds,
+        )
+
+    if PROVIDER == 'openrouter':
+        return _run_openai_compatible_loop(
+            system, messages, garden, db,
+            provider='openrouter', base_url=OPENROUTER_BASE_URL,
+            key_env='OPENROUTER_API_KEY', model=_model('openrouter'),
+            max_tokens=4096, reasoning=True, max_rounds=max_tool_rounds,
+        )
 
     if PROVIDER != 'anthropic':
         # Other non-Anthropic providers: pass the last user message only (no tool support)

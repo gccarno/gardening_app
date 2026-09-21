@@ -2,20 +2,21 @@
 Model-agnostic LLM provider for the garden assistant chat.
 
 Configure via .env:
-    LLM_PROVIDER=anthropic   # anthropic | openai | hetzner | ollama | huggingface
+    LLM_PROVIDER=anthropic   # anthropic | openai | hetzner | openrouter | ollama | huggingface
     LLM_MODEL=claude-haiku-4-5-20251001   # optional — provider default used if unset
 
 Provider-specific keys:
     ANTHROPIC_API_KEY=sk-ant-...
     OPENAI_API_KEY=sk-...
     HETZNER_API_KEY=...                      # Hetzner AI Inference (OpenAI-compatible)
+    OPENROUTER_API_KEY=sk-or-...              # OpenRouter (OpenAI-compatible)
     OLLAMA_BASE_URL=http://localhost:11434   # optional, this is the default
     HF_TOKEN=hf_...                         # optional for public HF models
 """
 
 import os
 
-PROVIDER   = os.environ.get('LLM_PROVIDER', 'anthropic').lower()
+PROVIDER   = os.environ.get('LLM_PROVIDER', 'openrouter').lower()
 _MODEL     = os.environ.get('LLM_MODEL') or None   # None → provider default below
 CHAT_MODEL = os.environ.get('CHAT_MODEL', 'claude-sonnet-4-6')
 
@@ -24,10 +25,16 @@ CHAT_MODEL = os.environ.get('CHAT_MODEL', 'claude-sonnet-4-6')
 HETZNER_BASE_URL = os.environ.get(
     'HETZNER_BASE_URL', 'https://inference.hetzner.com/api/v1')
 
+# OpenRouter is also OpenAI-compatible, and additionally serves free-tier
+# models (':free' suffix) with real tool-calling support.
+OPENROUTER_BASE_URL = os.environ.get(
+    'OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+
 _DEFAULTS = {
     'anthropic':   'claude-haiku-4-5-20251001',
     'openai':      'gpt-4o-mini',
     'hetzner':     'Qwen3.8-27B',
+    'openrouter':  'nvidia/nemotron-3.5-lightning:free',
     'ollama':      'gemma4:e2b',
     'huggingface': 'mistralai/Mistral-7B-Instruct-v0.2',
 }
@@ -46,6 +53,7 @@ def complete(system: str, user: str) -> str:
         'anthropic':   _anthropic,
         'openai':      _openai,
         'hetzner':     _hetzner,
+        'openrouter':  _openrouter,
         'ollama':      _ollama,
         'huggingface': _huggingface,
     }
@@ -147,6 +155,28 @@ def _hetzner(system: str, user: str) -> str:
     client = OpenAI(api_key=key, base_url=HETZNER_BASE_URL)
     resp = client.chat.completions.create(
         model=_model('hetzner'),
+        max_tokens=512,
+        messages=[
+            {'role': 'system', 'content': system},
+            {'role': 'user',   'content': user},
+        ],
+    )
+    return resp.choices[0].message.content
+
+
+def _openrouter(system: str, user: str) -> str:
+    """OpenRouter — an OpenAI-compatible endpoint proxying many models, including
+    free-tier models with real tool-calling support (e.g. nvidia/nemotron-3.5-lightning:free)."""
+    from openai import OpenAI   # pip install openai
+    key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not key:
+        raise RuntimeError(
+            'The garden assistant is not configured. '
+            'Add OPENROUTER_API_KEY to your .env file.'
+        )
+    client = OpenAI(api_key=key, base_url=OPENROUTER_BASE_URL)
+    resp = client.chat.completions.create(
+        model=_model('openrouter'),
         max_tokens=512,
         messages=[
             {'role': 'system', 'content': system},

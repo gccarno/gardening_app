@@ -528,18 +528,22 @@ unaffected.
 | `JOB_TOKEN` | Render + GH secret | guards `/api/admin/run-*` |
 | `ENABLE_SCHEDULER` | Render (`0`) | disable in-process cron on free tier |
 | `CORS_ORIGINS` | optional | comma-separated origins if web is hosted separately |
-| `ANTHROPIC_API_KEY` | Render + local | photo plant/pest ID **and the chat assistant** |
-| `LLM_PROVIDER` | optional | `anthropic` (default) \| `openai` \| `hetzner` \| `ollama` \| `huggingface` |
+| `ANTHROPIC_API_KEY` | Render + local | photo plant/pest ID (always); chat assistant when `LLM_PROVIDER=anthropic` |
+| `LLM_PROVIDER` | optional | `openrouter` (default) \| `anthropic` \| `openai` \| `hetzner` \| `ollama` \| `huggingface` |
+| `OPENROUTER_API_KEY` | Render + local | required when `LLM_PROVIDER=openrouter` (the default — free-tier models available) |
 | `HETZNER_API_KEY` | Render + local | required when `LLM_PROVIDER=hetzner` (Hetzner AI Inference) |
 | `EMBED_PROVIDER` | optional | `gemini` (default) \| `openai` \| `voyage` — growing-guide search |
 | `EMBED_MODEL` | optional | provider default used if unset |
 | `EMBED_DIMS` | optional | `768` default; **must match the `vector(N)` column** |
 | `GEMINI_API_KEY` | Render + local | required when `EMBED_PROVIDER=gemini` (the default) |
 
-> **The chat assistant needs `ANTHROPIC_API_KEY` set on Render.** Without it
-> `/api/chat` returns HTTP 200 carrying "The garden assistant is not configured"
-> — a friendly message, not an error, so nothing shows up in Sentry and the
-> endpoint looks healthy. Verified live 2026-08-01.
+> **The chat assistant needs its provider's API key set on Render** —
+> `OPENROUTER_API_KEY` for the default `LLM_PROVIDER=openrouter`, or
+> `ANTHROPIC_API_KEY`/`HETZNER_API_KEY` if `LLM_PROVIDER` is switched. Without
+> the right key `/api/chat` returns HTTP 200 carrying "The garden assistant is
+> not configured" — a friendly message, not an error, so nothing shows up in
+> Sentry and the endpoint looks healthy. Verified live 2026-08-01 (against the
+> Anthropic path).
 >
 > `GEMINI_API_KEY` is separate and only powers growing-guide retrieval. Without
 > it `search_growing_guides` returns no passages and the assistant answers from

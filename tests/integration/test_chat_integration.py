@@ -2,14 +2,14 @@
 Integration tests for the agentic chat loop against a real model.
 
 These tests call run_agentic_loop() with whatever LLM_PROVIDER names in .env
-(ollama or hetzner — the two providers with a tool-calling loop) and assert that
-the model correctly invokes the expected tool for each prompt.
+(ollama, hetzner or openrouter — the three providers with a tool-calling loop)
+and assert that the model correctly invokes the expected tool for each prompt.
 
 Run with:
     uv run pytest tests/integration/ -v
 
 Skip condition: tests skip automatically when the configured provider is not
-reachable — Ollama not running, or HETZNER_API_KEY unset.
+reachable — Ollama not running, HETZNER_API_KEY unset, or OPENROUTER_API_KEY unset.
 Excluded from default test runs via: pytest -m "not integration"
 """
 from dotenv import load_dotenv
@@ -49,7 +49,9 @@ def tool_calls(monkeypatch):
         pytest.skip('Ollama not running at ' + os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434'))
     if provider == 'hetzner' and not os.environ.get('HETZNER_API_KEY'):
         pytest.skip('HETZNER_API_KEY not set')
-    if provider not in ('ollama', 'hetzner'):
+    if provider == 'openrouter' and not os.environ.get('OPENROUTER_API_KEY'):
+        pytest.skip('OPENROUTER_API_KEY not set')
+    if provider not in ('ollama', 'hetzner', 'openrouter'):
         pytest.skip(f'No tool-calling loop for LLM_PROVIDER={provider!r}')
     monkeypatch.setattr(_llm, 'PROVIDER', provider)
     called = []

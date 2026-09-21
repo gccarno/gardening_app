@@ -41,11 +41,20 @@ services:
         sync: false
       - key: TOMORROW_IO_KEY
         sync: false
-      # Powers photo plant/pest ID *and* the chat assistant. Never declared here
-      # before, so it was never set on the live service — /api/chat answered
-      # every question with "The garden assistant is not configured" while still
-      # returning HTTP 200, which is why it never surfaced as an error.
+      # Powers photo plant/pest ID (always Anthropic — see complete_vision in
+      # apps/ml_service/app/llm_provider.py). Also selectable for chat via
+      # LLM_PROVIDER=anthropic. Never declared here before, so it was never set
+      # on the live service — /api/chat answered every question with "The
+      # garden assistant is not configured" while still returning HTTP 200,
+      # which is why it never surfaced as an error.
       - key: ANTHROPIC_API_KEY
+        sync: false
+      # Chat assistant LLM. See apps/ml_service/app/llm_provider.py.
+      - key: LLM_PROVIDER
+        value: openrouter
+      - key: LLM_MODEL
+        value: nvidia/nemotron-3.5-lightning:free
+      - key: OPENROUTER_API_KEY
         sync: false
       # Growing-guide retrieval embeds the query through this. Optional: without
       # it search_growing_guides returns nothing and the assistant falls back to

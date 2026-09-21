@@ -122,7 +122,7 @@ def api_chat(body: dict, db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    # Close the read-only transaction before the long Hetzner call below.
+    # Close the read-only transaction before the long LLM call below.
     # run_agentic_loop can run for up to 5 rounds × 120 s, and Neon's
     # idle_in_transaction_session_timeout would otherwise kill the connection
     # mid-flight, surfacing as an IdleInTransactionSessionTimeout on cleanup
@@ -212,6 +212,13 @@ def restart_model():
         if not key:
             return {'ok': False, 'provider': PROVIDER, 'error': 'OPENAI_API_KEY not set'}
         return {'ok': True, 'provider': PROVIDER, 'model': _model('openai')}
+
+    elif PROVIDER == 'openrouter':
+        import os
+        key = os.environ.get('OPENROUTER_API_KEY', '')
+        if not key:
+            return {'ok': False, 'provider': PROVIDER, 'error': 'OPENROUTER_API_KEY not set'}
+        return {'ok': True, 'provider': PROVIDER, 'model': _model('openrouter')}
 
     else:
         return {'ok': True, 'provider': PROVIDER, 'model': _model(PROVIDER)}
