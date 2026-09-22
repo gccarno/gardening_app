@@ -119,6 +119,28 @@ def test_fetch_functions_return_none_without_key(monkeypatch):
     assert tomorrow_io.fetch_history_days(40.0, -75.2) is None
 
 
+def test_get_redacts_api_key_from_raised_exception(monkeypatch):
+    """requests embeds the full request URL (apikey included) in connection-
+    level exception messages, and callers log these exceptions verbatim
+    (e.g. weather.py's logger.warning(..., e)) — the key must never survive
+    into that message."""
+    secret = 'SUPER-SECRET-KEY-123'
+
+    def leaky_get(url, params=None, **kwargs):
+        raise requests.ConnectionError(
+            f"Max retries exceeded with url: {path_and_query(url, params)}")
+
+    def path_and_query(url, params):
+        from urllib.parse import urlencode
+        return f'{url}?{urlencode(params)}'
+
+    monkeypatch.setattr(requests, 'get', leaky_get)
+    with pytest.raises(requests.exceptions.RequestException) as exc_info:
+        tomorrow_io.fetch_realtime(40.0, -75.2, key=secret)
+    assert secret not in str(exc_info.value)
+    assert '***' in str(exc_info.value)
+
+
 # ── Watering-engine forecast fallback ────────────────────────────────────────
 
 def test_forecast_window_falls_back_to_tomorrow_io(fallback_http):

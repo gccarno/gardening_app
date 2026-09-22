@@ -39,11 +39,18 @@ def get_key() -> str | None:
 
 
 def _get(path: str, lat: float, lon: float, units: str, key: str, **extra) -> dict:
-    resp = requests.get(f'{_BASE}/{path}', params={
-        'location': f'{lat},{lon}', 'apikey': key, 'units': units, **extra,
-    }, timeout=TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    # Callers log these exceptions (e.g. weather.py's logger.warning(..., e));
+    # requests embeds the full request URL — apikey included — in connection-
+    # level exception messages (timeouts, DNS failures, max-retries), so the
+    # key must never reach the caller inside an exception message.
+    try:
+        resp = requests.get(f'{_BASE}/{path}', params={
+            'location': f'{lat},{lon}', 'apikey': key, 'units': units, **extra,
+        }, timeout=TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.RequestException as e:
+        raise requests.exceptions.RequestException(str(e).replace(key, '***')) from e
 
 
 def _daily_entry(day: dict) -> dict:
