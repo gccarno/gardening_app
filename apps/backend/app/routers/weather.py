@@ -45,7 +45,7 @@ def _frost_info(garden: Garden) -> dict:
 
 
 def _tomorrow_io_weather(garden: Garden) -> Optional[dict]:
-    """Build the weather-card payload from Tomorrow.io when Open-Meteo fails."""
+    """Build the weather-card payload from Tomorrow.io (primary provider)."""
     from ..services import tomorrow_io
     if not tomorrow_io.get_key():
         return None
@@ -55,7 +55,7 @@ def _tomorrow_io_weather(garden: Garden) -> Optional[dict]:
         current = tomorrow_io.fetch_realtime(
             garden.latitude, garden.longitude, units='imperial')
     except Exception as e:
-        logger.warning('[weather] tomorrow.io fallback failed for garden %d: %s',
+        logger.warning('[weather] tomorrow.io forecast failed for garden %d: %s',
                        garden.id, e)
         return None
     return {
@@ -79,16 +79,11 @@ def _tomorrow_io_weather(garden: Garden) -> Optional[dict]:
     }
 
 
-@router.get('/gardens/{garden_id}/weather')
-def api_garden_weather(garden_id: int,
-                       user: User = Depends(get_current_user),
-                       db: Session = Depends(get_db)):
-    garden = require_garden(db, user, garden_id, 'viewer')
-    cached = _weather_cache.get(garden_id)
-    if cached and time.time() - cached[0] < _WEATHER_CACHE_TTL:
-        return cached[1]
-    if not garden.latitude or not garden.longitude:
-        raise HTTPException(status_code=404, detail='no_location')
+def _open_meteo_weather(garden: Garden) -> Optional[dict]:
+    """Build the weather-card payload from Open-Meteo (fallback provider —
+    it rate-limits/403s by source IP, and Render free-tier services share
+    egress IPs; it can also return HTTP 200 with a malformed/empty body).
+    """
     try:
         resp = http.get('https://api.open-meteo.com/v1/forecast', params={
             'latitude':  garden.latitude,
@@ -102,32 +97,22 @@ def api_garden_weather(garden_id: int,
             'timezone': 'auto',
         }, timeout=8)
         resp.raise_for_status()
-    except http.exceptions.RequestException as e:
-        logger.warning('[weather] open-meteo forecast failed for garden %d: %s',
-                       garden_id, e)
-        if cached:  # serve stale data rather than an error
-            return cached[1]
-        result = _tomorrow_io_weather(garden)
-        if result is None:
-            raise HTTPException(status_code=502, detail=str(e))
-        _weather_cache[garden_id] = (time.time(), result)
-        return result
-
-    data  = resp.json()
-    cur   = data.get('current', {})
-    daily = data.get('daily', {})
-
-    days = []
-    for i, d in enumerate(daily.get('time', [])):
-        days.append({
+        data  = resp.json()
+        cur   = data.get('current', {})
+        daily = data.get('daily', {})
+        days = [{
             'date':        d,
             'high':        daily['temperature_2m_max'][i],
             'low':         daily['temperature_2m_min'][i],
             'precip_prob': daily['precipitation_probability_max'][i],
             'uv':          daily.get('uv_index_max', [None] * 7)[i],
             'condition':   WMO.get(daily['weather_code'][i], 'Unknown'),
-        })
-    result = {
+        } for i, d in enumerate(daily.get('time', []))]
+    except (http.exceptions.RequestException, KeyError, IndexError) as e:
+        logger.warning('[weather] open-meteo forecast failed for garden %d: %s',
+                       garden.id, e)
+        return None
+    return {
         'current': {
             'temp':          cur.get('temperature_2m'),
             'humidity':      cur.get('relative_humidity_2m'),
@@ -139,6 +124,25 @@ def api_garden_weather(garden_id: int,
         'frost': _frost_info(garden),
         'source': 'open-meteo',
     }
+
+
+@router.get('/gardens/{garden_id}/weather')
+def api_garden_weather(garden_id: int,
+                       user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    garden = require_garden(db, user, garden_id, 'viewer')
+    cached = _weather_cache.get(garden_id)
+    if cached and time.time() - cached[0] < _WEATHER_CACHE_TTL:
+        return cached[1]
+    if not garden.latitude or not garden.longitude:
+        raise HTTPException(status_code=404, detail='no_location')
+
+    result = _tomorrow_io_weather(garden) or _open_meteo_weather(garden)
+    if result is None:
+        if cached:  # serve stale data rather than an error
+            return cached[1]
+        raise HTTPException(status_code=502, detail='weather_unavailable')
+
     _weather_cache[garden_id] = (time.time(), result)
     return result
 

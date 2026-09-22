@@ -1,7 +1,7 @@
 """
-Tomorrow.io weather client — fallback provider for when Open-Meteo is
-unreachable (it rate-limits/403s by source IP, and Render free-tier services
-share egress IPs).
+Tomorrow.io weather client — primary provider for the garden weather card
+and history backfill; also used as a fallback elsewhere. Open-Meteo
+rate-limits/403s by source IP, and Render free-tier services share egress IPs.
 
 The free-tier key is read from TOMORROW_IO_KEY or TOMORROW_IO (process env
 first, then the repo-root .env). Endpoints used:
