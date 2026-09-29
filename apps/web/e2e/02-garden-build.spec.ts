@@ -59,7 +59,10 @@ test.describe('garden build', () => {
     await form.getByLabel('Last Frost Date').fill('2026-04-15');
     await form.getByLabel('Water Every (days)').fill('5');
     await form.getByLabel('Water Source').selectOption('drip');
-    await form.getByRole('button', { name: 'Save Changes' }).click();
+    await Promise.all([
+      page.waitForResponse(r => r.url().includes(`/api/gardens/${gardenId}`) && r.request().method() === 'PUT'),
+      form.getByRole('button', { name: 'Save Changes' }).click(),
+    ]);
 
     await page.reload();
     const detail = await api(page.request, 'get', `/api/gardens/${gardenId}`);
