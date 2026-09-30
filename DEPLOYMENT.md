@@ -152,6 +152,12 @@ the direct connection cap ever becomes the ceiling. Steps:
 
 ## 2. Google Cloud Storage (images) — private bucket, pennies/month
 
+> **Now in Terraform.** The bucket, the `garden-app-server` service account, and
+> its bucket IAM grant are managed by `infra/terraform/` (see
+> `infra/terraform/LEARNING.md`). The manual steps below record how they were
+> created. Make future changes in the `.tf` files, not the console. The service
+> account's JSON key is deliberately left out of Terraform.
+
 The plant image tree (`apps/api/static/`, ~5.6 GB of originals) is too big
 for any free-tier host's disk, so images live in a GCS bucket — you've
 created `garden-app-static` (hyphens — bucket names are exact; passing

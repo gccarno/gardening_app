@@ -233,3 +233,11 @@ apps/web/playwright-report/
 apps/web/.playwright/
 mlruns/
 mlflow.db
+
+# Terraform (infra/terraform) — state can hold secrets; keep the lock file committed
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+crash.log
