@@ -17,6 +17,14 @@ terraform {
       # a new major version (majors can rename or remove arguments).
       version = "~> 8.4"
     }
+    neon = {
+      # Community provider — Neon has no official one; this is the provider
+      # Neon's own docs point to.
+      source = "kislerdm/neon"
+      # 0.x versions make no stability promise, so "~> 0.18.0" is tighter than
+      # the google pin: it allows 0.18.x patch releases only (>= 0.18.0, < 0.19).
+      version = "~> 0.18.0"
+    }
   }
 
   # ── Remote state (LEARNING.md step 1d) ─────────────────────────────────────

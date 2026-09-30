@@ -8,7 +8,7 @@ the React SPA and `/api`. The hosted version uses four services. See
 |---|---|---|
 | Render | the web service (`garden-app-wa0b`) | [`render.yaml`](../render.yaml) Blueprint |
 | Google Cloud Storage | the private image bucket `garden-app-static`, plus its service account and IAM grant | [`terraform/gcs.tf`](terraform/gcs.tf) (phase 1) |
-| Neon | Postgres | dashboard; Terraform planned (phase 2) |
+| Neon | Postgres (project `dark-flower-13876828`) | [`terraform/neon.tf`](terraform/neon.tf) (phase 2) |
 | Sentry | error tracking + cron monitors | dashboard / SDK; Terraform planned (phase 3) |
 | GitHub Actions | cron workflows + secrets | workflow YAML; secrets via Terraform planned (phase 4) |
 

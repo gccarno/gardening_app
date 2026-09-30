@@ -12,3 +12,7 @@ provider "google" {
   region  = var.region
 }
 
+# The neon provider reads its API key from the NEON_API_KEY environment
+# variable, so the block is empty on purpose. Never put the key in a .tf file:
+# it would be committed to git.
+provider "neon" {}

@@ -193,11 +193,119 @@ gcloud storage buckets get-iam-policy gs://garden-app-static   # garden-app-serv
    Terraform: the code is the source of truth, and any drift away from it gets
    flagged.
 
+## Phase 2: Neon (the database)
+
+Phase 1 is done. It was applied, state lives in the bucket, and the plan was
+clean on 2026-09-30.
+
+This phase imports **one** resource, `neon_project.garden` in `neon.tf`. Behind
+it sit five Neon objects: the project, root branch, compute, `neondb` database
+and `neondb_owner` role. The mechanics are the same as Phase 1, but the stakes
+are higher, because this resource *is* the app's data.
+
+New concepts:
+
+- **Multiple providers.** `versions.tf` now asks for `kislerdm/neon` as well as `google`, and `init` downloads both.
+- **Replacement (`-/+`).** Some arguments can't change in place. If one of them differs, Terraform plans to delete the database and make a new one.
+  - `prevent_destroy` turns that plan into an error.
+  - Still, **read every Phase 2 plan line by line**, and never apply one containing `-/+` or `destroy`.
+- **Secrets in state.** `connection_uri` is marked `sensitive`, so plans print `<sensitive>`. That is display redaction only. `terraform output <name>` prints the real value, and the state file stores the password in plain text.
+
+### 2a. API key, then init
+
+1. Neon console → your avatar → **Account settings → API keys → Create new API key**. Copy it (it's shown once).
+2. Put it in the **current PowerShell session only**. Don't save it to a file:
+
+   ```powershell
+   $env:NEON_API_KEY = "napi_..."
+   ```
+
+   You'll have to set it again in each new terminal. That's the price of never storing it on disk. (Phase 4 has a better answer.)
+3. Download the new provider. Plain `init` is enough: the backend didn't change, only the providers did.
+
+   ```powershell
+   terraform init
+   ```
+
+   You should see `Installing kislerdm/neon v0.18.x`. The lock file gains a `neon` entry, so commit it.
+
+### 2b. Plan and reconcile
+
+```powershell
+terraform plan
+```
+
+Target: `Plan: 1 to import, 0 to add, 0 to change, 0 to destroy.`
+
+This is the same loop as step 1b. Any `~` line inside `neon_project.garden` is a
+value in `neon.tf` that doesn't match Neon. Copy the live (left-hand) value into
+the code and plan again. Likely candidates are `maintenance_window`, `branch`,
+`quota` and `default_branch_protected`.
+
+**Stop and paste the plan to Claude** if you see any of these:
+
+- `-/+`, `must be replaced`, or `destroy`
+- an error mentioning `prevent_destroy` (that means a replacement was attempted and blocked)
+
+### 2c. Apply, then confirm
+
+```powershell
+terraform apply        # should say: 1 imported, 0 added, 0 changed, 0 destroyed
+terraform plan         # No changes.
+terraform output                            # the listing: neon_connection_uri = <sensitive>
+terraform output neon_database_host         # not secret
+```
+
+**Careful.** `sensitive` only hides a value in plan/apply output and in the
+all-outputs listing above. Asking for one output by name does not hide it:
+`terraform output neon_connection_uri` and `terraform output -raw ...` both
+print the real password.
+
+This actually happened on the first run. The docs wrongly said the by-name
+command would print `<sensitive>`, the password got pasted into a chat, and it
+had to be rotated (step 2d). Treat any command that names a sensitive output as
+"shows the secret".
+
+Then delete the `import { ... }` block from `neon.tf` and run `terraform plan`
+again. It should still say `No changes`.
+
+### 2d. Rotating the password (and why state goes stale)
+
+Rotate whenever the password has been exposed. It was on 2026-09-30, pasted
+into a chat. The password lives in four places, and Terraform owns none of
+them yet. Phase 4 fixes that.
+
+1. **Neon:** open the console, then Branches → `production` → Roles → `neondb_owner` → **Reset password**. Copy the new password.
+2. **Render:** Dashboard → garden-app → Environment → `DATABASE_URL`. Swap in the new password and keep the `postgresql+psycopg://` prefix. Saving triggers a redeploy.
+
+   The live app can't reach the database between steps 1 and 2, so do them back to back.
+3. **GitHub Actions:** the `DATABASE_URL` secret, used by `train_model.yaml`:
+
+   ```powershell
+   gh secret set DATABASE_URL     # paste the new URL at the prompt; it isn't echoed
+   ```
+
+4. **Local:** `DATABASE_URL` in the repo's `.env`.
+5. **Terraform state:**
+
+   ```powershell
+   terraform plan -refresh-only
+   ```
+
+   Terraform read the old password during the import and saved it in state. The reset happened outside Terraform, so state is stale: that's drift. This command reports that `database_password` and the connection URIs changed, without proposing any change to Neon.
+
+   ```powershell
+   terraform apply -refresh-only
+   ```
+
+   Type `yes`. This rewrites state only, and touches nothing in Neon.
+
+Where this is heading: in Phase 4, Terraform writes the GitHub secret from
+`neon_project.garden.connection_uri`. After that, step 3 becomes part of
+`terraform apply` instead of a manual step.
+
 ## Coming next
 
-- **Phase 2, Neon.** Import the Postgres project, branch, database and role.
-  - You'll learn `sensitive` values, and why state can hold secrets. That's why the state bucket is private.
-  - The API key comes from the `NEON_API_KEY` env var.
 - **Phase 3, Sentry.** Import the `garden-app-backend` project and add an alert rule as code.
 - **Phase 4, GitHub Actions secrets.** Feed Neon's connection string straight into the `DATABASE_URL` secret, so one provider's output becomes another's input.
 
