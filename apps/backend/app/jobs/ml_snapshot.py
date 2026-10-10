@@ -1,7 +1,7 @@
 """
 Nightly ML snapshot job for the watering-model flywheel.
 
-Three steps, run in this order (see admin.run_ml_snapshot and
+Two steps, run in this order (see admin.run_ml_snapshot and
 ml/docs/WATERING_MODEL.md, step 3):
   1. Backfill labels for snapshots whose "next day" has fully elapsed and
      been recorded — did each bed get watered, and how much rain fell? That
@@ -9,11 +9,11 @@ ml/docs/WATERING_MODEL.md, step 3):
   2. Compute today's feature snapshot per bed: the features the watering
      model sees, plus what the rule engine (and, once trained, the model)
      currently recommend.
-  3. Prune WeatherLog / WateringEvent rows older than 7 days.
 
-Order matters: label backfill and the new snapshot both read from
-WeatherLog/WateringEvent, so pruning has to happen last.  MlWateringSnapshot
-itself is never pruned — it's the accumulating training/monitoring store.
+Nothing is pruned any more. WeatherLog and WateringEvent used to be cut to 7
+days here, which discarded the observed history needed to score forecasts and
+the only durable record of hand-waterings. Every reader filters by date, so
+keeping the rows is safe.
 
 This job must also run *after* the nightly weather fetch, which is what
 writes yesterday's WeatherLog row and credits rain-as-watering events — both
@@ -51,7 +51,7 @@ def _backfill_labels(db: Session, garden_id: int) -> int:
     """
     today = date.today()
     newest = today - timedelta(days=2)                    # its next day (D-1) is complete
-    oldest = today - timedelta(days=_RETENTION_DAYS)      # older source rows are pruned
+    oldest = today - timedelta(days=_RETENTION_DAYS)      # bounds the query, and the recovery window
     snapshots = (db.query(MlWateringSnapshot)
                  .filter(MlWateringSnapshot.garden_id == garden_id,
                          MlWateringSnapshot.snapshot_date <= newest,
@@ -163,12 +163,6 @@ def _snapshot_garden(db: Session, garden: Garden) -> int:
     return saved
 
 
-def _prune_operational_tables(db: Session) -> None:
-    cutoff = date.today() - timedelta(days=_RETENTION_DAYS)
-    db.query(WeatherLog).filter(WeatherLog.date < cutoff).delete(synchronize_session=False)
-    db.query(WateringEvent).filter(WateringEvent.event_date < cutoff).delete(synchronize_session=False)
-
-
 @monitor(
     monitor_slug='nightly-ml-snapshot',
     # Schedule mirrors .github/workflows/scheduled-jobs.yaml. This job feeds the
@@ -185,7 +179,7 @@ def _prune_operational_tables(db: Session) -> None:
     },
 )
 def run_ml_snapshot() -> dict:
-    """APScheduler/admin job: backfill labels, snapshot today, prune. Order matters."""
+    """APScheduler/admin job: backfill labels, then snapshot today. Order matters."""
     db = SessionLocal()
     try:
         gardens = db.query(Garden).filter(
@@ -206,9 +200,6 @@ def run_ml_snapshot() -> dict:
                 snapshotted += _snapshot_garden(db, g)
             except Exception:
                 log.exception('[ml_snapshot] snapshot failed for garden %d', g.id)
-        db.commit()
-
-        _prune_operational_tables(db)
         db.commit()
 
         log.info('[ml_snapshot] backfilled=%d snapshotted=%d gardens=%d',

@@ -17,8 +17,13 @@ def test_garden_fetch_error_is_swallowed_and_rolled_back(db, garden, monkeypatch
         raise RuntimeError('column does not exist')
 
     monkeypatch.setattr(weather_mod, '_fetch_weather_for_garden', boom)
+    archived = []
+    monkeypatch.setattr(weather_mod, 'archive_forecasts',
+                        lambda _db, gid, lat, lon: archived.append(gid) or 0)
 
     # Must not raise even though the only garden's fetch blows up.
     weather_mod.run_daily_weather_fetch()
 
     assert rollbacks, 'expected db.rollback() after a per-garden failure'
+    # A failed history fetch must not cost us today's forecast snapshot.
+    assert archived, 'forecast archive should still run after a failed fetch'

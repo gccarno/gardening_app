@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..db.models import Garden, User, WeatherLog
 from ..db.session import SessionLocal, get_db
 from ..services.auth import get_current_user, require_garden
+from ..services.forecast_archive import archive_forecasts
 from ..services.helpers import (
     FROST_DATES, REPO_ROOT, WMO, apply_rain_as_watering, get_or_404, rainfall_summary,
 )
@@ -164,14 +165,16 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
     end_date   = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=6)
 
-    rows = _tomorrow_io_history_rows(garden)
-    if rows is None:
-        rows = _open_meteo_archive_rows(garden, start_date, end_date)  # raises on failure
+    tio_rows = _tomorrow_io_history_rows(garden)
+    if tio_rows is None:
+        # raises on failure
+        rows = [(r, 'open-meteo') for r in _open_meteo_archive_rows(garden, start_date, end_date)]
     else:
-        rows += _gap_fill_rows(db, garden, rows, start_date, end_date)
+        rows = [(r, 'tomorrow-io') for r in tio_rows]
+        rows += [(r, 'open-meteo') for r in _gap_fill_rows(db, garden, tio_rows, start_date, end_date)]
 
     created = 0
-    for d, rainfall, hi, lo, hum, et0_val in rows:
+    for (d, rainfall, hi, lo, hum, et0_val), provider in rows:
         db.query(WeatherLog).filter_by(garden_id=garden_id, date=d).delete()
         db.add(WeatherLog(
             garden_id=garden_id,
@@ -181,7 +184,7 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
             temp_low_f=lo,
             humidity_pct=hum,
             et0_mm=et0_val,
-            source='api',
+            source=provider,
         ))
         created += 1
     db.flush()
@@ -326,14 +329,18 @@ def run_daily_weather_fetch():
         # Capture id/name up front: after a failed commit the session enters a
         # pending-rollback state, and touching a live ORM object in the except
         # block would itself raise (PendingRollbackError) and escape as a 500.
-        targets = [(g.id, g.name) for g in gardens]
-        for gid, gname in targets:
+        targets = [(g.id, g.name, g.latitude, g.longitude) for g in gardens]
+        for gid, gname, lat, lon in targets:
             try:
                 saved = _fetch_weather_for_garden(db, gid)
                 logger.info('[weather] garden %d (%s): %d days saved', gid, gname, saved)
             except Exception:
                 db.rollback()
                 logger.exception('[weather] garden %d (%s) fetch failed', gid, gname)
+            # Independent of the fetch above: a failed history fetch should not
+            # cost us today's forecast snapshot, or vice versa. Never raises.
+            archived = archive_forecasts(db, gid, lat, lon)
+            logger.info('[weather] garden %d (%s): %d forecast rows archived', gid, gname, archived)
     finally:
         db.close()
 

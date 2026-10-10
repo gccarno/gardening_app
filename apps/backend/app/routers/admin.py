@@ -41,9 +41,8 @@ def run_weather_fetch(x_job_token: str | None = Header(default=None)):
 
 @router.post('/run-ml-snapshot')
 def run_ml_snapshot_endpoint(x_job_token: str | None = Header(default=None)):
-    """Backfill watering-model training labels, snapshot today's features,
-    and prune WeatherLog/WateringEvent to 7 days (normally right after the
-    weather fetch, part of the 2 AM cron)."""
+    """Backfill watering-model training labels and snapshot today's features
+    (normally right after the weather fetch, part of the 2 AM cron)."""
     _check_job_token(x_job_token)
     from ..jobs.ml_snapshot import run_ml_snapshot
     log.info('[admin] run-ml-snapshot triggered')

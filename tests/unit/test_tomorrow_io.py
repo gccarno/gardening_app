@@ -204,7 +204,7 @@ def test_history_fetch_falls_back_and_skips_today(db, garden, fallback_http):
     assert logs[0].date == date.today() - timedelta(days=1)
     assert logs[0].rainfall_in == 0.12
     assert logs[0].temp_high_f == 88.0
-    assert logs[0].source == 'api'
+    assert logs[0].source == 'tomorrow-io'
 
 
 def test_history_fetch_reraises_without_key(db, garden, monkeypatch):

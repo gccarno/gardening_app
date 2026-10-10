@@ -40,11 +40,18 @@ benefit is visible, for no functional gain.
 ## 3. Data collection & preparation
 
 **Decision:** two tiers of storage, sized for what they're for.
-- **Operational (7-day rolling window):** `WeatherLog` (observed rainfall,
-  temperature, humidity, ET0) and `WateringEvent` (append-only log of actual
-  watering actions) are pruned nightly to the last 7 days. This is exactly
-  the state the rule engine and the live model need to score today's
-  recommendation — nothing older is read at serving time.
+- **Operational:** `WeatherLog` (observed rainfall, temperature, humidity,
+  ET0, and the `source` provider) and `WateringEvent` (append-only log of
+  actual watering actions). *Updated 2026-10-09:* these were pruned nightly to
+  7 days; they are now kept, because that threw away the observed history
+  needed to score forecasts and the only durable record of hand-waterings.
+  The serving path still reads only the last 7 days; every reader filters by
+  date, so the extra rows cost nothing at serving time.
+- **Forecast archive:** `WeatherForecastArchive` stores each provider's
+  forecast per target day and lead time as of each nightly run (both
+  Tomorrow.io and Open-Meteo, regardless of which drives the app). Joined to
+  `WeatherLog` on `target_date` it gives per-provider forecast accuracy.
+  Populated from 2026-10-10 onward.
 - **Training/monitoring (unbounded):** `MlWateringSnapshot`, one row per bed
   per day, accumulates indefinitely. It's the flywheel: features computed
   each night, plus the label backfilled two nights later (did the bed get
@@ -324,4 +331,5 @@ Serving integration: `apps/ml_service/app/watering_model.py` (loader) →
 Nightly job sequence (`.github/workflows/scheduled-jobs.yaml` →
 `POST /api/admin/run-weather-fetch` then `run-ml-snapshot`): fetch observed
 rainfall → backfill yesterday's snapshot labels → compute today's snapshot
-features → prune `WeatherLog`/`WateringEvent` older than 7 days.
+features. (No pruning since 2026-10-09; the weather fetch also archives both
+providers' forecasts.)
