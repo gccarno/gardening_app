@@ -25,6 +25,11 @@ terraform {
       # the google pin: it allows 0.18.x patch releases only (>= 0.18.0, < 0.19).
       version = "~> 0.18.0"
     }
+    sentry = {
+      # Community provider 
+      source  = "jianyuan/sentry"
+      version = "~> 0.15.8"
+    }
   }
 
   # ── Remote state (LEARNING.md step 1d) ─────────────────────────────────────

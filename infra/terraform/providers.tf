@@ -16,3 +16,6 @@ provider "google" {
 # variable, so the block is empty on purpose. Never put the key in a .tf file:
 # it would be committed to git.
 provider "neon" {}
+
+# the sentry provider reads its API key from an environment variable 
+provider "sentry" {}
