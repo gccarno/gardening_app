@@ -75,6 +75,33 @@ def test_deficit_accumulates_dry_days(db, plant_in_bed, bed):
     assert deficit == 17.5
 
 
+def _logs(garden, days, et0, hi=80.0, lo=60.0):
+    from types import SimpleNamespace
+    return [SimpleNamespace(date=date.today() - timedelta(days=i), et0_mm=et0,
+                            temp_high_f=hi, temp_low_f=lo, rainfall_in=0.0)
+            for i in range(1, days + 1)]
+
+
+def test_deficit_uses_the_providers_stored_et0(db, garden, plant_in_bed, bed):
+    bed.bed_plants[0].last_watered = date.today() - timedelta(days=3)
+    # Hargreaves from these temps would be ~2-3 mm/day; stored says 5.
+    deficit = calculate_deficit(bed, {'kc': 1.0}, _logs(garden, 3, et0=5.0))
+    assert deficit == 15.0
+
+
+def test_deficit_falls_back_to_hargreaves_without_stored_et0(db, garden, plant_in_bed, bed):
+    bed.bed_plants[0].last_watered = date.today() - timedelta(days=3)
+    logs = _logs(garden, 3, et0=None)
+    deficit = calculate_deficit(bed, {'kc': 1.0}, logs)
+    assert deficit == round(3 * estimate_et0_from_temp(80.0, 60.0), 1)
+
+
+def test_a_stored_et0_of_zero_is_honoured_not_treated_as_missing(db, garden, plant_in_bed, bed):
+    """A cold, still, overcast day can legitimately have ~0 ET0."""
+    bed.bed_plants[0].last_watered = date.today() - timedelta(days=2)
+    assert calculate_deficit(bed, {'kc': 1.0}, _logs(garden, 2, et0=0.0)) == 0.0
+
+
 def test_recommendations_for_garden(db, garden, plant_in_bed, bed):
     bed.bed_plants[0].last_watered = date.today() - timedelta(days=6)
     recs = get_watering_recommendations(garden, [], None)

@@ -9,6 +9,7 @@ Pure Python — no Flask imports.  All SQLAlchemy objects are passed in by calle
 """
 
 import os
+import time
 from datetime import date, timedelta
 from math import sqrt
 
@@ -155,7 +156,12 @@ def calculate_deficit(bed, kc_data: dict, weather_logs: list, lookback_days: int
     capped at the number of days since the bed was last watered.
 
     deficit = sum(ET_actual - effective_rainfall) per day
-    ET_actual = ET0 * Kc  (ET0 estimated from stored temp when not explicit)
+    ET_actual = ET0 * Kc
+
+    ET0 is the provider's own figure when the day's log has one (it accounts
+    for wind, humidity and radiation); otherwise the temperature-only
+    Hargreaves estimate. Stored values run about 30% above that estimate on
+    October data and track it closely (r=0.94), so dry days now score hotter.
     """
     dsw = days_since_last_watered(bed)
     effective_days = min(lookback_days, dsw)
@@ -171,7 +177,8 @@ def calculate_deficit(bed, kc_data: dict, weather_logs: list, lookback_days: int
         d = today - timedelta(days=offset)
         log = log_by_date.get(d)
         if log:
-            et0 = estimate_et0_from_temp(log.temp_high_f, log.temp_low_f)
+            et0 = (log.et0_mm if log.et0_mm is not None
+                   else estimate_et0_from_temp(log.temp_high_f, log.temp_low_f))
             eff_rain = _effective_rain_mm(log.rainfall_in)
         else:
             et0 = 3.5
@@ -397,11 +404,37 @@ def _tomorrow_io_daily(lat: float, lon: float) -> list | None:
         out.append({
             'date':        d['date'],
             'temp_max_c':  d['temp_max'],
+            'temp_min_c':  d.get('temp_min'),
             'wind_kmh':    round(wind_ms * 3.6, 1) if wind_ms is not None else None,
             'precip_prob': d['precip_prob'],
             'precip_mm':   d['precip_sum'],
+            'et0_mm':      d.get('et0'),
+            'condition':   d.get('condition', 'Unknown'),
         })
     return out
+
+
+_FORECAST_TTL_S = 600   # same as the weather card; Tomorrow.io's free tier is 25 calls/hour
+_forecast_cache: dict[tuple, tuple[float, list]] = {}
+
+
+def fetch_forecast_days(lat: float, lon: float) -> list | None:
+    """Daily forecast, today first. Tomorrow.io is primary and Open-Meteo the
+    fallback: the same order as the weather card (routers/weather.py), so the
+    card and the watering advice describe the same weather.
+
+    Open-Meteo used to lead here, which is the provider that has been unreliable
+    from Render. Cached for 10 minutes because /watering-status calls this per
+    request and the Tomorrow.io quota is small.
+    """
+    key = (round(lat, 2), round(lon, 2))
+    hit = _forecast_cache.get(key)
+    if hit and time.time() - hit[0] < _FORECAST_TTL_S:
+        return hit[1]
+    days = _tomorrow_io_daily(lat, lon) or fetch_7day_forecast(lat, lon)
+    if days:
+        _forecast_cache[key] = (time.time(), days)
+    return days
 
 
 def fetch_forecast_window(lat: float, lon: float) -> tuple[dict | None, float | None]:
@@ -415,7 +448,7 @@ def fetch_forecast_window(lat: float, lon: float) -> tuple[dict | None, float | 
     over the next two days, that made the API say urgency 100 for a bed the
     nightly snapshot scored 40.
     """
-    days = fetch_7day_forecast(lat, lon) or _tomorrow_io_daily(lat, lon)
+    days = fetch_forecast_days(lat, lon)
     if not days:
         return None, None
     today = {k: days[0].get(k) for k in

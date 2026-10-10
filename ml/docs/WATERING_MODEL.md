@@ -236,6 +236,22 @@ concern that motivated the gap does not apply: the watering-status endpoint
 was already making one forecast call, so this costs no extra requests, and
 the nightly job dropped from two calls per garden to one.
 
+*Updated 2026-10-10:* that single request now goes through
+`fetch_forecast_days()`: **Tomorrow.io first, Open-Meteo as fallback**, the same
+order as the weather card, with a 10-minute per-location cache because
+Tomorrow.io's free tier allows only 25 calls an hour. Open-Meteo used to lead,
+which put the card and the watering advice on different providers. The chat
+`get_weather_forecast` tool uses the same function. Snapshot rows from this
+date on carry Tomorrow.io forecast values, a small shift in the
+`forecast_*` features' source (the snapshot table does not record which
+provider supplied them).
+
+The rule engine's deficit (`calculate_deficit`) now uses the day's stored
+`WeatherLog.et0_mm` when present, falling back to the temperature-only
+Hargreaves estimate. On the 7 October 2026 rows the stored value is 29% higher
+on average (r = 0.94 against Hargreaves), so dry-day deficits, and therefore
+urgency scores, rise accordingly.
+
 ## 9. Model monitoring
 
 **Decision:** a standalone Streamlit app (`ml/monitoring/dashboard.py`),

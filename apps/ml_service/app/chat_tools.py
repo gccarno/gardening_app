@@ -646,8 +646,8 @@ def _tool_get_weather_forecast(input_data: dict, garden) -> dict:
         return {'error': 'No garden selected.'}
     if not garden.latitude or not garden.longitude:
         return {'error': 'Garden has no location set. Add a zip code or coordinates first.'}
-    from apps.ml_service.app.watering_engine import fetch_7day_forecast
-    forecast = fetch_7day_forecast(garden.latitude, garden.longitude)
+    from apps.ml_service.app.watering_engine import fetch_forecast_days
+    forecast = fetch_forecast_days(garden.latitude, garden.longitude)
     if forecast is None:
         return {'error': 'Could not fetch forecast. Check your internet connection.'}
     return {

@@ -235,7 +235,7 @@ def test_get_weather_forecast_mocked(db, garden):
         }
         for i in range(7)
     ]
-    with patch('apps.ml_service.app.watering_engine.fetch_7day_forecast',
+    with patch('apps.ml_service.app.watering_engine.fetch_forecast_days',
                return_value=mock_forecast):
         result = execute_tool('get_weather_forecast', {}, garden, db)
     assert 'error' not in result

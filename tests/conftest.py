@@ -17,6 +17,15 @@ from apps.backend.app.db.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_forecast_cache():
+    """fetch_forecast_days caches per location for 10 minutes; without this a
+    forecast stubbed in one test would be served to the next."""
+    from apps.ml_service.app import watering_engine
+    watering_engine._forecast_cache.clear()
+    yield
+
+
 @pytest.fixture
 def engine():
     # Function-scoped so commits from endpoints under test can't leak between
