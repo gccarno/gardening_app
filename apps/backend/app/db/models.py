@@ -398,6 +398,27 @@ class WateringEvent(Base):
         return f'<WateringEvent garden={self.garden_id} bed={self.bed_id} date={self.event_date}>'
 
 
+class SoilMoistureCheckin(Base):
+    """
+    A gardener's own reading of how wet a bed's soil is. The only ground truth
+    in the system about whether a bed actually needed water: every other label
+    is inferred (rain credited as watering) or missing (hand-waterings are
+    rarely logged). Never pruned.
+    """
+    __tablename__ = 'soil_moisture_checkin'
+
+    id         = Column(Integer, primary_key=True)
+    garden_id  = Column(Integer, ForeignKey('garden.id'), nullable=False, index=True)
+    bed_id     = Column(Integer, ForeignKey('garden_bed.id'), nullable=False, index=True)
+    check_date = Column(Date, nullable=False)
+    level      = Column(String(8), nullable=False)       # 'dry' | 'ok' | 'wet'
+    notes      = Column(String(200), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<SoilMoistureCheckin bed={self.bed_id} {self.check_date} {self.level}>'
+
+
 class MlWateringSnapshot(Base):
     """
     One row per bed per day: the feature vector the watering model saw (or

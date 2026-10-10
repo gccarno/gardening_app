@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchBeds, fetchBed, createBed, updateBed, deleteBed,
   fetchBedGrid, placePlantInGrid, fetchBedPlant, saveBedPlantCare, removeBedPlant,
-  type Bed,
+  fetchMoistureCheckins, saveMoistureCheckin,
+  type Bed, type MoistureLevel,
 } from '../api/beds';
 
 export function useBeds(gardenId?: number) {
@@ -79,6 +80,23 @@ export function useSaveBedPlantCare() {
     mutationFn: ({ bpId, ...body }: { bpId: number; last_watered?: string | null; last_fertilized?: string | null; health_notes?: string | null }) =>
       saveBedPlantCare(bpId, body),
     onSuccess: (_d, { bpId }) => qc.invalidateQueries({ queryKey: ['bedPlant', bpId] }),
+  });
+}
+
+export function useMoistureCheckins(bedId: number) {
+  return useQuery({
+    queryKey: ['moistureCheckins', bedId],
+    queryFn: () => fetchMoistureCheckins(bedId),
+    enabled: !!bedId,
+  });
+}
+
+export function useSaveMoistureCheckin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ bedId, level, check_date }: { bedId: number; level: MoistureLevel; check_date: string }) =>
+      saveMoistureCheckin(bedId, { level, check_date }),
+    onSuccess: (_d, { bedId }) => qc.invalidateQueries({ queryKey: ['moistureCheckins', bedId] }),
   });
 }
 

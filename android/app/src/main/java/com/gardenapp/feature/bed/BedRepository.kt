@@ -14,6 +14,7 @@ import com.gardenapp.core.model.GridPlant
 import com.gardenapp.core.model.HealthScore
 import com.gardenapp.core.model.LibraryListEntry
 import com.gardenapp.core.model.LibraryListResponse
+import com.gardenapp.core.model.MoistureCheckin
 import com.gardenapp.core.model.PlantObservation
 import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.ApiService
@@ -237,6 +238,27 @@ class BedRepository @Inject constructor(
     } catch (e: Exception) {
         Log.e(TAG, "getRotationWarnings error: ${e::class.simpleName}: ${e.message}")
         NetworkResult.Error(e.message ?: "Load failed")
+    }
+
+    // ── Soil moisture check-ins ──────────────────────────────────────────────
+
+    suspend fun getMoistureCheckins(bedId: Int): NetworkResult<List<MoistureCheckin>> = try {
+        NetworkResult.Success(api.getMoistureCheckins(bedId))
+    } catch (e: Exception) {
+        e.toNetworkError("BedRepository")
+    }
+
+    /** [level] is "dry", "ok" or "wet"; [checkDate] is the user's local date (YYYY-MM-DD). */
+    suspend fun saveMoistureCheckin(
+        bedId: Int,
+        level: String,
+        checkDate: String,
+    ): NetworkResult<MoistureCheckin> = try {
+        NetworkResult.Success(
+            api.createMoistureCheckin(bedId, mapOf("level" to level, "check_date" to checkDate))
+        )
+    } catch (e: Exception) {
+        e.toNetworkError("BedRepository")
     }
 
     // ── Observations ─────────────────────────────────────────────────────────

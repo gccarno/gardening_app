@@ -44,6 +44,16 @@ export interface BedPlantDetail {
   health_notes?: string;
 }
 
+export type MoistureLevel = 'dry' | 'ok' | 'wet';
+
+export interface MoistureCheckin {
+  id: number;
+  bed_id: number;
+  check_date: string;   // YYYY-MM-DD
+  level: MoistureLevel;
+  notes?: string | null;
+}
+
 export function createBedsApi(base: string) {
   return {
     fetchBeds: async (gardenId?: number): Promise<Bed[]> => {
@@ -117,6 +127,25 @@ export function createBedsApi(base: string) {
 
     removeBedPlant: async (bpId: number): Promise<void> => {
       await apiFetch(`${base}/bedplants/${bpId}/delete`, { method: 'POST' });
+    },
+
+    fetchMoistureCheckins: async (bedId: number, limit = 14): Promise<MoistureCheckin[]> => {
+      const res = await apiFetch(`${base}/beds/${bedId}/moisture-checkins?limit=${limit}`);
+      if (!res.ok) throw new Error('Failed to fetch soil moisture check-ins');
+      return res.json();
+    },
+
+    saveMoistureCheckin: async (
+      bedId: number,
+      body: { level: MoistureLevel; check_date?: string; notes?: string },
+    ): Promise<MoistureCheckin> => {
+      const res = await apiFetch(`${base}/beds/${bedId}/moisture-checkins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Failed to save soil moisture check-in');
+      return res.json();
     },
   };
 }

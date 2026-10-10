@@ -4,14 +4,15 @@ Bed and BedPlant API routes.
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models import (Garden, GardenBed, Plant, BedPlant, PlantLibrary, User,
-                         WateringEvent, MlWateringSnapshot)
+                         WateringEvent, MlWateringSnapshot, SoilMoistureCheckin)
 
 logger = logging.getLogger(__name__)
 from ..db.session import get_db
@@ -109,9 +110,69 @@ def api_delete_bed(bed_id: int,
     # no cascade, so leaving them behind is a ForeignKeyViolation on Postgres.
     db.query(WateringEvent).filter_by(bed_id=bed_id).delete()
     db.query(MlWateringSnapshot).filter_by(bed_id=bed_id).delete()
+    db.query(SoilMoistureCheckin).filter_by(bed_id=bed_id).delete()
     db.delete(bed)
     db.commit()
     return {'ok': True}
+
+
+# ── Soil moisture check-ins ───────────────────────────────────────────────────
+
+MOISTURE_LEVELS = ('dry', 'ok', 'wet')
+
+
+class MoistureCheckinBody(BaseModel):
+    level: str
+    check_date: Optional[str] = None   # YYYY-MM-DD; defaults to today
+    notes: Optional[str] = None
+
+
+def _serialize_checkin(c: SoilMoistureCheckin) -> dict:
+    return {'id': c.id, 'bed_id': c.bed_id, 'check_date': c.check_date.isoformat(),
+            'level': c.level, 'notes': c.notes}
+
+
+@router.post('/beds/{bed_id}/moisture-checkins')
+def api_create_moisture_checkin(bed_id: int, body: MoistureCheckinBody,
+                                user: User = Depends(get_current_user),
+                                db: Session = Depends(get_db)):
+    """Record how wet the bed's soil is. One reading per bed per day: a second
+    reading the same day replaces the first (people correct themselves)."""
+    bed = require_resource(db, user, GardenBed, bed_id, 'editor')
+    if body.level not in MOISTURE_LEVELS:
+        raise HTTPException(status_code=400, detail=f'level must be one of {", ".join(MOISTURE_LEVELS)}')
+    if not bed.garden_id:
+        raise HTTPException(status_code=400, detail='Assign the bed to a garden first')
+    try:
+        day = date.fromisoformat(body.check_date) if body.check_date else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail='check_date must be YYYY-MM-DD')
+    # Clients send their local date; the server runs on UTC, so a user east of
+    # UTC is legitimately a day ahead of it. Anything further out is a typo.
+    if day > date.today() + timedelta(days=1):
+        raise HTTPException(status_code=400, detail='check_date cannot be in the future')
+
+    notes = (body.notes or '').strip()[:200] or None
+    row = db.query(SoilMoistureCheckin).filter_by(bed_id=bed_id, check_date=day).first()
+    if row:
+        row.level, row.notes = body.level, notes
+    else:
+        row = SoilMoistureCheckin(garden_id=bed.garden_id, bed_id=bed_id, check_date=day,
+                                  level=body.level, notes=notes)
+        db.add(row)
+    db.commit()
+    return _serialize_checkin(row)
+
+
+@router.get('/beds/{bed_id}/moisture-checkins')
+def api_list_moisture_checkins(bed_id: int, limit: int = 14,
+                               user: User = Depends(get_current_user),
+                               db: Session = Depends(get_db)):
+    require_resource(db, user, GardenBed, bed_id, 'viewer')
+    rows = (db.query(SoilMoistureCheckin).filter_by(bed_id=bed_id)
+            .order_by(SoilMoistureCheckin.check_date.desc())
+            .limit(max(1, min(limit, 90))).all())
+    return [_serialize_checkin(r) for r in rows]
 
 
 # ── Bed grid ──────────────────────────────────────────────────────────────────

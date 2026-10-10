@@ -2,7 +2,7 @@
 
 Features that exist in the React web app (`apps/web/`) but are not yet implemented in the Android app. Check items off as they are ported.
 
-Last audited: 2026-08-08
+Last audited: 2026-10-10 (only the Soil Moisture Check-in entry was re-checked; everything else is as of 2026-08-08)
 
 ---
 
@@ -125,6 +125,14 @@ Last audited: 2026-08-08
   - Per-bed-plant health observations with type, severity, notes, and health score
   - Shown in the care tracking bottom sheet alongside care log
   - API: `GET/POST /api/bedplants/{id}/observations`, `DELETE /api/observations/{id}`, `GET /api/bedplants/{id}/health-score`
+
+- [x] **Soil Moisture Check-in** (BedDetail)
+  - Dry / OK / Wet buttons on the bed screen; a second tap the same day replaces the first
+  - The gardener's own reading: the only ground-truth label for whether a bed needed water (see `ml/docs/WATERING_MODEL.md`)
+  - Sends the device's local date, not the server's UTC date
+  - Test tags: `soil-moisture`, `moisture-dry`, `moisture-ok`, `moisture-wet` (web: `data-testid="soil-moisture"`)
+  - No live Android E2E yet; web E2E in `apps/web/e2e/03-beds-grid.spec.ts` covers the API
+  - API: `GET/POST /api/beds/{id}/moisture-checkins`
 
 ---
 

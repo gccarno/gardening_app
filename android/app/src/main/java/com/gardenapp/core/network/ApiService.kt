@@ -377,6 +377,19 @@ interface ApiService {
         @Query("library_id") libraryId: Int? = null,
     ): RotationWarnings
 
+    // ── Soil moisture check-ins ──────────────────────────────────────────────
+    @GET("beds/{id}/moisture-checkins")
+    suspend fun getMoistureCheckins(
+        @Path("id") id: Int,
+        @Query("limit") limit: Int = 14,
+    ): List<MoistureCheckin>
+
+    @POST("beds/{id}/moisture-checkins")
+    suspend fun createMoistureCheckin(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): MoistureCheckin
+
     // ── Rain log ─────────────────────────────────────────────────────────────
     @POST("gardens/{id}/log-rain")
     suspend fun logRain(

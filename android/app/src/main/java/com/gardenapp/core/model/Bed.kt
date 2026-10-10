@@ -87,6 +87,16 @@ data class PlantObservation(
     val notes: String? = null,
 )
 
+/** A gardener's dry/ok/wet reading of a bed's soil. [level] is "dry", "ok" or "wet". */
+@Serializable
+data class MoistureCheckin(
+    val id: Int,
+    @SerialName("bed_id") val bedId: Int,
+    @SerialName("check_date") val checkDate: String,
+    val level: String,
+    val notes: String? = null,
+)
+
 @Serializable
 data class HealthScore(
     @SerialName("bed_plant_id") val bedPlantId: Int,

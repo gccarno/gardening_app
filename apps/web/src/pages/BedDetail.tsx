@@ -2,11 +2,24 @@ import { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '@garden/shared';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useBed, useBedGrid, useUpdateBed, useDeleteBed, usePlaceInGrid, useSaveBedPlantCare, useRemoveBedPlant } from '../hooks/useBeds';
+import { useBed, useBedGrid, useUpdateBed, useDeleteBed, usePlaceInGrid, useSaveBedPlantCare, useRemoveBedPlant, useMoistureCheckins, useSaveMoistureCheckin } from '../hooks/useBeds';
 import { useLibrary } from '../hooks/useLibrary';
 import { fetchBedPlant } from '../api/beds';
-import type { BedPlantDetail, GridPlant } from '../api/beds';
+import type { BedPlantDetail, GridPlant, MoistureLevel } from '../api/beds';
 import { plantImageUrl } from '../utils/images';
+
+const MOISTURE_OPTIONS: { level: MoistureLevel; label: string }[] = [
+  { level: 'dry', label: 'Dry' },
+  { level: 'ok', label: 'OK' },
+  { level: 'wet', label: 'Wet' },
+];
+
+/** The user's local calendar date. toISOString() is UTC and would stamp an
+ *  evening check-in in the Americas with tomorrow's date. */
+function localDateString(d = new Date()) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 export default function BedDetail() {
   const { id } = useParams<{ id: string }>();
@@ -20,6 +33,10 @@ export default function BedDetail() {
   const placeMut = usePlaceInGrid();
   const careMut = useSaveBedPlantCare();
   const removeMut = useRemoveBedPlant();
+  const { data: checkins } = useMoistureCheckins(bedId);
+  const moistureMut = useSaveMoistureCheckin();
+  const todayStr = localDateString();
+  const todaysCheckin = checkins?.find(c => c.check_date === todayStr);
 
   const [libSearch, setLibSearch] = useState('');
   const { data: libData } = useLibrary({ q: libSearch || undefined });
@@ -175,6 +192,35 @@ export default function BedDetail() {
           )}
         </dl>
       )}
+
+      <div className="card" style={{ marginBottom: '1.5rem' }} data-testid="soil-moisture">
+        <h3 style={{ marginTop: 0 }}>Soil moisture</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Stick a finger in the soil. Your reading teaches the watering advice what &ldquo;dry&rdquo; really means here.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem' }} role="group" aria-label="Soil moisture today">
+          {MOISTURE_OPTIONS.map(({ level, label }) => (
+            <button
+              key={level}
+              type="button"
+              aria-pressed={todaysCheckin?.level === level}
+              disabled={moistureMut.isPending}
+              onClick={() => moistureMut.mutate({ bedId, level, check_date: todayStr })}
+              style={todaysCheckin?.level === level ? { fontWeight: 700, outline: '2px solid #3a5c37' } : undefined}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {moistureMut.isError && (
+          <p role="alert" style={{ color: '#a33', marginBottom: 0 }}>Could not save that reading. Try again.</p>
+        )}
+        {checkins && checkins.length > 0 && (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Recent: {checkins.slice(0, 5).map(c => `${c.check_date.slice(5)} ${c.level}`).join(' · ')}
+          </p>
+        )}
+      </div>
 
       <h2>Bed Grid &mdash; {cols}ft wide &times; {rows}ft tall</h2>
 

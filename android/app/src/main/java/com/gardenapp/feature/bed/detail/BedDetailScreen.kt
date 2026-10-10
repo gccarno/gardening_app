@@ -11,10 +11,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.gardenapp.core.ui.components.CacheStatusLine
+import com.gardenapp.core.util.DateUtil
+import java.time.LocalDate
 import com.gardenapp.core.ui.components.SkeletonCard
 import com.gardenapp.core.ui.components.SkeletonLine
 import com.gardenapp.feature.bed.detail.components.CareTrackingSheet
@@ -183,6 +186,47 @@ fun BedDetailScreen(
                             isRefreshing = uiState.isLoading,
                             refreshFailed = uiState.refreshFailed,
                         )
+
+                        // Soil moisture check-in
+                        val todayReading = uiState.moistureCheckins
+                            .firstOrNull { it.checkDate == DateUtil.formatDate(LocalDate.now()) }
+                        Card(modifier = Modifier.fillMaxWidth().testTag("soil-moisture")) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text("Soil moisture", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "Stick a finger in the soil. Your reading teaches the watering advice what \"dry\" means here.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf("dry" to "Dry", "ok" to "OK", "wet" to "Wet").forEach { (level, label) ->
+                                        val selected = todayReading?.level == level
+                                        val onClick = { viewModel.saveMoisture(level) }
+                                        val mod = Modifier.weight(1f).testTag("moisture-$level")
+                                        if (selected) {
+                                            Button(onClick = onClick, enabled = !uiState.isSavingMoisture, modifier = mod) {
+                                                Text(label)
+                                            }
+                                        } else {
+                                            OutlinedButton(onClick = onClick, enabled = !uiState.isSavingMoisture, modifier = mod) {
+                                                Text(label)
+                                            }
+                                        }
+                                    }
+                                }
+                                if (uiState.moistureCheckins.isNotEmpty()) {
+                                    Text(
+                                        "Recent: " + uiState.moistureCheckins.take(5)
+                                            .joinToString(" · ") { "${it.checkDate.drop(5)} ${it.level}" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
 
                         // Instructions
                         Surface(

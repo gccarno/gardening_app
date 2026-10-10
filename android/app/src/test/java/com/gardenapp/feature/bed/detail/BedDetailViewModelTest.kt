@@ -6,9 +6,12 @@ import com.gardenapp.core.model.Bed
 import com.gardenapp.core.model.BedGridResponse
 import com.gardenapp.core.model.BedPlantDetail
 import com.gardenapp.core.model.GridPlant
+import com.gardenapp.core.model.MoistureCheckin
 import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.util.DateUtil
 import com.gardenapp.feature.bed.BedRepository
+import java.time.LocalDate
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -54,6 +57,7 @@ class BedDetailViewModelTest {
             )
         coEvery { repository.getRotationWarnings(any(), any()) } returns
             NetworkResult.Success(RotationWarnings(bedId = 7))
+        coEvery { repository.getMoistureCheckins(any()) } returns NetworkResult.Success(emptyList())
         coEvery { repository.getBedPlant(42) } returns NetworkResult.Success(
             BedPlantDetail(id = 42, plantId = 5, plantName = "Zucchini", spacingIn = 24f),
         )
@@ -177,5 +181,87 @@ class BedDetailViewModelTest {
 
         // Otherwise leaving and returning inside the TTL resurrects the plant.
         coVerify { repository.cacheBedGrid(7, match { it.placed.none { p -> p.id == 42 } }) }
+    }
+
+    // ── Soil moisture check-ins ──────────────────────────────────────────────
+
+    private val today = DateUtil.formatDate(LocalDate.now())
+
+    private fun checkin(id: Int, date: String, level: String) =
+        MoistureCheckin(id = id, bedId = 7, checkDate = date, level = level)
+
+    @Test
+    fun `existing check-ins are loaded with the grid`() = runTest(dispatcher) {
+        coEvery { repository.getMoistureCheckins(7) } returns
+            NetworkResult.Success(listOf(checkin(1, "2026-10-01", "dry")))
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        assertEquals(listOf("dry"), vm.uiState.value.moistureCheckins.map { it.level })
+    }
+
+    @Test
+    fun `saving sends the local date and shows the new reading first`() = runTest(dispatcher) {
+        coEvery { repository.getMoistureCheckins(7) } returns
+            NetworkResult.Success(listOf(checkin(1, "2020-01-01", "ok")))
+        coEvery { repository.saveMoistureCheckin(7, "dry", today) } returns
+            NetworkResult.Success(checkin(2, today, "dry"))
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        vm.saveMoisture("dry")
+        advanceUntilIdle()
+
+        coVerify { repository.saveMoistureCheckin(7, "dry", today) }
+        assertEquals(listOf("dry", "ok"), vm.uiState.value.moistureCheckins.map { it.level })
+        assertEquals(false, vm.uiState.value.isSavingMoisture)
+    }
+
+    @Test
+    fun `a second reading the same day replaces the first`() = runTest(dispatcher) {
+        coEvery { repository.getMoistureCheckins(7) } returns
+            NetworkResult.Success(listOf(checkin(1, today, "dry")))
+        coEvery { repository.saveMoistureCheckin(7, "wet", today) } returns
+            NetworkResult.Success(checkin(1, today, "wet"))
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        vm.saveMoisture("wet")
+        advanceUntilIdle()
+
+        assertEquals(listOf("wet"), vm.uiState.value.moistureCheckins.map { it.level })
+    }
+
+    @Test
+    fun `a failed save keeps the old readings and reports the error`() = runTest(dispatcher) {
+        coEvery { repository.getMoistureCheckins(7) } returns
+            NetworkResult.Success(listOf(checkin(1, today, "ok")))
+        coEvery { repository.saveMoistureCheckin(7, "dry", today) } returns
+            NetworkResult.Error("server down")
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        vm.saveMoisture("dry")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals(listOf("ok"), state.moistureCheckins.map { it.level })
+        assertTrue(state.error!!.contains("server down"))
+        assertEquals(false, state.isSavingMoisture)
+    }
+
+    @Test
+    fun `a tap while a save is in flight is ignored`() = runTest(dispatcher) {
+        coEvery { repository.getMoistureCheckins(7) } returns NetworkResult.Success(emptyList())
+        coEvery { repository.saveMoistureCheckin(7, any(), any()) } returns
+            NetworkResult.Success(checkin(2, today, "dry"))
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        vm.saveMoisture("dry")
+        vm.saveMoisture("wet")   // dispatcher has not run the first save yet
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repository.saveMoistureCheckin(7, any(), any()) }
     }
 }

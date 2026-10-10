@@ -10,9 +10,12 @@ import com.gardenapp.core.model.BedPlantDetail
 import com.gardenapp.core.model.GridPlant
 import com.gardenapp.core.model.HealthScore
 import com.gardenapp.core.model.LibraryListEntry
+import com.gardenapp.core.model.MoistureCheckin
 import com.gardenapp.core.model.PlantObservation
 import com.gardenapp.core.model.RotationWarnings
 import com.gardenapp.core.network.NetworkResult
+import com.gardenapp.core.util.DateUtil
+import java.time.LocalDate
 import com.gardenapp.feature.bed.BedRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -62,6 +65,9 @@ data class BedDetailUiState(
     val obsNotes: String = "",
     // Rotation warnings
     val rotationWarnings: RotationWarnings? = null,
+    // Soil moisture check-ins, newest first
+    val moistureCheckins: List<MoistureCheckin> = emptyList(),
+    val isSavingMoisture: Boolean = false,
 )
 
 @HiltViewModel
@@ -122,6 +128,43 @@ class BedDetailViewModel @Inject constructor(
                 else -> Unit
             }
             loadRotationWarnings()
+            loadMoistureCheckins()
+        }
+    }
+
+    private fun loadMoistureCheckins() {
+        viewModelScope.launch {
+            when (val r = repository.getMoistureCheckins(bedId)) {
+                is NetworkResult.Success -> _uiState.value = _uiState.value.copy(moistureCheckins = r.data)
+                else -> Unit
+            }
+        }
+    }
+
+    /** Records how wet the soil is today. [level] is "dry", "ok" or "wet". A second
+     *  tap the same day replaces the first, matching the server. */
+    fun saveMoisture(level: String) {
+        if (_uiState.value.isSavingMoisture) return
+        val today = DateUtil.formatDate(LocalDate.now())   // local date, not the server's UTC one
+        _uiState.value = _uiState.value.copy(isSavingMoisture = true)
+        viewModelScope.launch {
+            when (val r = repository.saveMoistureCheckin(bedId, level, today)) {
+                is NetworkResult.Success -> {
+                    val saved = r.data
+                    _uiState.value = _uiState.value.copy(
+                        moistureCheckins = (listOf(saved) +
+                            _uiState.value.moistureCheckins.filter { it.checkDate != saved.checkDate })
+                            .sortedByDescending { it.checkDate },
+                        isSavingMoisture = false,
+                        message = "Soil marked ${saved.level}",
+                    )
+                }
+                is NetworkResult.Error -> _uiState.value = _uiState.value.copy(
+                    isSavingMoisture = false,
+                    error = "Couldn't save that reading: ${r.message}",
+                )
+                else -> _uiState.value = _uiState.value.copy(isSavingMoisture = false)
+            }
         }
     }
 

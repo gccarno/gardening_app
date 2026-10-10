@@ -69,6 +69,25 @@ test.describe('beds & grid', () => {
     expect(bed.soil_ph).toBe(6.5);
   });
 
+  test('soil moisture check-in saves a reading and a second tap replaces it', async ({ page, request }) => {
+    const { bedIds } = readRunState();
+    const card = page.getByTestId('soil-moisture');
+    await page.goto(`/beds/${bedIds![0]}`);
+
+    await card.getByRole('button', { name: 'Dry' }).click();
+    await expect(card.getByRole('button', { name: 'Dry' })).toHaveAttribute('aria-pressed', 'true');
+    let rows = await api(request, 'get', `/api/beds/${bedIds![0]}/moisture-checkins`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].level).toBe('dry');
+
+    // Same day: the reading is corrected, not duplicated.
+    await card.getByRole('button', { name: 'Wet' }).click();
+    await expect(card.getByRole('button', { name: 'Wet' })).toHaveAttribute('aria-pressed', 'true');
+    rows = await api(request, 'get', `/api/beds/${bedIds![0]}/moisture-checkins`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].level).toBe('wet');
+  });
+
   test('places a plant in the grid and triggers a rotation warning', async ({ page }) => {
     const { bedIds } = readRunState();
     await page.goto(`/beds/${bedIds![0]}`);
