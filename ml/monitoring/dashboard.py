@@ -102,9 +102,14 @@ if fc.empty:
     st.info('No rows yet with both a d1/d2 forecast and a backfilled actual.')
 else:
     fc = fc.copy()
-    fc['forecast_error_mm'] = fc['forecast_precip_mm_d1_d2'] - fc['rain_next_day_mm']
+    # The forecast is a 2-day sum (tomorrow + day after) but the actual is
+    # tomorrow only, so over-forecasts are not errors. Only rain that fell but
+    # wasn't forecast is unambiguous.
+    fc['forecast_error_mm'] = (fc['rain_next_day_mm'] - fc['forecast_precip_mm_d1_d2']).clip(lower=0)
+    st.caption('Forecast is a 2-day sum, actual is next day only: only under-forecast '
+              '(rain that fell beyond the forecast) is counted.')
     st.line_chart(fc.set_index('snapshot_date')[['forecast_precip_mm_d1_d2', 'rain_next_day_mm']])
-    st.metric('Mean absolute forecast error (mm)', round(fc['forecast_error_mm'].abs().mean(), 2))
+    st.metric('Mean under-forecast (mm)', round(fc['forecast_error_mm'].mean(), 2))
 
 # ── Model performance over time on actual rainfall ────────────────────────
 st.header('Model performance over time on actual rainfall')
@@ -113,10 +118,10 @@ if perf.empty:
     st.info('No rows yet with both a d1/d2 forecast and a backfilled actual rainfall.')
 else:
     perf = perf.sort_values('snapshot_date').copy()
-    perf['abs_forecast_error_mm'] = (perf['forecast_precip_mm_d1_d2'] - perf['rain_next_day_mm']).abs()
+    perf['abs_forecast_error_mm'] = (perf['rain_next_day_mm'] - perf['forecast_precip_mm_d1_d2']).clip(lower=0)
     window = min(7, len(perf))
     perf['rolling_mae_mm'] = perf['abs_forecast_error_mm'].rolling(window, min_periods=1).mean()
-    st.caption(f'Rolling {window}-snapshot mean absolute forecast error vs. actual next-day rain '
+    st.caption(f'Rolling {window}-snapshot mean under-forecast vs. actual next-day rain '
               f'(n={len(perf)}). A rising line means the rain signal the model relies on is degrading.')
     st.line_chart(perf.set_index('snapshot_date')[['rolling_mae_mm']])
 
