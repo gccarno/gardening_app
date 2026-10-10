@@ -325,6 +325,53 @@ do not wait on them.
 
 ---
 
+## 11. Re-evaluation and the bucket model (2026-10-09/10)
+
+**What the real data showed.** `ml/evaluation/watering_real_eval.py` scores
+every predictor against real snapshot outcomes (post-2026-08-05, 384 rows, one
+garden, six beds) with never/always-water baselines and a day-level bootstrap.
+The synthetic-trained model was 18 points *less* accurate than the rule engine
+(95% CI −31 to −6) and said "water" on 52% of days against the rule's 20%. It
+now runs in **shadow mode** (`WATERING_MODEL_SERVE=1` to serve it again). Its
+0.86 training "decision accuracy" measured how well it reproduced its own
+synthetic formula.
+
+The label itself is weak: 78 of 79 positives are rain credited as watering, so
+`watered_next_day` mostly means "it rained ≥ 7.4 mm tomorrow". No predictor
+beats chance on balanced accuracy. The real ground truth is the **soil
+moisture check-in** (dry / ok / wet per bed, `soil_moisture_checkin`, from
+2026-10-10).
+
+**Bucket model** (`ml/experiments/water_balance.py`, prototype, not served).
+FAO-56 single-coefficient soil water balance per bed: root-zone depletion rises
+with Ks·Kc·ET0 and falls with effective rain and waterings; total available
+water comes from soil texture (sand/clay/compost) and a stage-based root depth;
+"water today" fires when projected depletion reaches RAW = p·TAW; it waits for
+forecast rain unless the bed is already past 75% of TAW. Every constant is a
+FAO-56 default, not fitted.
+
+| Predictor, all 384 rows | Accuracy | Balanced acc. | Says "water" |
+|---|---|---|---|
+| Never water | 0.79 | 0.50 | 0% |
+| Rule engine | 0.70 | 0.54 | 20% |
+| Bucket | 0.68 | 0.54 | 23% |
+| Old model | 0.52 | 0.55 | 52% |
+
+Bucket minus rule: −2.1 points, 95% CI −8.1 to +3.6. Level with the rule
+engine on this label, as expected: the label cannot tell good watering physics
+from bad. On historical snapshots the bucket is approximated from 7-day sums
+(`from_snapshot`); a storm's timing within the window is unknown, so depletion
+is averaged over every day it could have fallen.
+
+**What decides it:** the harness's check-in section replays the bucket from
+daily `WeatherLog` and hand-watering rows (rain-credited events skipped, since
+the rain is already counted) up to each check-in, and asks whether depletion
+orders wet < ok < dry and whether "water today" matches "dry". Promote the
+bucket over the rule engine only when it does that better on a few dozen
+check-ins; fit its constants (available water, root depth, p) only after that.
+
+---
+
 ## Quick reference
 
 ```

@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 
 from ml.evaluation.watering_real_eval import (
-    MIN_DATE, day_bootstrap_diff, prepare, score,
+    MIN_DATE, checkin_items, day_bootstrap_diff, prepare, score, score_checkins,
 )
 
 
@@ -45,3 +45,39 @@ def test_bootstrap_identical_predictors_diff_is_zero():
     rows = prepare([_row(i, i % 2 == 0, 5.0, deficit=20.0) for i in range(12)])
     point, lo, hi = day_bootstrap_diff(rows, 'model', 'rule', iters=200)
     assert point == 0 and lo == 0 and hi == 0
+
+
+def test_bucket_call_is_attached_to_every_row():
+    r = prepare([_row(0, True, 5.0, rain_7d_mm=0.0, et0_7d_mm=35.0, days_since_watered=7,
+                      kc_avg=1.0)])[0]
+    assert r['calls']['bucket'] is True   # a week of 5 mm/day ET with no rain
+
+
+def test_score_checkins_orders_depletion_by_reading():
+    items = [{'level': 'dry', 'depletion_frac': 0.8, 'water_today': True},
+             {'level': 'ok', 'depletion_frac': 0.3, 'water_today': False},
+             {'level': 'wet', 'depletion_frac': 0.0, 'water_today': True}]
+    s = score_checkins(items)
+    assert s['agreement'] == 2 / 3
+    assert s['mean_depletion_frac']['dry'] > s['mean_depletion_frac']['ok'] > s['mean_depletion_frac']['wet']
+
+
+def test_checkin_replay_skips_rain_credited_waterings(db, garden, bed, plant_in_bed):
+    """Rain is already in WeatherLog; a rain-credited WateringEvent must not also
+    refill the bucket. A hand-watering must."""
+    from apps.backend.app.db.models import SoilMoistureCheckin, WateringEvent, WeatherLog
+    today = date.today()
+    for i in range(1, 15):
+        db.add(WeatherLog(garden_id=garden.id, date=today - timedelta(days=i),
+                          rainfall_in=0.0, et0_mm=5.0, source='api'))
+    db.add(WateringEvent(garden_id=garden.id, bed_id=bed.id, event_date=today - timedelta(days=1),
+                         amount='light', source='rain'))
+    db.add(SoilMoistureCheckin(garden_id=garden.id, bed_id=bed.id, check_date=today, level='dry'))
+    db.flush()
+    dry = checkin_items(db)[0]
+    assert dry['depletion_frac'] > 0.5
+
+    db.add(WateringEvent(garden_id=garden.id, bed_id=bed.id, event_date=today - timedelta(days=1),
+                         amount='moderate', source='user'))
+    db.flush()
+    assert checkin_items(db)[0]['depletion_frac'] < dry['depletion_frac']

@@ -59,6 +59,13 @@ def model_call(row: dict) -> bool | None:
     return None if pred is None else pred > MODEL_CUTOFF_MM
 
 
+def bucket_call(row: dict) -> bool:
+    """Bucket-model prototype (ml/experiments/water_balance.py), approximated
+    from the snapshot's 7-day sums."""
+    from ml.experiments.water_balance import from_snapshot
+    return from_snapshot(row)['water_today']
+
+
 def prepare(rows: list[dict]) -> list[dict]:
     """Keep trustworthy labelled rows and attach each predictor's call."""
     out = []
@@ -69,8 +76,101 @@ def prepare(rows: list[dict]) -> list[dict]:
                     'y': bool(r['watered_next_day']),
                     'rain_credited': (r.get('rain_next_day_mm') or 0) >= RAIN_CREDIT_MM,
                     'calls': {'model': model_call(r), 'rule': rule_call(r),
+                              'bucket': bucket_call(r),
                               'never_water': False, 'always_water': True}})
     return out
+
+
+# ── Soil moisture check-ins: the real ground truth ───────────────────────────
+
+CHECKIN_LOOKBACK_DAYS = 14   # bucket spin-up: starts full this many days back
+
+
+def score_checkins(items: list[dict]) -> dict:
+    """items: [{'level': 'dry'|'ok'|'wet', 'depletion_frac': float, 'water_today': bool}].
+
+    Two questions, because n will be small for a long time:
+      * ordering: is the bucket's depletion higher on days the gardener said
+        dry than ok, and ok than wet? (mean depletion per level)
+      * the call: does water_today match "dry" (and not-water match ok/wet)?
+    """
+    by_level: dict = {}
+    for it in items:
+        by_level.setdefault(it['level'], []).append(it)
+    agree = sum((it['level'] == 'dry') == it['water_today'] for it in items)
+    return {
+        'n': len(items),
+        'agreement': agree / len(items) if items else None,
+        'mean_depletion_frac': {lvl: sum(i['depletion_frac'] for i in xs) / len(xs)
+                                for lvl, xs in by_level.items()},
+        'counts': {lvl: len(xs) for lvl, xs in by_level.items()},
+    }
+
+
+def checkin_items(db) -> list[dict]:
+    """Replay the bucket from daily WeatherLog + hand-watering rows up to each
+    check-in. Rain-credited WateringEvents are skipped: the rain itself is
+    already in WeatherLog, and counting both would refill the bucket twice."""
+    from datetime import timedelta
+    from apps.backend.app.db.models import (GardenBed, SoilMoistureCheckin, WateringEvent,
+                                            WeatherLog)
+    from apps.ml_service.app.watering_engine import get_plant_kc
+    from ml.experiments.water_balance import Bed, recommend, simulate
+
+    items = []
+    for c in db.query(SoilMoistureCheckin).order_by(SoilMoistureCheckin.check_date).all():
+        bed = db.get(GardenBed, c.bed_id)
+        plants = [bp.plant for bp in bed.bed_plants if bp.plant] if bed else []
+        if not plants:
+            continue
+        kcs = [get_plant_kc(p.name, p.library_entry.water if p.library_entry else None)['kc']
+               for p in plants]
+        stages = [bp.stage or 'seedling' for bp in bed.bed_plants if bp.plant]
+        model_bed = Bed.from_soil(
+            kc=sum(kcs) / len(kcs), sand_pct=bed.sand_pct, clay_pct=bed.clay_pct,
+            compost_pct=bed.compost_pct, bed_depth_ft=bed.depth_ft,
+            seedling_frac=sum(s == 'seedling' for s in stages) / len(stages))
+
+        start = c.check_date - timedelta(days=CHECKIN_LOOKBACK_DAYS)
+        logs = {lg.date: lg for lg in db.query(WeatherLog).filter(
+            WeatherLog.garden_id == c.garden_id,
+            WeatherLog.date >= start, WeatherLog.date <= c.check_date)}
+        watered = {ev.event_date for ev in db.query(WateringEvent).filter(
+            WateringEvent.bed_id == c.bed_id, WateringEvent.source != 'rain',
+            WateringEvent.event_date >= start, WateringEvent.event_date < c.check_date)}
+
+        days = []
+        for i in range(CHECKIN_LOOKBACK_DAYS):
+            d = start + timedelta(days=i)
+            lg = logs.get(d)
+            days.append({'et0_mm': lg.et0_mm if lg else None,
+                         'rain_mm': (lg.rainfall_in or 0) * 25.4 if lg else 0.0,
+                         'watered': d in watered})
+        today = logs.get(c.check_date)
+        rec = recommend(simulate(model_bed, days), model_bed,
+                        et0_today_mm=today.et0_mm if today else None)
+        items.append({'level': c.level, 'water_today': rec['water_today'],
+                      'depletion_frac': rec['depletion_mm'] / max(rec['taw_mm'], 0.1),
+                      'weather_days': len(logs)})
+    return items
+
+
+def checkin_report(items: list[dict]) -> None:
+    print('\nSOIL MOISTURE CHECK-INS (bucket model vs the gardener\'s own reading)')
+    if not items:
+        print('  No check-ins yet. Readings start accruing from 2026-10-10; '
+              'this is the evaluation that matters.')
+        return
+    s = score_checkins(items)
+    thin = sum(1 for it in items if it['weather_days'] < CHECKIN_LOOKBACK_DAYS)
+    print(f'  n={s["n"]}  counts={s["counts"]}  agreement(dry<->water)={s["agreement"]:.2f}')
+    print('  mean depletion (fraction of the bucket) by reading; should rise wet < ok < dry:')
+    for lvl in ('wet', 'ok', 'dry'):
+        if lvl in s['mean_depletion_frac']:
+            print(f'    {lvl:<4} {s["mean_depletion_frac"][lvl]:.2f}')
+    if thin:
+        print(f'  {thin} check-in(s) had under {CHECKIN_LOOKBACK_DAYS} days of weather; '
+              'missing days default to 3.5 mm ET0 and no rain.')
 
 
 def score(rows: list[dict], who: str) -> dict:
@@ -136,7 +236,7 @@ def _table(title: str, rows: list[dict]) -> None:
     pos = sum(r['y'] for r in rows)
     print(f'\n{title}  (n={len(rows)}, positives={pos}, days={len({r["snapshot_date"] for r in rows})})')
     print(f'  {"predictor":<14}{"n":>5}{"acc":>7}{"bal.acc":>9}{"prec":>7}{"recall":>8}{"call%":>7}')
-    for who in ('never_water', 'always_water', 'rule', 'model'):
+    for who in ('never_water', 'always_water', 'rule', 'model', 'bucket'):
         s = score(rows, who)
         if not s['n']:
             continue
@@ -155,10 +255,12 @@ def report(rows: list[dict]) -> None:
     _table('First half of the period', first)
     _table('Second half of the period', second)
 
-    d = day_bootstrap_diff(rows, 'model', 'rule')
-    if d:
-        print(f'\nModel minus rule accuracy: {d[0]:+.3f}  (95% day-bootstrap CI {d[1]:+.3f} .. {d[2]:+.3f})')
-        print('  CI spanning 0 means no evidence either is better.')
+    for a in ('model', 'bucket'):
+        d = day_bootstrap_diff(rows, a, 'rule')
+        if d:
+            print(f'\n{a.capitalize()} minus rule accuracy: {d[0]:+.3f}  '
+                  f'(95% day-bootstrap CI {d[1]:+.3f} .. {d[2]:+.3f})')
+    print('  A CI spanning 0 means no evidence either is better.')
     print('\nNote: the label is mostly rain-credited; treat accuracy as a sanity check, '
           'not a measure of whether watering advice was right.')
 
@@ -177,3 +279,10 @@ def load_rows() -> list[dict]:
 
 if __name__ == '__main__':
     report(prepare(load_rows()))
+
+    from apps.backend.app.db.session import SessionLocal
+    _db = SessionLocal()
+    try:
+        checkin_report(checkin_items(_db))
+    finally:
+        _db.close()
