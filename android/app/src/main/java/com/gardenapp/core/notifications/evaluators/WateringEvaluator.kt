@@ -14,7 +14,7 @@ import javax.inject.Inject
 
 /**
  * Rain-aware watering reminders. The decision is delegated to the backend
- * watering engine (GET gardens/{id}/watering-status), which folds 14 days of
+ * watering engine (GET gardens/{id}/watering-status), which folds 7 days of
  * rainfall and today's forecast into a 0-100 urgency score per bed — heavy
  * recent rain yields low urgency, so no notification. Never notifies without
  * weather data or on network failure.

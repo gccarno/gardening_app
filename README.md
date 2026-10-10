@@ -305,14 +305,14 @@ ET_actual = ET₀ × Kc
 ```
 
 Where:
-- **ET₀** (reference evapotranspiration) is estimated from min/max temperature stored in `WeatherLog` using a simplified [Hargreaves-Samani equation](https://www.sciencedirect.com/topics/earth-and-planetary-sciences/hargreaves-equation)
+- **ET₀** (reference evapotranspiration) is the weather provider's value stored in `WeatherLog.et0_mm`; days without one fall back to a simplified [Hargreaves-Samani equation](https://www.sciencedirect.com/topics/earth-and-planetary-sciences/hargreaves-equation) from min/max temperature
 - **Kc** (crop coefficient) is looked up from a built-in table of 33 plant types; falls back to the plant's water need category (Low / Moderate / High)
 - **Effective rainfall** is raw rainfall minus a 2mm interception threshold
 - The lookback window is capped at the number of days since the bed was last watered
 
 The urgency score is then adjusted for today's forecast: boosted by heat and wind, reduced if rain is likely.
 
-Weather history (14 days of rainfall and temperature) is fetched automatically from [Open-Meteo Archive](https://open-meteo.com/en/docs/historical-weather-api) by a background scheduler that runs daily at 2 AM and once at startup.
+Weather history (the last 7 days of rainfall, temperature, humidity and ET₀) is fetched nightly from [Tomorrow.io](https://docs.tomorrow.io/) recent history, falling back to the [Open-Meteo Archive](https://open-meteo.com/en/docs/historical-weather-api) when Tomorrow.io has no key or fails. Rows are kept indefinitely, each tagged with its provider, and both providers' daily forecasts are archived in `weather_forecast_archive`. The forecast used for today's adjustment is Tomorrow.io first, then Open-Meteo.
 
 **Source:** `apps/ml_service/app/watering_engine.py`
 
@@ -495,7 +495,7 @@ The AI tool-use loop runs entirely in Python on the server. An alternative would
 
 ### Background scheduler for weather collection
 
-[APScheduler](https://apscheduler.readthedocs.io/) runs a background job at 2 AM daily to fetch 14-day weather history for all gardens from Open-Meteo Archive and store it in `WeatherLog`. This means the watering engine always has fresh data without the user manually triggering a fetch.
+[APScheduler](https://apscheduler.readthedocs.io/) runs a background job at 2 AM daily to fetch the last 7 days of weather history for all gardens (Tomorrow.io, falling back to Open-Meteo Archive) and store it in `WeatherLog`. On Render the in-process scheduler is off and GitHub Actions (`.github/workflows/scheduled-jobs.yaml`) calls the same job at 07:00 UTC. This means the watering engine always has fresh data without the user manually triggering a fetch.
 
 ### Open-Meteo for weather (no API key)
 

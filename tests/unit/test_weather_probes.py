@@ -197,6 +197,20 @@ def test_run_all_probes_captures_http_status(monkeypatch):
     assert forecast['http_status'] == 403
 
 
+def test_run_all_probes_redacts_the_key_from_error_text(monkeypatch):
+    monkeypatch.setattr(wp, '_get_key', lambda name: 'SECRETKEY123')
+    monkeypatch.setattr(wp, '_egress_ip', lambda: None)
+
+    def failing_get(url, params=None, **kw):
+        raise wp.requests.HTTPError(f'401 Client Error for url: {url}?key={(params or {}).get("key")}')
+    monkeypatch.setattr(wp.requests, 'get', failing_get)
+
+    report = wp.run_all_probes(40.0, -75.2)
+    errors = ' '.join(r['error'] or '' for r in report['results'])
+    assert 'SECRETKEY123' not in errors
+    assert '***' in errors
+
+
 def test_get_key_prefers_process_env(monkeypatch):
     monkeypatch.setenv('WEATHERAPI_KEY', 'from-env')
     assert wp._get_key('WEATHERAPI_KEY') == 'from-env'

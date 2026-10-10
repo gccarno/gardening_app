@@ -129,5 +129,16 @@ def test_model_is_shadow_by_default(db, garden, plant_in_bed, bed, monkeypatch):
     assert served['urgency_score'] == 100
 
 
+def test_model_sees_the_same_capped_days_since_watered_as_the_snapshot(db, garden, plant_in_bed, bed,
+                                                                      monkeypatch):
+    from apps.ml_service.app import watering_engine
+    seen = {}
+    monkeypatch.setattr(watering_engine, 'predict_water_mm',
+                        lambda feats: seen.update(feats) or 1.0)
+    rec = get_watering_recommendations(garden, [], None)[0]  # never watered -> 999 uncapped
+    assert seen['days_since_watered'] == 99
+    assert rec['days_since_watered'] == 99
+
+
 def test_empty_beds_skipped(db, garden, bed):
     assert get_watering_recommendations(garden, [], None) == []

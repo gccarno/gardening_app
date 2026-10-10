@@ -60,8 +60,9 @@ benefit is visible, for no functional gain.
 
   **Why two nights, not one (fixed 2026-08-05):** a snapshot taken on day D
   asks what happened on D+1, and neither answer exists while D+1 is still
-  running. The job fires around 04:00 local, so labelling D-1 from "today"
-  meant asking whether the gardener had watered in the four hours since
+  running. The job fires right after the 07:00 UTC weather fetch (about 2 AM
+  Central, later with GitHub Actions drift), so labelling D-1 from "today"
+  meant asking whether the gardener had watered in the few hours since
   midnight, and reading a `WeatherLog` row for today that is never written by
   design (the fetcher skips today as a partial day). Both labels were
   therefore constants: **66 labelled rows, 0 positives, every

@@ -175,6 +175,14 @@ def _fetch_weather_for_garden(db: Session, garden_id: int) -> int:
 
     created = 0
     for (d, rainfall, hi, lo, hum, et0_val), provider in rows:
+        existing = db.query(WeatherLog).filter_by(garden_id=garden_id, date=d).first()
+        if existing and existing.source == 'manual':
+            # The gardener's own gauge beats gridded data for their rainfall;
+            # take only the fields they can't log by hand.
+            existing.temp_high_f, existing.temp_low_f = hi, lo
+            existing.humidity_pct, existing.et0_mm = hum, et0_val
+            created += 1
+            continue
         db.query(WeatherLog).filter_by(garden_id=garden_id, date=d).delete()
         db.add(WeatherLog(
             garden_id=garden_id,

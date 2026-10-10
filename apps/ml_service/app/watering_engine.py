@@ -295,7 +295,8 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
         }
 
         deficit = calculate_deficit(bed, avg_kc, weather_logs)
-        dsw     = days_since_last_watered(bed)
+        # Capped once so the model sees the same value the snapshot stores (999 = never).
+        dsw     = min(days_since_last_watered(bed), 99)
         score   = score_urgency(deficit, avg_kc, forecast_today)
         label   = get_urgency_label(score)
 
@@ -373,7 +374,7 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
             'urgency_score':      score,
             'label':              label,
             'deficit_mm':         deficit,
-            'days_since_watered': min(dsw, 99),
+            'days_since_watered': dsw,
             'kc':                 avg_kc['kc'],
             'mm_day':             avg_kc['mm_day'],
             'plants':             [p.name for p in plants_in_bed],

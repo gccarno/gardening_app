@@ -207,6 +207,20 @@ def test_history_fetch_falls_back_and_skips_today(db, garden, fallback_http):
     assert logs[0].source == 'tomorrow-io'
 
 
+def test_history_fetch_keeps_a_manual_rain_log(db, garden, fallback_http):
+    from apps.backend.app.db.models import WeatherLog
+    yesterday = date.today() - timedelta(days=1)
+    db.add(WeatherLog(garden_id=garden.id, date=yesterday, rainfall_in=1.5, source='manual'))
+    db.flush()
+
+    weather_router._fetch_weather_for_garden(db, garden.id)
+
+    log = db.query(WeatherLog).filter_by(garden_id=garden.id, date=yesterday).one()
+    assert log.rainfall_in == 1.5           # not the provider's 0.12
+    assert log.source == 'manual'
+    assert log.temp_high_f == 88.0          # provider fills what the gardener can't log
+
+
 def test_history_fetch_reraises_without_key(db, garden, monkeypatch):
     monkeypatch.setattr(tomorrow_io, 'get_key', lambda: None)
 

@@ -38,9 +38,9 @@ def _backfill_labels(db: Session, garden_id: int) -> int:
 
     The window starts at D-2, not D-1. A snapshot taken on day D asks "was this
     bed watered on D+1, and did it rain?" — neither is knowable while D+1 is
-    still running. This job fires around 04:00 local, so labelling yesterday's
-    snapshot meant asking whether the gardener had watered in the four hours
-    since midnight (answer: never) and reading a WeatherLog row for today that
+    still running. This job fires right after the 07:00 UTC weather fetch
+    (about 2 AM Central), so labelling yesterday's snapshot meant asking
+    whether the gardener had watered in the few hours since midnight (answer: never) and reading a WeatherLog row for today that
     by design is never written (weather.py skips today as a partial day). Both
     labels were therefore constant: 66 rows, 0 positives, every rain figure
     0.0mm — including across 2.03in of rain on 2026-08-02.

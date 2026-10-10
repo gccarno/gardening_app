@@ -146,6 +146,6 @@ Last audited: 2026-10-10 (only the Soil Moisture Check-in entry was re-checked; 
   Hourly WorkManager worker + per-garden settings (enable, frequency, earliest
   hour per type) stored device-local in Room (`notification_settings`).
   Watering reminders delegate rain-skip to `GET /api/gardens/{id}/watering-status`
-  (backend watering engine: 14-day rainfall + forecast → urgency score).
+  (backend watering engine: 7-day rainfall + forecast → urgency score).
   System notifications (channels per type) + in-app snackbar when foregrounded
   (`core/notifications/`). The web app has no equivalent and none is planned.

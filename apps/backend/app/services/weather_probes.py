@@ -307,6 +307,10 @@ def _default_coords() -> tuple[float, float]:
     return DEFAULT_LAT, DEFAULT_LON
 
 
+def _redact(text: str, key: str | None) -> str:
+    return text.replace(key, '***') if key else text
+
+
 def run_all_probes(lat: float | None = None, lon: float | None = None) -> dict:
     if lat is None or lon is None:
         lat, lon = _default_coords()
@@ -320,13 +324,15 @@ def run_all_probes(lat: float | None = None, lon: float | None = None) -> dict:
         start = time.monotonic()
         try:
             res = fn(lat, lon, key)
+        # requests puts the full URL, query-string key included, in its error
+        # text, and this result is returned by an admin endpoint.
         except requests.RequestException as e:
             http_status = getattr(getattr(e, 'response', None), 'status_code', None)
             res = _result(name, status='error', http_status=http_status,
-                          error=str(e))
+                          error=_redact(str(e), key))
         except Exception as e:
             res = _result(name, status='error',
-                          error=f'{type(e).__name__}: {e}')
+                          error=_redact(f'{type(e).__name__}: {e}', key))
         res['latency_ms'] = int((time.monotonic() - start) * 1000)
         log.info('[weather-probes] %s: %s (%s ms)', name, res['status'],
                  res['latency_ms'])
