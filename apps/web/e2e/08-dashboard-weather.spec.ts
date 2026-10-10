@@ -47,7 +47,8 @@ test.describe('dashboard & weather', () => {
       await expect(weatherCard.getByText(/°F|Weather unavailable|Loading/).first())
         .toBeVisible({ timeout: 30_000 });
     }
-    await expect(page.locator('#watering-card .info-card__body').getByText(/.+/)).toBeVisible();
+    // Same strict-mode trap: a bed row renders several text nodes.
+    await expect(page.locator('#watering-card .info-card__body').getByText(/.+/).first()).toBeVisible();
   });
 
   // The Dashboard's rain-log slider (#rain-log-card) was deleted in 5bee320,
