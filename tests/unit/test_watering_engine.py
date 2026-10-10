@@ -86,5 +86,21 @@ def test_recommendations_for_garden(db, garden, plant_in_bed, bed):
     assert rec['days_since_watered'] == 6
 
 
+def test_model_is_shadow_by_default(db, garden, plant_in_bed, bed, monkeypatch):
+    from apps.ml_service.app import watering_engine
+    monkeypatch.setattr(watering_engine, 'predict_water_mm', lambda feats: 30.0)
+    bed.bed_plants[0].last_watered = date.today() - timedelta(days=6)
+
+    monkeypatch.delenv('WATERING_MODEL_SERVE', raising=False)
+    shadow = get_watering_recommendations(garden, [], None)[0]
+    assert shadow['model_used'] is False
+    assert shadow['predicted_mm'] == 30.0  # still logged for the snapshot
+
+    monkeypatch.setenv('WATERING_MODEL_SERVE', '1')
+    served = get_watering_recommendations(garden, [], None)[0]
+    assert served['model_used'] is True
+    assert served['urgency_score'] == 100
+
+
 def test_empty_beds_skipped(db, garden, bed):
     assert get_watering_recommendations(garden, [], None) == []

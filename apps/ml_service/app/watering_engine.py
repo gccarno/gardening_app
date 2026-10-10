@@ -8,6 +8,7 @@ and daily recommendations.
 Pure Python — no Flask imports.  All SQLAlchemy objects are passed in by callers.
 """
 
+import os
 from datetime import date, timedelta
 from math import sqrt
 
@@ -320,7 +321,11 @@ def get_watering_recommendations(garden, weather_logs: list, forecast_today: dic
                 'clay_pct':                 bed.clay_pct,
                 'bed_area_m2':              round(area_m2, 2),
             })
-        model_used = model_pred_mm is not None
+        # Shadow mode by default: the model still predicts (and the snapshot
+        # job logs it) but only drives the score/label/litres when
+        # WATERING_MODEL_SERVE=1. Real-outcome accuracy is unproven; see
+        # ml/docs/WATERING_MODEL.md.
+        model_used = model_pred_mm is not None and os.environ.get('WATERING_MODEL_SERVE') == '1'
 
         if model_used:
             # Re-derive score/label from the model's predicted depth, in the
