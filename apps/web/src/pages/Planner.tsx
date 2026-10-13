@@ -988,6 +988,9 @@ export default function Planner() {
                 const fd = new FormData(); fd.append('image', file);
                 const res = await apiFetch(`/api/gardens/${gardenId}/upload-background`, { method: 'POST', body: fd });
                 if (res.ok) {
+                  // Uploading while the garden's first load is still in flight: invalidate alone
+                  // reuses that pre-upload request (no data yet to cancel) and never refetches.
+                  await queryClient.cancelQueries({ queryKey: ['gardens', gardenId] });
                   queryClient.invalidateQueries({ queryKey: ['gardens', gardenId] });
                 }
               }} />
