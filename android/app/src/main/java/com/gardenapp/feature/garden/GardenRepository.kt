@@ -103,7 +103,7 @@ class GardenRepository @Inject constructor(
         // Try stale cache on error
         val stale = weatherDao.getWeatherCache(gardenId)
         if (stale != null) withContext(Dispatchers.Default) { NetworkResult.Success(json.decodeFromString<WeatherData>(stale.data)) }
-        else NetworkResult.Error(e.message ?: "Weather unavailable")
+        else e.toNetworkError("GardenRepository")
     }
 
     suspend fun bulkCare(gardenId: Int, action: String): NetworkResult<Unit> = try {

@@ -46,6 +46,22 @@ def test_update_garden(client, garden):
     assert data['last_frost_date'] == '2026-04-20'
 
 
+def test_update_same_zip_regeocodes_when_coordinates_missing(client, db, garden, monkeypatch):
+    """Re-saving the same ZIP must retry the lookup if it left no coordinates,
+    otherwise the phone's "add a ZIP code" box can never fix the garden."""
+    calls = []
+    monkeypatch.setattr(gardens_router, '_apply_zip',
+                        lambda g, z: calls.append(z) or setattr(g, 'latitude', 39.77))
+    garden.zip_code, garden.latitude = '19350', None
+    db.commit()
+
+    client.put(f'/api/gardens/{garden.id}', json={'zip_code': '19350'})
+    assert calls == ['19350']
+
+    client.put(f'/api/gardens/{garden.id}', json={'zip_code': '19350'})
+    assert calls == ['19350']  # coordinates now set: no second lookup
+
+
 def test_delete_garden(client, garden):
     assert client.delete(f'/api/gardens/{garden.id}').json()['ok'] is True
     assert client.get(f'/api/gardens/{garden.id}').status_code == 404
