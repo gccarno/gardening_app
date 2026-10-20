@@ -33,7 +33,7 @@ data class DailyForecast(
 data class FrostInfo(
     @SerialName("last_spring") val lastSpring: String? = null,
     @SerialName("first_fall") val firstFall: String? = null,
-    @SerialName("frost_free") val frostFree: Int? = null,
+    @SerialName("frost_free") val frostFree: Boolean? = null,
     @SerialName("station_name") val stationName: String? = null,
     @SerialName("station_distance_km") val stationDistanceKm: Double? = null,
 )

@@ -59,4 +59,25 @@ class ModelSerializationTest {
         assertEquals("abc123", response.token)
         assertEquals("me@example.com", response.user.email)
     }
+
+    @Test
+    fun `weather decodes from live backend shape`() {
+        // Captured from GET /api/gardens/1/weather. frost_free is the garden's
+        // Boolean "no frost" flag; it used to be modelled as Int and made the
+        // whole decode throw, so the card fell back to "add a ZIP code".
+        val payload = """
+            {"current": {"temp": 47.64, "humidity": 63, "precipitation": 0,
+                         "wind_speed": 5, "condition": "Clear sky"},
+             "daily": [{"date": "2026-10-25", "high": 62.4, "low": 39.52,
+                        "precip_prob": 0, "uv": null, "condition": "Clear sky"}],
+             "frost": {"last_spring": "Apr 19", "first_fall": "Oct 26",
+                       "frost_free": false, "station_name": "AVONDALE 2 N, PA US",
+                       "station_distance_km": 10.7},
+             "source": "tomorrow.io"}
+        """.trimIndent()
+        val weather = json.decodeFromString<WeatherData>(payload)
+        assertEquals(47.64, weather.current?.temp)
+        assertEquals(1, weather.daily.size)
+        assertEquals(false, weather.frost?.frostFree)
+    }
 }
