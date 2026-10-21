@@ -30,6 +30,8 @@ data class IdentifyResult(
     val candidates: List<IdCandidate>,
     val diagnosis: String?,
     val careAdvice: String?,
+    val source: String = "claude",      // "local" = answered on-device
+    val confident: Boolean = true,
 )
 
 data class IdentifyUiState(
@@ -43,6 +45,7 @@ data class IdentifyUiState(
 @HiltViewModel
 class IdentifyViewModel @Inject constructor(
     private val api: ApiService,
+    private val plantId: PlantIdModel,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -67,12 +70,23 @@ class IdentifyViewModel @Inject constructor(
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 } ?: throw IllegalStateException("Could not read image")
-                val part = MultipartBody.Part.createFormData(
-                    "image", "photo.jpg",
-                    bytes.toRequestBody("image/jpeg".toMediaType()),
-                )
-                val modeBody = s.mode.toRequestBody("text/plain".toMediaType())
-                val json = api.identify(part, modeBody).jsonObject
+                // Species ID tries the on-device model first; Claude only sees
+                // the photo when the local answer isn't confident.
+                val local = if (s.mode == "identify") plantId.identify(bytes)?.let(::parseResult) else null
+                if (local?.confident == true) {
+                    _uiState.value = _uiState.value.copy(isLoading = false, result = local)
+                    return@launch
+                }
+                val json = try {
+                    identifyWithClaude(bytes, s.mode)
+                } catch (e: Exception) {
+                    // A low-confidence local guess beats an error.
+                    if (local != null) {
+                        _uiState.value = _uiState.value.copy(isLoading = false, result = local)
+                        return@launch
+                    }
+                    throw e
+                }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     result = parseResult(json),
@@ -85,6 +99,15 @@ class IdentifyViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    private suspend fun identifyWithClaude(bytes: ByteArray, mode: String): JsonObject {
+        val part = MultipartBody.Part.createFormData(
+            "image", "photo.jpg",
+            bytes.toRequestBody("image/jpeg".toMediaType()),
+        )
+        val modeBody = mode.toRequestBody("text/plain".toMediaType())
+        return api.identify(part, modeBody).jsonObject
     }
 
     private fun parseResult(obj: JsonObject): IdentifyResult {
@@ -102,6 +125,8 @@ class IdentifyViewModel @Inject constructor(
             candidates = candidates,
             diagnosis = obj["diagnosis"]?.jsonPrimitive?.contentOrNull,
             careAdvice = obj["care_advice"]?.jsonPrimitive?.contentOrNull,
+            source = obj["source"]?.jsonPrimitive?.contentOrNull ?: "claude",
+            confident = obj["confident"]?.jsonPrimitive?.booleanOrNull ?: true,
         )
     }
 }
