@@ -155,6 +155,14 @@ def teacher_prototypes(library, encode_text, classes):
     return (p / np.linalg.norm(p, axis=1, keepdims=True)).astype(np.float32), txt.astype(np.float32), alpha
 
 
+def _save_atomic(obj, path: Path):
+    """torch.save via a temp file + rename, so a sync job or a dropped session never sees half a file."""
+    import torch
+    tmp = path.with_name(path.name + '.tmp')
+    torch.save(obj, tmp)
+    tmp.replace(path)
+
+
 def _eval_calib(student, device, ev_arrays, labels, protos) -> float:
     """Top-1 on the calibration half, student query vs teacher prototypes."""
     import torch
@@ -287,12 +295,12 @@ def main():
               f'calib top-1 {top1:.3f}  ({row["minutes"]:.1f} min)')
         if top1 > best:
             best = top1
-            torch.save({'student': args.student, 'state_dict': student.state_dict(),
-                        'epoch': epoch, 'calib_top1': top1, 'input_size': INPUT_SIZE}, ckpt)
+            _save_atomic({'student': args.student, 'state_dict': student.state_dict(),
+                          'epoch': epoch, 'calib_top1': top1, 'input_size': INPUT_SIZE}, ckpt)
         # Every epoch, so a dropped Colab session loses at most one.
-        torch.save({'state_dict': student.state_dict(), 'optimizer': opt.state_dict(),
-                    'scheduler': sched.state_dict(), 'scaler': scaler.state_dict(),
-                    'epoch': epoch, 'step': step, 'best': best, 'history': history}, last)
+        _save_atomic({'state_dict': student.state_dict(), 'optimizer': opt.state_dict(),
+                      'scheduler': sched.state_dict(), 'scaler': scaler.state_dict(),
+                      'epoch': epoch, 'step': step, 'best': best, 'history': history}, last)
 
     print(f'best calib top-1 {best:.3f} -> {ckpt}')
     append_run('plantid_student', {'best_calib_top1': best},
