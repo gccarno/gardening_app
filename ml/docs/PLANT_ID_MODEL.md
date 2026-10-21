@@ -82,6 +82,15 @@ The KL term targets exactly what is served: the ranking over species. Because
 the student lives in BioCLIP's space, it is served against BioCLIP's
 prototypes (computed offline), which also covers species with one or two photos.
 
+**Where it trains: Google Colab** (free T4). The laptop's GPU is enough, but its 16 GB
+of RAM usually isn't free, and neither Oracle VM has a GPU. The laptop packs a
+self-contained bundle (`ml/data/build_plantid_colab_bundle.py`: classes, BioCLIP
+image prototypes from the embedding cache, the eval set and the training photos;
+numpy only, no model load). `ml/notebooks/plantid_distill_colab.ipynb` then adds
+the text prototypes on the GPU (`--finish`), smoke-tests, trains with per-epoch
+checkpoints to Google Drive (`--resume` survives disconnects), and exports. Neither
+script touches the DB when given `--bundle`.
+
 ## 6. Evaluation
 
 Phase 1, test half: 750 photos across 150 species, ranked against all 8,890 species.
@@ -174,7 +183,8 @@ uv pip install open_clip_torch timm onnx onnxruntime onnxscript
 uv run --no-sync python ml/data/build_plantid_eval.py                 # eval set
 uv run --no-sync python ml/experiments/plantid_backbones.py           # bake-off
 uv run --no-sync python ml/data/build_plantid_distill_set.py --library --inat 30000
-uv run --no-sync python ml/training/train_plantid_student.py --student mobileclip2_s0 --epochs 15 --tag v1
+uv run --no-sync python ml/data/build_plantid_colab_bundle.py      # -> upload zip to Drive/plantid, run the Colab notebook
+uv run --no-sync python ml/training/train_plantid_student.py --student mobileclip2_s0 --epochs 15 --tag v1   # local alternative
 uv run --no-sync python ml/training/export_plantid_onnx.py --student-ckpt ml/data/raw/plantid_cache/student_mobileclip2_s0_v1.pt --version v1
 uv run --no-sync python scripts/build_plantid_prototypes.py --version v1
 uv run --no-sync python ml/evaluation/plantid_claude_baseline.py --backbone bioclip

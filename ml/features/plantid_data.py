@@ -8,6 +8,7 @@ everywhere: they are what a diffusion model thinks a plant looks like, not
 evidence of what it does look like.
 """
 import csv
+import json
 import os
 import re
 from pathlib import Path
@@ -54,11 +55,34 @@ def library_manifest(db) -> list[dict]:
     return out
 
 
-def eval_manifest() -> list[dict]:
-    """Rows of the committed iNaturalist eval CSV, with absolute paths."""
-    with EVAL_CSV.open(newline='', encoding='utf-8') as f:
+def eval_manifest(csv_path: Path = EVAL_CSV, root: Path = _ROOT) -> list[dict]:
+    """Rows of the iNaturalist eval CSV, with paths resolved against `root`.
+
+    Defaults to the committed CSV in this repo; a Colab bundle passes its own
+    (ml/data/build_plantid_colab_bundle.py).
+    """
+    with Path(csv_path).open(newline='', encoding='utf-8') as f:
         rows = list(csv.DictReader(f))
     for r in rows:
-        r['path'] = _ROOT / r['path']
+        r['path'] = Path(root) / r['path']
         r['is_crop'] = r.get('is_crop') == '1'
     return [r for r in rows if r['path'].exists()]
+
+
+def load_bundle(bundle_dir: Path) -> dict:
+    """A Colab bundle: classes, teacher prototypes, eval rows and training photos — no DB.
+
+    See ml/data/build_plantid_colab_bundle.py for the layout.
+    """
+    import numpy as np
+    bundle_dir = Path(bundle_dir)
+    classes = json.loads((bundle_dir / 'classes.json').read_text(encoding='utf-8'))
+    return {
+        'classes': classes,
+        'class_keys': [c['species_key'] for c in classes],
+        'teacher_protos': np.load(bundle_dir / 'teacher_protos.npy'),
+        'teacher_text': np.load(bundle_dir / 'teacher_text.npy'),
+        'alpha': json.loads((bundle_dir / 'meta.json').read_text(encoding='utf-8'))['alpha'],
+        'evals': eval_manifest(bundle_dir / 'eval.csv', bundle_dir),
+        'train_paths': sorted((bundle_dir / 'distill').glob('*/*.jpg')),
+    }

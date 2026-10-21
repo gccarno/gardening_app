@@ -20,6 +20,8 @@ on >= PARITY_MIN of eval top-1 predictions, or nothing is written.
 Run:
     # a distilled student (the shipping path — see ml/training/train_plantid_student.py)
     uv run --no-sync python ml/training/export_plantid_onnx.py         --student-ckpt ml/data/raw/plantid_cache/student_mobileclip2_s0_v1.pt --version v1
+    # on Colab, from a bundle (no DB; writes everything to --out-dir)
+    python ml/training/export_plantid_onnx.py --student-ckpt <ckpt> --bundle /content/bundle         --out-dir /content/drive/MyDrive/plantid --version v1
     # or an off-the-shelf backbone from the bake-off
     uv run --no-sync python ml/training/export_plantid_onnx.py --backbone mobileclip2_s0 --version v0
 """
@@ -52,7 +54,7 @@ from ml.experiments.plantid_backbones import (  # noqa: E402
     embed_paths,
     load_backbone,
 )
-from ml.features.plantid_data import CACHE_DIR, eval_manifest, library_manifest  # noqa: E402
+from ml.features.plantid_data import CACHE_DIR, eval_manifest, library_manifest, load_bundle  # noqa: E402
 from ml.features.plantid_preprocess import load_and_preprocess  # noqa: E402
 
 MODELS_DIR = _ROOT / 'ml' / 'models'
@@ -222,19 +224,31 @@ def main():
     src.add_argument('--backbone', choices=list(BACKBONES), help='an off-the-shelf bake-off backbone')
     src.add_argument('--student-ckpt', type=Path, help='a distilled student checkpoint')
     ap.add_argument('--version', required=True, help='e.g. v1 — becomes the model_version')
+    ap.add_argument('--bundle', type=Path, help='a Colab bundle (student only): no DB, no library pass')
+    ap.add_argument('--out-dir', type=Path, help='write all outputs here instead of ml/models + cache')
     args = ap.parse_args()
+    if args.bundle and not args.student_ckpt:
+        ap.error('--bundle needs --student-ckpt')
     version = args.version
-    # A student lives in BioCLIP's space, so it is served against BioCLIP's prototypes.
-    proto_source = 'bioclip' if args.student_ckpt else args.backbone
-    alpha = json.loads(RESULTS_PATH.read_text(encoding='utf-8'))[proto_source]['blend_alpha']
+    models_dir = args.out_dir or MODELS_DIR
+    cache_dir = args.out_dir or CACHE_DIR
 
-    from apps.backend.app.db.session import SessionLocal
-    db = SessionLocal()
-    try:
-        library = library_manifest(db)
-    finally:
-        db.close()
-    evals = eval_manifest()
+    bundle = load_bundle(args.bundle) if args.bundle else None
+    if bundle:
+        alpha, library, evals = bundle['alpha'], None, bundle['evals']
+        calib_pool = [p for p in bundle['train_paths'] if p.parent.name == 'library']
+    else:
+        # A student lives in BioCLIP's space, so it is served against BioCLIP's prototypes.
+        proto_source = 'bioclip' if args.student_ckpt else args.backbone
+        alpha = json.loads(RESULTS_PATH.read_text(encoding='utf-8'))[proto_source]['blend_alpha']
+        from apps.backend.app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            library = library_manifest(db)
+        finally:
+            db.close()
+        evals = eval_manifest()
+        calib_pool = [r['path'] for r in library]
 
     # 1. export + quantise
     if args.student_ckpt:
@@ -243,33 +257,36 @@ def main():
     else:
         tower, size, encode_text = _tower(args.backbone)
         model_name = args.backbone
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    fp32_path = CACHE_DIR / f'plantid_{version}_fp32.onnx'
-    onnx_path = MODELS_DIR / f'plantid_{version}.onnx'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    fp32_path = cache_dir / f'plantid_{version}_fp32.onnx'
+    onnx_path = models_dir / f'plantid_{version}.onnx'
     print(f'exporting {model_name} @ {size}px')
     _export(tower, size, fp32_path)
     rng = np.random.default_rng(SEED)
-    calib_imgs = [library[i]['path'] for i in rng.choice(len(library), N_CALIBRATION_IMAGES, replace=False)]
+    calib_imgs = [calib_pool[i] for i in rng.choice(len(calib_pool), N_CALIBRATION_IMAGES, replace=False)]
     print('quantising (static int8, QDQ)')
     _quantize(fp32_path, onnx_path, calib_imgs, size)
 
     # 2. embed through the exported model
-    lib_emb = _onnx_embed(onnx_path, [r['path'] for r in library], size,
-                          CACHE_DIR / f'plantid_{version}_library.npz')
     ev_emb = _onnx_embed(onnx_path, [r['path'] for r in evals], size,
-                         CACHE_DIR / f'plantid_{version}_eval.npz')
-
-    lib_ok = ~np.isnan(lib_emb).any(axis=1)
-    lib_rows = [r for r, ok in zip(library, lib_ok) if ok]
-    lib_keys = [r['species_key'] for r in lib_rows]
-    classes = sorted(set(lib_keys))
+                         cache_dir / f'plantid_{version}_eval.npz')
+    if bundle:
+        # Classes and the teacher's prototypes come pre-built; no library pass needed.
+        classes, protos = bundle['class_keys'], bundle['teacher_protos']
+    else:
+        lib_emb = _onnx_embed(onnx_path, [r['path'] for r in library], size,
+                              cache_dir / f'plantid_{version}_library.npz')
+        lib_ok = ~np.isnan(lib_emb).any(axis=1)
+        lib_rows = [r for r, ok in zip(library, lib_ok) if ok]
+        lib_keys = [r['species_key'] for r in lib_rows]
+        classes = sorted(set(lib_keys))
     index = {c: i for i, c in enumerate(classes)}
-    if args.student_ckpt:
+    if args.student_ckpt and not bundle:
         from ml.training.train_plantid_student import build_teacher, teacher_prototypes
         _, teacher_text = build_teacher('cuda')
         protos, _, _ = teacher_prototypes(library, teacher_text, classes)
-    else:
+    elif not args.student_ckpt:
         text_protos = _text_prototypes(encode_text, classes) if encode_text and alpha < 1.0 else None
         protos = _blend(build_prototypes(lib_emb[lib_ok], lib_keys, classes), text_protos, alpha)
 
@@ -294,9 +311,9 @@ def main():
     else:
         enc, transform, _, _ = load_backbone(args.backbone)
         torch_ev = embed_paths(enc, transform, [r['path'] for r in ev],
-                               CACHE_DIR / f'{args.backbone}_eval.npz')
+                               cache_dir / f'{args.backbone}_eval.npz')
         torch_lib = embed_paths(enc, transform, [r['path'] for r in lib_rows],
-                                CACHE_DIR / f'{args.backbone}_library.npz')
+                                cache_dir / f'{args.backbone}_library.npz')
         torch_ok = ~np.isnan(torch_lib).any(axis=1)
         torch_protos = _blend(build_prototypes(torch_lib[torch_ok],
                                                [k for k, ok in zip(lib_keys, torch_ok) if ok], classes),
@@ -331,14 +348,20 @@ def main():
     print(json.dumps(metrics, indent=2))
 
     # 5. write the version
-    reps = _representatives(lib_rows)
-    display = {}
-    for r in ev:
-        display.setdefault(r['species_key'], r['scientific_name'])
-    n_images = {c: 0 for c in classes}
-    for k in lib_keys:
-        n_images[k] += 1
-    np.savez(CACHE_DIR / f'plantid_{version}_prototypes.npz',
+    if bundle:
+        info = {c['species_key']: c for c in bundle['classes']}
+        reps = {k: c['plant_library_id'] for k, c in info.items()}
+        display = {k: c['scientific_name'] for k, c in info.items()}
+        n_images = {k: c['n_images'] for k, c in info.items()}
+    else:
+        reps = _representatives(lib_rows)
+        display = {}
+        for r in ev:
+            display.setdefault(r['species_key'], r['scientific_name'])
+        n_images = {c: 0 for c in classes}
+        for k in lib_keys:
+            n_images[k] += 1
+    np.savez(cache_dir / f'plantid_{version}_prototypes.npz',
              species_key=np.array(classes),
              scientific_name=np.array([display.get(c, c.capitalize()) for c in classes]),
              plant_library_id=np.array([reps[c] for c in classes]),
@@ -359,10 +382,10 @@ def main():
         'metrics': metrics,
         'created': datetime.now(timezone.utc).isoformat(timespec='seconds'),
     }
-    (MODELS_DIR / f'plantid_{version}.json').write_text(json.dumps(config, indent=2), encoding='utf-8')
+    (models_dir / f'plantid_{version}.json').write_text(json.dumps(config, indent=2), encoding='utf-8')
     append_run('plantid', metrics, {'model_version': version, 'backbone': model_name,
                                     'temperature': t, 'tau': tau})
-    print(f'wrote {onnx_path.relative_to(_ROOT)} ({onnx_path.stat().st_size / 1e6:.1f} MB), '
+    print(f'wrote {onnx_path} ({onnx_path.stat().st_size / 1e6:.1f} MB), '
           f'config and prototypes')
 
 

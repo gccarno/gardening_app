@@ -19,6 +19,9 @@ test half is first touched by ml/training/export_plantid_onnx.py.
 Run (needs the vision stack + CUDA torch):
     uv run --no-sync python ml/training/train_plantid_student.py --student mobileclip2_s0 --epochs 1 --max-images 8000 --tag pilot
     uv run --no-sync python ml/training/train_plantid_student.py --student mobileclip2_s0 --epochs 15 --tag v1
+
+On Colab (no DB; see ml/notebooks/plantid_distill_colab.ipynb):
+    python ml/training/train_plantid_student.py --bundle /content/bundle --out-dir /content/drive/MyDrive/plantid         --student mobileclip2_s0 --epochs 15 --workers 2 --tag v1 [--resume]
 """
 import argparse
 import json
@@ -37,7 +40,7 @@ from ml.evaluation.metrics_history import append_run  # noqa: E402
 from ml.evaluation.plantid_metrics import topk_accuracy  # noqa: E402
 from ml.experiments.plantid_backbones import (  # noqa: E402
     BACKBONES, RESULTS_PATH, SEED, build_prototypes, embed_paths, load_backbone)
-from ml.features.plantid_data import CACHE_DIR, eval_manifest, library_manifest  # noqa: E402
+from ml.features.plantid_data import CACHE_DIR, eval_manifest, library_manifest, load_bundle  # noqa: E402
 from ml.features.plantid_preprocess import load_and_preprocess  # noqa: E402
 
 DISTILL_DIR = _ROOT / 'ml' / 'data' / 'raw' / 'plantid_distill'
@@ -175,31 +178,45 @@ def main():
     ap.add_argument('--kl-weight', type=float, default=1.0)
     ap.add_argument('--max-images', type=int, default=0, help='subsample the training set (pilots)')
     ap.add_argument('--tag', required=True)
+    ap.add_argument('--bundle', type=Path, help='train from a Colab bundle instead of the DB + local caches')
+    ap.add_argument('--out-dir', type=Path, default=CACHE_DIR, help='where checkpoints go')
+    ap.add_argument('--resume', action='store_true', help='continue from <out-dir>/..._last.pt')
+    ap.add_argument('--device', default='cuda')
+    ap.add_argument('--workers', type=int, default=6)
     args = ap.parse_args()
     torch.manual_seed(SEED)
-    device = 'cuda'
+    device = args.device
 
-    paths = sorted((DISTILL_DIR / 'library').glob('*.jpg')) + sorted((DISTILL_DIR / 'inat').glob('*.jpg'))
+    bundle = load_bundle(args.bundle) if args.bundle else None
+    if bundle:
+        paths = bundle['train_paths']
+    else:
+        paths = sorted((DISTILL_DIR / 'library').glob('*.jpg')) + sorted((DISTILL_DIR / 'inat').glob('*.jpg'))
     if args.max_images:
         rng = np.random.default_rng(SEED)
         paths = [paths[i] for i in rng.choice(len(paths), min(args.max_images, len(paths)), replace=False)]
     print(f'{len(paths)} training photos')
 
-    from apps.backend.app.db.session import SessionLocal
-    db = SessionLocal()
-    try:
-        library = library_manifest(db)
-    finally:
-        db.close()
-    classes = sorted({r['species_key'] for r in library})
-    index = {c: i for i, c in enumerate(classes)}
-
     teacher, encode_text = build_teacher(device)
-    protos, text_protos, alpha = teacher_prototypes(library, encode_text, classes)
+    if bundle:
+        classes = bundle['class_keys']
+        protos, text_protos, alpha = bundle['teacher_protos'], bundle['teacher_text'], bundle['alpha']
+        all_evals = bundle['evals']
+    else:
+        from apps.backend.app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            library = library_manifest(db)
+        finally:
+            db.close()
+        classes = sorted({r['species_key'] for r in library})
+        protos, text_protos, alpha = teacher_prototypes(library, encode_text, classes)
+        all_evals = eval_manifest()
+    index = {c: i for i, c in enumerate(classes)}
     text_t = torch.from_numpy(text_protos).to(device)
 
     # Calibration half of the eval set, preprocessed exactly as clients will.
-    evals = [r for r in eval_manifest() if r['species_key'] in index]
+    evals = [r for r in all_evals if r['species_key'] in index]
     species = sorted({r['species_key'] for r in evals})
     calib_species = set(np.random.default_rng(SEED).choice(species, size=len(species) // 2, replace=False))
     calib = [r for r in evals if r['species_key'] in calib_species]
@@ -209,8 +226,8 @@ def main():
 
     student = build_student(args.student).to(device)
     loader = torch.utils.data.DataLoader(
-        _AugDataset(paths), batch_size=args.batch, shuffle=True, num_workers=6,
-        persistent_workers=True, drop_last=True, pin_memory=True)
+        _AugDataset(paths), batch_size=args.batch, shuffle=True, num_workers=args.workers,
+        persistent_workers=args.workers > 0, drop_last=True, pin_memory=True)
     head_params = list(student.head.parameters())
     opt = torch.optim.AdamW([
         {'params': student.backbone.parameters(), 'lr': args.lr},
@@ -222,12 +239,22 @@ def main():
         opt, lambda s: (s + 1) / warmup if s < warmup else 0.5 * (1 + math.cos(math.pi * (s - warmup) / max(1, total - warmup))))
     scaler = torch.amp.GradScaler()
 
-    ckpt = CACHE_DIR / f'student_{args.student}_{args.tag}.pt'
-    history = []
-    best = _eval_calib(student, device, ev_arrays, ev_labels, protos)
-    print(f'epoch 0: calib top-1 {best:.3f} (untrained head)  |  teacher alpha={alpha}')
-    step = 0
-    for epoch in range(1, args.epochs + 1):
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt = args.out_dir / f'student_{args.student}_{args.tag}.pt'          # best epoch
+    last = args.out_dir / f'student_{args.student}_{args.tag}_last.pt'     # resume point
+    history, step, start = [], 0, 1
+    if args.resume and last.exists():
+        state = torch.load(last, map_location=device)
+        student.load_state_dict(state['state_dict'])
+        opt.load_state_dict(state['optimizer'])
+        sched.load_state_dict(state['scheduler'])
+        scaler.load_state_dict(state['scaler'])
+        history, step, best, start = state['history'], state['step'], state['best'], state['epoch'] + 1
+        print(f'resumed after epoch {state["epoch"]} (best calib top-1 {best:.3f})')
+    else:
+        best = _eval_calib(student, device, ev_arrays, ev_labels, protos)
+        print(f'epoch 0: calib top-1 {best:.3f} (untrained head)  |  teacher alpha={alpha}')
+    for epoch in range(start, args.epochs + 1):
         t0, running = time.time(), {'cos': 0.0, 'kl': 0.0}
         for x in loader:
             x = x.to(device, non_blocking=True)
@@ -262,8 +289,12 @@ def main():
             best = top1
             torch.save({'student': args.student, 'state_dict': student.state_dict(),
                         'epoch': epoch, 'calib_top1': top1, 'input_size': INPUT_SIZE}, ckpt)
+        # Every epoch, so a dropped Colab session loses at most one.
+        torch.save({'state_dict': student.state_dict(), 'optimizer': opt.state_dict(),
+                    'scheduler': sched.state_dict(), 'scaler': scaler.state_dict(),
+                    'epoch': epoch, 'step': step, 'best': best, 'history': history}, last)
 
-    print(f'best calib top-1 {best:.3f} -> {ckpt.relative_to(_ROOT)}')
+    print(f'best calib top-1 {best:.3f} -> {ckpt}')
     append_run('plantid_student', {'best_calib_top1': best},
                {'student': args.student, 'tag': args.tag, 'epochs': args.epochs,
                 'n_train': len(paths), 'kl_weight': args.kl_weight, 'lr': args.lr, 'history': history})
