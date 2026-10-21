@@ -70,6 +70,13 @@ def _model(provider: str) -> str:
     return _MODEL or _DEFAULTS[provider]
 
 
+def split_model_list(spec: str) -> tuple[str, list[str]]:
+    """'a, b ,c' -> ('a', ['b', 'c']). OpenRouter's LLM_MODEL may list fallbacks
+    after the primary model, sent as the request's `models` field."""
+    models = [m.strip() for m in spec.split(',') if m.strip()]
+    return models[0], models[1:]
+
+
 VISION_MODEL = os.environ.get('VISION_MODEL', 'claude-haiku-4-5-20251001')
 
 
@@ -175,13 +182,16 @@ def _openrouter(system: str, user: str) -> str:
             'Add OPENROUTER_API_KEY to your .env file.'
         )
     client = OpenAI(api_key=key, base_url=OPENROUTER_BASE_URL)
+    model, fallbacks = split_model_list(_model('openrouter'))
     resp = client.chat.completions.create(
-        model=_model('openrouter'),
+        model=model,
         max_tokens=512,
         messages=[
             {'role': 'system', 'content': system},
             {'role': 'user',   'content': user},
         ],
+        # Whole ordered list, primary included: OpenRouter ignores fallbacks otherwise.
+        **({'extra_body': {'models': [model, *fallbacks]}} if fallbacks else {}),
     )
     return resp.choices[0].message.content
 

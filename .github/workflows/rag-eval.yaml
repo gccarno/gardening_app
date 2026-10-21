@@ -1,0 +1,87 @@
+name: RAG eval
+
+# Manual only: an eval run spends free-model quota (OpenRouter: 1000 requests/day
+# on this key, shared with the deployed app), so it never runs on its own.
+# Trigger:  gh workflow run rag-eval.yaml -f adapter=garden_chat -f baseline=v1
+# See docs/rag-eval.md.
+on:
+  workflow_dispatch:
+    inputs:
+      adapter:
+        description: 'What to evaluate'
+        type: choice
+        options: [garden_chat, garden_retrieval, garden_retrieval_il]
+        default: garden_chat
+      baseline:
+        description: 'Committed baseline to gate against (evals/garden/baselines/<name>); blank = report only'
+        default: ''
+      llm_model:
+        description: 'Override LLM_MODEL for the chat under test (OpenRouter id, comma list = fallbacks)'
+        default: 'nvidia/nemotron-3.5-lightning:free'
+      limit:
+        description: 'Only the first N golden items (blank = all)'
+        default: ''
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Secrets are scoped to the steps that need them (not job env), so the
+    # setup/cache actions never see them.
+    env:
+      LLM_PROVIDER: openrouter
+      LLM_MODEL: ${{ inputs.llm_model }}
+      EMBED_PROVIDER: openrouter
+      EMBED_MODEL: nvidia/llama-nemotron-embed-vl-1b-v2:free
+      EMBED_DIMS: '768'
+      RUN_ID: ci-${{ github.run_id }}
+      # Inputs reach the shell as env vars, never interpolated into scripts.
+      ADAPTER: ${{ inputs.adapter }}
+      BASELINE: ${{ inputs.baseline }}
+      LIMIT: ${{ inputs.limit }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.11'
+      - name: Check secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ] || [ -z "$DATABASE_URL" ]; then
+            echo "::error::OPENROUTER_API_KEY and DATABASE_URL repo secrets are required"; exit 1
+          fi
+      - name: Install
+        run: uv sync --group dev --extra evaluation
+      # Judgments are cached by (judge, rubric, answer): restoring the cache makes
+      # re-judging a baseline, or an unchanged answer, cost nothing.
+      - uses: actions/cache@v4
+        with:
+          path: evals/garden/.rageval_cache
+          key: rageval-${{ hashFiles('evals/garden/rageval.yaml') }}-${{ github.run_id }}
+          restore-keys: rageval-${{ hashFiles('evals/garden/rageval.yaml') }}-
+      - name: Run
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          uv run rageval -c evals/garden/rageval.yaml run \
+            --adapter "$ADAPTER" --run-id "$RUN_ID" ${LIMIT:+--limit "$LIMIT"}
+      - name: Gate against baseline
+        if: inputs.baseline != ''
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: uv run rageval -c evals/garden/rageval.yaml compare "baseline:$BASELINE" "$RUN_ID"
+      - name: Job summary
+        if: always()
+        run: |
+          d="evals/garden/runs/$RUN_ID"
+          [ -f "$d/compare.md" ] && cat "$d/compare.md" >> "$GITHUB_STEP_SUMMARY"
+          [ -f "$d/report.md" ] && cat "$d/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rag-eval-${{ github.run_id }}
+          path: evals/garden/runs/${{ env.RUN_ID }}

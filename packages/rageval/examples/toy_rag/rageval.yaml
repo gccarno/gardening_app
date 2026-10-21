@@ -1,0 +1,22 @@
+# Example config for the toy RAG: shows the shape of a per-app config.
+name: toy
+golden: golden.jsonl
+labels: labels.jsonl
+runs_dir: runs
+baselines_dir: baselines
+pythonpath: [.]
+adapters:
+  toy: {target: "toy:ToyRAG", params: {k: 2}}
+  toy_degraded: {target: "toy:ToyRAG", params: {k: 2, degrade: true}}
+default_adapter: toy
+openrouter:
+  rpm: 20
+  daily_limit: 45
+  free_only: true
+judges:
+  panel: ["judge-a:free", "judge-b:free", "judge-c:free"]
+  criteria: [faithful, correct, complete, relevant, appropriate_refusal]
+gate:
+  tolerance: 0.05
+  trust_kappa: 0.6
+  min_labels: 5

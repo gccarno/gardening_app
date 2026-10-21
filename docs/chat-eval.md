@@ -6,6 +6,9 @@ ships to Render.**
 
 See [`observability.md`](observability.md) for Phase 1 (Sentry) and the roadmap.
 
+For answer quality, retrieval quality, judge calibration and regression gating, see
+[`rag-eval.md`](rag-eval.md) (`rageval`), which also runs these 20 records as golden items.
+
 ---
 
 ## Why

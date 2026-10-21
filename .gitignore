@@ -241,3 +241,9 @@ mlflow.db
 *.tfvars
 *.tfplan
 crash.log
+
+# rageval run outputs and caches (baselines/ and golden/labels/calibration are committed)
+evals/*/runs/
+evals/*/.rageval_cache/
+packages/rageval/examples/*/runs/
+packages/rageval/examples/*/.rageval_cache/

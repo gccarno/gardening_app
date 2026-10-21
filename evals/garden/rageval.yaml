@@ -1,0 +1,65 @@
+# rageval config for the garden assistant. See docs/rag-eval.md.
+# Run from the repo root:  uv run rageval -c evals/garden/rageval.yaml <command>
+name: garden
+dotenv: ../../.env            # OPENROUTER_API_KEY, LLM_*, EMBED_*, DATABASE_URL
+pythonpath: [../..]           # so the adapter targets below import
+
+golden: golden.jsonl
+labels: labels.jsonl
+calibration: calibration.json
+runs_dir: runs                # gitignored
+baselines_dir: baselines      # committed
+
+adapters:
+  # Full agent, end to end, against a throwaway SQLite garden (Zone 5b, Chicago IL).
+  garden_chat:
+    target: "ml.rag_eval.garden_adapter:GardenChatAdapter"
+  # Retrieval only (no LLM, no free-model quota): unfiltered, as the guides stand.
+  garden_retrieval:
+    target: "ml.rag_eval.garden_adapter:GardenRetrievalAdapter"
+    params: {k: 3}
+  # Retrieval exactly as the chat tool runs it for the Illinois fixture garden.
+  garden_retrieval_il:
+    target: "ml.rag_eval.garden_adapter:GardenRetrievalAdapter"
+    params: {k: 3, region_filter: "Lower Midwest"}
+default_adapter: garden_chat
+
+# App-specific scorers: tool_selection / no_unintended_writes from the original chat eval.
+scorers:
+  - "ml.rag_eval.garden_adapter:tool_scorers"
+
+openrouter:
+  rpm: 18                     # free models: ~20/min
+  daily_limit: 900            # this key: 1000 free-model requests/day (chat under test uses some too)
+  free_only: true             # refuse any non-:free judge/generator model
+  cache_dir: .rageval_cache   # gitignored: judgment cache, request counter, model catalogue
+
+judges:
+  # Three families, none of them nvidia (the chat model under test is nemotron).
+  # Re-pick with: uv run rageval or models --free
+  panel:
+    - "poolside/laguna-s-2.1:free"
+    - "dots-studio/dots-3-note-preview:free"
+    - "xingchen-agi/xing4.0-29b-a4b:free"
+  criteria: [faithful, correct, complete, relevant, appropriate_refusal]
+  temperature: 0
+
+synth:
+  adapter: garden_retrieval
+  # Not a judge's family, so the panel isn't grading questions its own family wrote.
+  # Nemotron (the chat model's family) is only the last-resort fallback; each
+  # candidate records the model that actually wrote it ("generator").
+  model: "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-super-120b-a12b:free"
+  n: 70
+  candidates: candidates.jsonl
+  audience: "Users are home gardeners asking a garden-planning assistant app."
+
+gate:
+  tolerance: 0.05             # a drop must exceed 5 points AND be significant to fail
+  trust_kappa: 0.6            # judge criteria gate only if panel-vs-human kappa >= this
+  min_labels: 20
+  floors:
+    error: 0.10               # candidate may not error on more than 10% of items
+
+cost:
+  shadow_model: "anthropic/claude-sonnet-5.5"   # "what this run would cost on a paid model"
