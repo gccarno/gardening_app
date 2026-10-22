@@ -109,6 +109,17 @@ fun IdentifyScreen(
                 item { Text(err, color = MaterialTheme.colorScheme.error) }
             }
             uiState.result?.let { result ->
+                item {
+                    Text(
+                        when {
+                            result.source != "local" -> "Checked by Claude"
+                            result.confident -> "Identified on-device"
+                            else -> "On-device guess — low confidence"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 items(result.candidates) { c ->
                     Card(
                         onClick = { c.libraryId?.let(onOpenLibraryEntry) },

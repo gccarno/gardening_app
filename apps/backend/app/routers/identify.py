@@ -17,7 +17,8 @@ import logging
 import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import or_
+from pydantic import BaseModel
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from ..db.models import PlantLibrary
@@ -154,3 +155,107 @@ async def api_identify(
         'diagnosis': data['diagnosis'],
         'care_advice': data['care_advice'],
     }
+
+
+# ── On-device identification ─────────────────────────────────────────────────
+# The client runs the ONNX image tower (ml/models/plantid_<version>.onnx) and
+# posts the embedding; ranking it is one SQL scan, so this stays cheap on the
+# free tier. Clients fall back to POST /api/identify (Claude) on a 409 or when
+# `confident` is false.
+
+_MAX_TOP_K = 10
+
+
+class EmbeddingQuery(BaseModel):
+    embedding: list[float]
+    model_version: str
+    top_k: int = 3
+
+
+def _prototype_scores(db: Session, embedding: list[float], version: str, k: int,
+                      temperature: float) -> tuple[list[tuple], float, float]:
+    """Return (top-k rows, max similarity, softmax normaliser over all species).
+
+    Rows are (species_key, scientific_name, similarity, plant_library_id).
+    Postgres/pgvector only — stubbed in unit tests.
+    """
+    q = '[' + ','.join(f'{x:.7g}' for x in embedding) + ']'
+    sims = """
+        SELECT species_key, scientific_name, plant_library_id,
+               1 - (embedding <=> CAST(:q AS vector)) AS sim
+        FROM plant_image_prototype WHERE model_version = :v
+    """
+    top = db.execute(text(f'{sims} ORDER BY sim DESC LIMIT :k'),
+                     {'q': q, 'v': version, 'k': k}).all()
+    if not top:
+        return [], 0.0, 1.0
+    max_sim = float(top[0].sim)
+    sum_exp = db.execute(text(f'SELECT sum(exp((sim - :m) / :t)) FROM ({sims}) s'),
+                         {'q': q, 'v': version, 'm': max_sim, 't': temperature}).scalar()
+    return ([(r.species_key, r.scientific_name, float(r.sim), r.plant_library_id) for r in top],
+            max_sim, float(sum_exp))
+
+
+@router.post('/identify/embedding')
+def api_identify_embedding(body: EmbeddingQuery, db: Session = Depends(get_db)):
+    from apps.ml_service.app.plantid import load_config, probabilities
+
+    config = load_config(body.model_version)
+    if config is None:
+        raise HTTPException(status_code=409, detail=f'unknown model_version {body.model_version!r}')
+    if len(body.embedding) != config['embed_dim']:
+        raise HTTPException(status_code=400,
+                            detail=f'embedding must have {config["embed_dim"]} values')
+
+    k = max(1, min(body.top_k, _MAX_TOP_K))
+    top, max_sim, sum_exp = _prototype_scores(db, body.embedding, body.model_version, k,
+                                              config['temperature'])
+    if not top:
+        raise HTTPException(status_code=409,
+                            detail=f'no prototypes loaded for {body.model_version!r}')
+
+    probs = probabilities([sim for _, _, sim, _ in top], max_sim, sum_exp, config['temperature'])
+    lib_ids = [lib_id for *_, lib_id in top if lib_id is not None]
+    entries = {p.id: p for p in db.query(PlantLibrary).filter(PlantLibrary.id.in_(lib_ids))}
+    candidates = []
+    for (_, sci, _, lib_id), p in zip(top, probs):
+        entry = entries.get(lib_id)
+        candidates.append({
+            'name': entry.name if entry else sci,
+            'scientific_name': sci,
+            'confidence': round(p, 4),
+            'library_match': ({'library_id': entry.id, 'library_name': entry.name,
+                               'image_filename': entry.image_filename} if entry else None),
+        })
+
+    return {
+        'mode': 'identify',
+        'candidates': candidates,
+        'diagnosis': None,
+        'care_advice': None,
+        'source': 'local',
+        'confident': config['tau'] is not None and probs[0] >= config['tau'],
+        'model_version': body.model_version,
+    }
+
+
+@router.get('/identify/model')
+def api_identify_model():
+    """Config of the plant-ID model clients should download (404 if none deployed)."""
+    from apps.ml_service.app.plantid import current_version, public_config
+    version = current_version()
+    if version is None:
+        raise HTTPException(status_code=404, detail='no plant-ID model deployed')
+    return public_config(version)
+
+
+@router.get('/identify/model/{model_version}.onnx')
+def api_identify_model_file(model_version: str):
+    from fastapi.responses import FileResponse
+    from apps.ml_service.app.plantid import model_path
+    path = model_path(model_version)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f'unknown model_version {model_version!r}')
+    # The version is in the URL, so the bytes behind it never change.
+    return FileResponse(path, media_type='application/octet-stream',
+                        headers={'Cache-Control': 'public, max-age=31536000, immutable'})

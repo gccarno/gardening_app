@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '@garden/shared';
+import { identifyOnDevice, type LocalIdentifyResult } from '../utils/plantid';
 
 type Mode = 'identify' | 'health' | 'disease' | 'pest';
 
@@ -16,6 +17,8 @@ interface IdentifyResult {
   candidates: Candidate[];
   diagnosis: string | null;
   care_advice: string | null;
+  source?: 'local' | 'claude';
+  confident?: boolean;
 }
 
 const MODE_LABELS: Record<Mode, { label: string; hint: string }> = {
@@ -47,6 +50,17 @@ export default function Identify() {
     setBusy(true);
     setError(null);
     setResult(null);
+    // Species ID tries the on-device model first; Claude only sees the photo
+    // when the local answer isn't confident (or for health/disease/pest).
+    let local: LocalIdentifyResult | null = null;
+    if (mode === 'identify') {
+      local = await identifyOnDevice(file);
+      if (local?.confident) {
+        setResult(local);
+        setBusy(false);
+        return;
+      }
+    }
     try {
       const form = new FormData();
       form.append('image', file);
@@ -56,9 +70,11 @@ export default function Identify() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail ?? 'Identification failed');
       }
-      setResult(await res.json());
+      setResult({ ...(await res.json()), source: 'claude' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Identification failed');
+      // A low-confidence local guess beats an error.
+      if (local) setResult(local);
+      else setError(err instanceof Error ? err.message : 'Identification failed');
     } finally {
       setBusy(false);
     }
@@ -102,6 +118,11 @@ export default function Identify() {
 
       {result && (
         <section className="identify-results">
+          <p className="muted identify-source">
+            {result.source === 'local'
+              ? (result.confident ? 'Identified on-device' : 'On-device guess — low confidence')
+              : 'Checked by Claude'}
+          </p>
           {result.candidates.length > 0 && (
             <ul className="card-list">
               {result.candidates.map((c, i) => (
