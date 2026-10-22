@@ -113,7 +113,17 @@ Findings:
 - Temperature scaling matters: BioCLIP's raw-softmax ECE is 0.44, and 0.06 after scaling.
 
 Distillation pilot (8k photos, 2 epochs, calibration-half top-1): MobileCLIP2-S0
-4.1%, DINOv2-S 0.1%, so **MobileCLIP2-S0 is the student**. Full run: *pending*.
+4.1%, DINOv2-S 0.1%, so **MobileCLIP2-S0 is the student**.
+
+Full run on Colab (54,732 photos, calibration-half top-1):
+
+| Run | Epochs | calib top-1 |
+|---|---|---|
+| v1 | 15 (cosine LR 3e-4, ~9.3 min/epoch on a T4) | 29.9% (68% of the teacher) |
+| v2 | +15, warm restart from v1 at LR 1.5e-4 | *running* |
+
+v1 was still gaining 0.2-1.4 points per epoch when its schedule hit zero,
+which is why v2 exists. Test-half metrics come from the export.
 
 Head-to-head with production Claude (`ml/evaluation/plantid_claude_baseline.py`,
 local vs Claude vs hybrid on the same test photos): *pending, needs
@@ -125,11 +135,30 @@ coverage curve, threshold choice), tested in `tests/unit/test_plantid_metrics.py
 ## 7. Deployment
 
 `ml/training/export_plantid_onnx.py` writes `ml/models/plantid_<v>.onnx`
-(static int8, QDQ) and `plantid_<v>.json` (input size, temperature, τ,
-metrics). Prototypes and calibration are computed from the **exported int8
-model on the client preprocessing**, so the server's probabilities describe
-what clients actually embed. **Parity gate:** int8 vs fp32 top-1 agreement must
-be ≥ 0.97, or nothing is written. `scripts/build_plantid_prototypes.py` loads the
+(fp16 weights, fp32 compute, 23 MB) and `plantid_<v>.json` (input size,
+temperature, τ, metrics). Prototypes and calibration are computed from the
+**exported model on the client preprocessing**, so the server's probabilities
+describe what clients actually embed. **Parity gate:** exported vs fp32 torch top-1
+agreement must be ≥ 0.97, or the model file is never written. The export goes to
+`plantid_<v>.pending.onnx` and is renamed only after the gate passes, because the
+Colab sync loop uploads whatever is in the output folder.
+
+**Why not int8:** the first v1 export used static int8 (QDQ) and failed the gate
+outright: 0.1% top-1 agreement, embedding cosine 0.70. Measured against fp32 on
+64 eval photos:
+
+| Variant | Size | Cosine vs fp32 |
+|---|---|---|
+| static int8, all ops | 12.8 MB | 0.76 |
+| static int8, Conv only | 21.2 MB | 0.84 |
+| static int8, Conv + MatMul, symmetric s8 activations | 15.0 MB | 0.92 |
+| dynamic, weight-only int8 | 12.2 MB | 0.71 |
+| static int8 before reparameterisation | 13.3 MB | 0.74 |
+| **fp16 weights** | **23.4 MB** | **1.0000** (also 1.0000 in onnxruntime-web wasm, 0.44 s/photo single-threaded) |
+
+Even weight-only int8 collapses, and so does int8 before reparameterisation, so
+some layers' weights don't survive 8 bits. Which layers hasn't been isolated.
+Per-layer mixed precision could get back to ~13-15 MB; it hasn't been tried. `scripts/build_plantid_prototypes.py` loads the
 prototypes into `plant_image_prototype`, replacing that version's rows in one
 transaction. Promotion is manual (commit the artifacts), as for the other models.
 

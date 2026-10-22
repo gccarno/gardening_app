@@ -1,9 +1,9 @@
 """
-Plant-ID: export the chosen backbone's image tower to ONNX, quantise it, and
+Plant-ID: export the chosen backbone's image tower to ONNX, halve it to fp16, and
 produce everything a model version needs (see ml/docs/PLANT_ID_MODEL.md,
 stage 7):
 
-  ml/models/plantid_<version>.onnx      image tower, int8, normalisation baked in
+  ml/models/plantid_<version>.onnx      image tower, fp16 weights, normalisation baked in
   ml/models/plantid_<version>.json      serving config: input size, temperature,
                                         tau, metrics — read by server and clients
   ml/data/raw/plantid_cache/plantid_<version>_prototypes.npz
@@ -14,7 +14,11 @@ Prototypes and calibration come from the *exported* model run on the
 client-reference preprocessing (ml/features/plantid_preprocess.py), never
 from torch — so the server's probabilities describe what clients embed.
 
-Parity gate: the int8 ONNX pipeline must agree with the fp32 torch pipeline
+Why fp16, not int8: static int8 (and even weight-only int8) wrecked the
+MobileCLIP2-S0 student — embedding cosine to fp32 of 0.71-0.92 and 0.1% top-1
+agreement, with or without reparameterisation. fp16 weights are lossless here.
+
+Parity gate: the exported ONNX pipeline must agree with the fp32 torch pipeline
 on >= PARITY_MIN of eval top-1 predictions, or nothing is written.
 
 Run:
@@ -59,7 +63,6 @@ from ml.features.plantid_preprocess import load_and_preprocess  # noqa: E402
 
 MODELS_DIR = _ROOT / 'ml' / 'models'
 PARITY_MIN = 0.97
-N_CALIBRATION_IMAGES = 256   # static-quantisation activation ranges
 
 
 def _tower(key: str):
@@ -126,25 +129,34 @@ def _export(tower, size: int, fp32_path: Path):
                       dynamic_axes={'pixels': {0: 'batch'}, 'embedding': {0: 'batch'}})
 
 
-def _quantize(fp32_path: Path, out_path: Path, calib_paths: list[Path], size: int):
-    from onnxruntime.quantization import (
-        CalibrationDataReader, QuantFormat, QuantType, quantize_static)
-    from onnxruntime.quantization.shape_inference import quant_pre_process
+def _to_fp16_weights(fp32_path: Path, out_path: Path):
+    """Store float weights as fp16, each behind a Cast back to fp32.
 
-    class Reader(CalibrationDataReader):
-        def __init__(self):
-            arrays = (load_and_preprocess(p, size) for p in calib_paths)
-            self.it = iter([{'pixels': a[None]} for a in arrays if a is not None])
-
-        def get_next(self):
-            return next(self.it, None)
-
-    pre = fp32_path.with_suffix('.pre.onnx')
-    quant_pre_process(str(fp32_path), str(pre))
-    quantize_static(str(pre), str(out_path), Reader(), quant_format=QuantFormat.QDQ,
-                    per_channel=True, weight_type=QuantType.QInt8,
-                    activation_type=QuantType.QUInt8)
-    pre.unlink()
+    Compute stays fp32, so every runtime (onnxruntime-web wasm included) runs it
+    unchanged; the casts are constant-folded when a session loads. Halves the
+    download.
+    """
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+    model = onnx.load(str(fp32_path))
+    graph = model.graph
+    casts, inits = [], []
+    for init in graph.initializer:
+        if init.data_type != TensorProto.FLOAT:
+            inits.append(init)
+            continue
+        w = numpy_helper.to_array(init).astype(np.float16)
+        if not np.isfinite(w).all():
+            sys.exit(f'{init.name} overflows fp16')
+        inits.append(numpy_helper.from_array(w, f'{init.name}_fp16'))
+        casts.append(helper.make_node('Cast', [f'{init.name}_fp16'], [init.name], to=TensorProto.FLOAT))
+    del graph.initializer[:]
+    graph.initializer.extend(inits)
+    nodes = casts + list(graph.node)
+    del graph.node[:]
+    graph.node.extend(nodes)
+    onnx.checker.check_model(model)
+    onnx.save(model, str(out_path))
 
 
 def _onnx_embed(model_path: Path, paths: list[Path], size: int, cache_file: Path) -> np.ndarray:
@@ -236,7 +248,6 @@ def main():
     bundle = load_bundle(args.bundle) if args.bundle else None
     if bundle:
         alpha, library, evals = bundle['alpha'], None, bundle['evals']
-        calib_pool = [p for p in bundle['train_paths'] if p.parent.name == 'library']
     else:
         # A student lives in BioCLIP's space, so it is served against BioCLIP's prototypes.
         proto_source = 'bioclip' if args.student_ckpt else args.backbone
@@ -248,9 +259,8 @@ def main():
         finally:
             db.close()
         evals = eval_manifest()
-        calib_pool = [r['path'] for r in library]
 
-    # 1. export + quantise
+    # 1. export, fp16 weights
     if args.student_ckpt:
         tower, size, student_key = _student_tower(args.student_ckpt)
         model_name = f'student:{student_key}'
@@ -261,21 +271,24 @@ def main():
     models_dir.mkdir(parents=True, exist_ok=True)
     fp32_path = cache_dir / f'plantid_{version}_fp32.onnx'
     onnx_path = models_dir / f'plantid_{version}.onnx'
+    # Only renamed to onnx_path once the parity gate passes, so a sync job
+    # (the Colab notebook's) never ships a model that failed it.
+    pending_path = models_dir / f'plantid_{version}.pending.onnx'
     print(f'exporting {model_name} @ {size}px')
     _export(tower, size, fp32_path)
-    rng = np.random.default_rng(SEED)
-    calib_imgs = [calib_pool[i] for i in rng.choice(len(calib_pool), N_CALIBRATION_IMAGES, replace=False)]
-    print('quantising (static int8, QDQ)')
-    _quantize(fp32_path, onnx_path, calib_imgs, size)
+    _to_fp16_weights(fp32_path, pending_path)
+    # Embedding caches are keyed by photo, not model: drop any from an earlier export.
+    for name in ('eval', 'library'):
+        (cache_dir / f'plantid_{version}_{name}.npz').unlink(missing_ok=True)
 
     # 2. embed through the exported model
-    ev_emb = _onnx_embed(onnx_path, [r['path'] for r in evals], size,
+    ev_emb = _onnx_embed(pending_path, [r['path'] for r in evals], size,
                          cache_dir / f'plantid_{version}_eval.npz')
     if bundle:
         # Classes and the teacher's prototypes come pre-built; no library pass needed.
         classes, protos = bundle['class_keys'], bundle['teacher_protos']
     else:
-        lib_emb = _onnx_embed(onnx_path, [r['path'] for r in library], size,
+        lib_emb = _onnx_embed(pending_path, [r['path'] for r in library], size,
                               cache_dir / f'plantid_{version}_library.npz')
         lib_ok = ~np.isnan(lib_emb).any(axis=1)
         lib_rows = [r for r, ok in zip(library, lib_ok) if ok]
@@ -299,9 +312,9 @@ def main():
     calib = _split(ev)
     test = ~calib
 
-    # 3. parity: exported int8 pipeline vs fp32 torch pipeline
+    # 3. parity: exported fp16 pipeline vs fp32 torch pipeline
     if args.student_ckpt:
-        # Same preprocessing and prototypes on both sides: this isolates quantisation.
+        # Same preprocessing and prototypes on both sides: this isolates the export.
         import torch
         arrays = [load_and_preprocess(r['path'], size) for r in ev]
         with torch.no_grad():
@@ -322,8 +335,9 @@ def main():
     emb_cos = float(np.nanmean((ev_emb * torch_ev).sum(1)))
     print(f'parity: top-1 agreement {agree:.3f}, mean embedding cosine {emb_cos:.4f}')
     if agree < PARITY_MIN:
-        onnx_path.unlink()
+        pending_path.unlink()
         sys.exit(f'parity gate FAILED ({agree:.3f} < {PARITY_MIN}) — nothing written')
+    pending_path.replace(onnx_path)
 
     # 4. calibrate on one half, report on the other
     logits = ev_emb @ protos.T

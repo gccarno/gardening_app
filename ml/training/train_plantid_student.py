@@ -22,6 +22,9 @@ Run (needs the vision stack + CUDA torch):
 
 On Colab (no DB; see ml/notebooks/plantid_distill_colab.ipynb):
     python ml/training/train_plantid_student.py --bundle /content/bundle --out-dir /content/drive/MyDrive/plantid         --student mobileclip2_s0 --epochs 15 --workers 2 --tag v1 [--resume]
+
+Train longer from a finished run (a warm restart: its weights, a fresh warmup + cosine schedule):
+    ... --tag v2 --init-from <out-dir>/student_mobileclip2_s0_v1.pt --lr 1.5e-4
 """
 import argparse
 import json
@@ -189,6 +192,7 @@ def main():
     ap.add_argument('--bundle', type=Path, help='train from a Colab bundle instead of the DB + local caches')
     ap.add_argument('--out-dir', type=Path, default=CACHE_DIR, help='where checkpoints go')
     ap.add_argument('--resume', action='store_true', help='continue from <out-dir>/..._last.pt')
+    ap.add_argument('--init-from', type=Path, help="start from another run's best weights (fresh schedule)")
     ap.add_argument('--device', default='cuda')
     ap.add_argument('--workers', type=int, default=6)
     args = ap.parse_args()
@@ -260,8 +264,11 @@ def main():
         history, step, best, start = state['history'], state['step'], state['best'], state['epoch'] + 1
         print(f'resumed after epoch {state["epoch"]} (best calib top-1 {best:.3f})')
     else:
+        if args.init_from:
+            student.load_state_dict(torch.load(args.init_from, map_location=device)['state_dict'])
         best = _eval_calib(student, device, ev_arrays, ev_labels, protos)
-        print(f'epoch 0: calib top-1 {best:.3f} (untrained head)  |  teacher alpha={alpha}')
+        start_from = args.init_from.name if args.init_from else 'untrained head'
+        print(f'epoch 0: calib top-1 {best:.3f} ({start_from})  |  teacher alpha={alpha}')
     for epoch in range(start, args.epochs + 1):
         t0, running = time.time(), {'cos': 0.0, 'kl': 0.0}
         for x in loader:
@@ -305,7 +312,8 @@ def main():
     print(f'best calib top-1 {best:.3f} -> {ckpt}')
     append_run('plantid_student', {'best_calib_top1': best},
                {'student': args.student, 'tag': args.tag, 'epochs': args.epochs,
-                'n_train': len(paths), 'kl_weight': args.kl_weight, 'lr': args.lr, 'history': history})
+                'n_train': len(paths), 'kl_weight': args.kl_weight, 'lr': args.lr,
+                'init_from': args.init_from.name if args.init_from else None, 'history': history})
 
 
 if __name__ == '__main__':
