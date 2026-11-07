@@ -22,8 +22,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Personal app, no Play Store: sign with the debug key so the release APK
+            // installs straight over the existing debug install (same key, same id).
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -73,6 +77,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
     implementation("androidx.activity:activity-compose:1.9.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.8.0")

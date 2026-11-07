@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.network.AuthConfig
@@ -50,13 +51,19 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    // Keeps the system splash up until DataStore has delivered its first value,
+    // so the user never sees the blank-spinner frame below.
+    private var prefsLoaded = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen().setKeepOnScreenCondition { !prefsLoaded }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             // null = DataStore not loaded yet (brief); drives both the server
             // URL and the login gate.
             val prefs by dataStore.data.collectAsState(initial = null)
+            if (prefs != null) prefsLoaded = true
             val serverUrl = prefs?.get(SERVER_URL_KEY)
             val authToken = prefs?.get(AUTH_TOKEN_KEY)
 

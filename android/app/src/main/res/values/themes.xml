@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GardenApp" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.GardenApp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+
+    <!-- Launch theme: system splash on the app's paper colour, then swapped for
+         Theme.GardenApp by installSplashScreen() in MainActivity. -->
+    <style name="Theme.GardenApp.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.GardenApp</item>
+    </style>
 </resources>
