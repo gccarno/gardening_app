@@ -510,6 +510,18 @@ def index_books(collection, cfg):
 
 # ── Search helper (used by chat tool) ─────────────────────────────────────────
 
+def _region_clause(region_col, region_filter):
+    """Keep the garden's own region plus region-agnostic chunks (General books,
+    TAMU, unlabelled); drop only the other regions' Black & Decker books."""
+    from sqlalchemy import or_
+
+    other_regions = sorted({r for r in _REGION_MAP.values()
+                            if r not in ('General', region_filter)})
+    return or_(region_col == region_filter,
+               region_col.is_(None),
+               region_col.notin_(other_regions))
+
+
 def search_guides(query, plant_name=None, n_results=3, region_filter=None):
     """
     Search the growing guides. Returns list of result dicts.
@@ -539,7 +551,7 @@ def search_guides(query, plant_name=None, n_results=3, region_filter=None):
 
     stmt = select(Model, distance).order_by(distance).limit(n_results)
     if region_filter:
-        stmt = stmt.where(Model.region == region_filter)
+        stmt = stmt.where(_region_clause(Model.region, region_filter))
 
     try:
         with SessionLocal() as db:
