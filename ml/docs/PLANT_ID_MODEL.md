@@ -120,10 +120,19 @@ Full run on Colab (54,732 photos, calibration-half top-1):
 | Run | Epochs | calib top-1 |
 |---|---|---|
 | v1 | 15 (cosine LR 3e-4, ~9.3 min/epoch on a T4) | 29.9% (68% of the teacher) |
-| v2 | +15, warm restart from v1 at LR 1.5e-4 | *running* |
+| v2 | +15, warm restart from v1 at LR 1.5e-4 | *not run yet* (no v2 checkpoint in GCS as of 2026-11-07) |
 
 v1 was still gaining 0.2-1.4 points per epoch when its schedule hit zero,
 which is why v2 exists. Test-half metrics come from the export.
+
+v1 export (fp16, 2026-10-27, `plantid_v1.json`), test half, 750 photos:
+
+| top-1 | top-5 | cultivated top-1 | ECE | coverage @ τ | accuracy @ τ | parity top-1 |
+|---|---|---|---|---|---|---|
+| 28.0% | 52.4% | 23.9% | 0.037 | 8.8% | 78.8% | 99.5% |
+
+That is 64% of the BioCLIP teacher's 43.7% top-1. Accuracy at τ misses the 90%
+target, so confident answers are not yet trustworthy enough to skip the fallback.
 
 Head-to-head with production Claude (`ml/evaluation/plantid_claude_baseline.py`,
 local vs Claude vs hybrid on the same test photos): *pending, needs
