@@ -241,3 +241,7 @@ mlflow.db
 *.tfvars
 *.tfplan
 crash.log
+
+# Plant-ID image data (downloaded; CSV manifests in ml/data/processed/ are committed)
+ml/data/raw/plantid_*/
+ml/data/raw/inat_*/

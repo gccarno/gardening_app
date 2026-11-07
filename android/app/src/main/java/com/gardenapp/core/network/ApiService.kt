@@ -28,6 +28,19 @@ interface ApiService {
         @Part("mode") mode: okhttp3.RequestBody,
     ): JsonElement
 
+    // On-device plant ID (see feature/identify/PlantIdModel)
+    @GET("identify/model")
+    suspend fun plantIdModel(): JsonElement
+
+    @Streaming
+    @GET("identify/model/{version}.onnx")
+    suspend fun downloadPlantIdModel(@Path("version") version: String): okhttp3.ResponseBody
+
+    @POST("identify/embedding")
+    suspend fun identifyEmbedding(
+        @Body body: kotlinx.serialization.json.JsonObject,
+    ): retrofit2.Response<JsonElement>
+
     // ── Gardens ─────────────────────────────────────────────────────────────
     @GET("gardens")
     suspend fun getGardens(): List<Garden>

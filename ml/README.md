@@ -2,7 +2,7 @@
 
 This directory holds the offline machine-learning work for the garden app:
 data generation, feature engineering, training, evaluation, monitoring, and
-the committed model artifacts. Two independent models live here, sharing one
+the committed model artifacts. Three independent models live here, sharing one
 layout and one convention (each falls back to a rule-based scorer if its
 pickle is missing, so the app always runs even with no trained model):
 
@@ -10,6 +10,7 @@ pickle is missing, so the app always runs even with no trained model):
 |-------|---------|------|----------|-----------|
 | **Plant recommender** | *what to plant* | `GradientBoostingClassifier` (ranking) | `models/recommender.pkl` | this README |
 | **Watering** | *how much / when to water* | `Ridge` vs `GradientBoostingRegressor` | `models/watering.pkl` | [`docs/WATERING_MODEL.md`](docs/WATERING_MODEL.md) |
+| **Plant ID** | *what plant is in this photo* | BioCLIP distilled into a MobileCLIP2-S0 student; nearest-prototype ranking | `models/plantid_<v>.onnx` + `.json` (runs in the client) | [`docs/PLANT_ID_MODEL.md`](docs/PLANT_ID_MODEL.md) |
 
 Both pickles are **committed to git** — Render redeploys on every push to
 `main`, so committing the pickle *is* the deployment step (no artifact

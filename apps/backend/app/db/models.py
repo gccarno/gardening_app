@@ -686,3 +686,37 @@ class GuideChunkOpenRouter(Base):
 
     def __repr__(self):
         return f'<GuideChunkOpenRouter {self.id} {self.source!r} p={self.page}>'
+
+
+class PlantImagePrototype(Base):
+    """One species' mean image embedding for on-device plant ID.
+
+    Keyed by species (normalised scientific name — ml/features/plantid_data.py
+    species_key), not by library row: cultivars share a species and no photo
+    can tell them apart. plant_library_id is a representative entry for
+    display and linking.
+
+    The vector is untyped (no fixed width) and unindexed on purpose: rows are
+    filtered by model_version, a backbone swap changes the width, and the
+    calibrated softmax needs a full scan anyway (~7k rows). Embeddings from
+    different model versions are never compared.
+
+    Built by scripts/build_plantid_prototypes.py; read by
+    POST /api/identify/embedding.
+    """
+    __tablename__ = 'plant_image_prototype'
+
+    id               = Column(Integer, primary_key=True)
+    model_version    = Column(String(40), nullable=False, index=True)
+    species_key      = Column(String(200), nullable=False)
+    scientific_name  = Column(String(200), nullable=False)   # display form
+    plant_library_id = Column(Integer, ForeignKey('plant_library.id', ondelete='SET NULL'), nullable=True)
+    n_images         = Column(Integer, nullable=False)
+    embedding        = Column(Vector(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('model_version', 'species_key', name='uq_plant_image_prototype_version_species'),
+    )
+
+    def __repr__(self):
+        return f'<PlantImagePrototype {self.model_version} {self.species_key!r}>'

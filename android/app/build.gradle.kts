@@ -18,6 +18,9 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // ONNX Runtime ships native libs for four ABIs (~53 MB AAR); phones are
+        // arm64, the emulator x86_64 — the other two would only bloat the APK.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
@@ -107,6 +110,9 @@ dependencies {
 
     // Coil (image loading)
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // On-device plant ID (same ONNX Runtime release as apps/web)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
 
     // Paging 3
     implementation("androidx.paging:paging-runtime:3.3.2")
