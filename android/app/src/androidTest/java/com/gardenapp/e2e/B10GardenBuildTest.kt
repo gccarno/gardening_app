@@ -72,8 +72,7 @@ class B10GardenBuildTest : ComposeE2eTest() {
 
     @Test
     fun t3_bulkCareButtons_recordCare() {
-        navTo("Gardens")
-        tap(E2e.runId)
+        openRunGarden()
         waitForText("View Beds")
         tap("Water All")
         tap("Fertilize")

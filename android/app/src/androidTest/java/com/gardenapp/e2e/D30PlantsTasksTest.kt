@@ -22,18 +22,14 @@ class D30PlantsTasksTest : ComposeE2eTest() {
     fun t1_createPlant_throughForm_thenDetailTabs() {
         val name = E2e.testName("Android Tomato")
         navTo("Plants")
-        // FAB / add affordance opens the plant form.
-        rule.onAllNodes(hasClickAction().and(hasContentDescription("Add", substring = true)))
-            .onFirst().performClick()
+        tapDescription("Add plant")
         waitForText("Plant Name *")
         type("Plant Name *", name)
         type("Planted Date", "2026-07-15")
         // Assign to the run garden via the dropdown.
-        runCatching {
-            tap("Garden", substring = false)
-            tap(E2e.runId)
-        }
-        tap("Save", substring = false)
+        tap("Garden", substring = false)
+        tapClickable(E2e.runId)
+        tapClickable("Add Plant", substring = false)
 
         val plants = E2e.getArray("/api/plants")
         for (i in 0 until plants.length()) {
@@ -69,17 +65,17 @@ class D30PlantsTasksTest : ComposeE2eTest() {
     fun t3_createTask_toggleComplete_monthGrid_delete() {
         val title = E2e.testName("Android watering")
         navTo("Tasks")
-        rule.onAllNodes(hasClickAction().and(hasContentDescription("Add", substring = true)))
-            .onFirst().performClick()
+        tapDescription("Add task")
         waitForText("Title *")
         type("Title *", title)
         type("Due Date", "2026-07-16")
-        runCatching {
-            tap("Garden", substring = false)
-            tap(E2e.runId)
-        }
-        tap("Save", substring = false)
+        tap("Garden", substring = false)
+        tapClickable(E2e.runId)
+        tapClickable("Create Task", substring = false)
 
+        // The title field on the still-open form also shows [title], so wait
+        // for the form to close before looking for the new row.
+        waitForTextGone("New Task")
         waitForText(title)
         val tasks = E2e.getArray("/api/tasks?garden_id=${E2e.gardenId}")
         var taskId = -1
