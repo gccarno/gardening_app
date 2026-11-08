@@ -33,7 +33,8 @@ class PlantFormViewModel @Inject constructor(
     private val gardenRepository: GardenRepository,
 ) : ViewModel() {
 
-    private val plantId: Int? = savedStateHandle.get<Int>("plantId")?.takeIf { it != -1 }
+    // The route declares no NavType, so the id arrives as a String; get<Int> crashed on edit.
+    private val plantId: Int? = savedStateHandle.get<String>("plantId")?.toIntOrNull()
 
     private val _uiState = MutableStateFlow(PlantFormUiState(
         isEditMode = plantId != null,

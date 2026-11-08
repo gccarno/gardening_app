@@ -45,7 +45,8 @@ class TaskFormViewModel @Inject constructor(
     private val plantRepository: PlantRepository,
 ) : ViewModel() {
 
-    private val taskId: Int? = savedStateHandle.get<Int>("taskId")?.takeIf { it != -1 }
+    // The route declares no NavType, so the id arrives as a String; get<Int> crashed on edit.
+    private val taskId: Int? = savedStateHandle.get<String>("taskId")?.toIntOrNull()
 
     private val _uiState = MutableStateFlow(TaskFormUiState(
         isEditMode = taskId != null,
