@@ -39,7 +39,8 @@ monitoring = ["streamlit"]
 # Offline chat-agent tracing + evaluation. MUST stay out of [project.dependencies]:
 # Render builds with `uv sync --frozen --no-dev`, and MLflow has no business on a
 # 512 MB free instance. Install locally with: uv pip install "mlflow>=3.8"
-evaluation = ["mlflow>=3.8"]
+# rageval is the in-repo RAG eval harness (packages/rageval) - see docs/rag-eval.md.
+evaluation = ["mlflow>=3.8", "rageval"]
 # Alternate embedding providers. Only needed if EMBED_PROVIDER is switched off
 # the `gemini` default — install the matching one and set the API key.
 embed-alt = ["openai", "voyageai"]
@@ -75,6 +76,7 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu121" }
 torchvision = { index = "pytorch-cu121" }
+rageval = { path = "packages/rageval", editable = true }
 
 [dependency-groups]
 dev = [

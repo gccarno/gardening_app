@@ -87,6 +87,41 @@ def test_openrouter_sends_reasoning_and_higher_max_tokens(fake_openai, monkeypat
     assert calls[0]['extra_body'] == {'reasoning': {'enabled': True}}
 
 
+def test_openrouter_model_list_sends_fallbacks(fake_openai, monkeypatch):
+    calls, responses = fake_openai
+    responses.append(_response('ok'))
+    monkeypatch.setattr(chat_tools, 'execute_tool', MagicMock())
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
+
+    chat_tools._run_openai_compatible_loop(
+        'system', [{'role': 'user', 'content': 'hi'}], None, None,
+        provider='openrouter', base_url='https://openrouter.ai/api/v1',
+        key_env='OPENROUTER_API_KEY', model='a/one:free, b/two:free ,c/three:free',
+        max_tokens=4096, reasoning=True, max_rounds=5,
+    )
+
+    assert calls[0]['model'] == 'a/one:free'
+    assert calls[0]['extra_body'] == {'reasoning': {'enabled': True},
+                                      'models': ['a/one:free', 'b/two:free', 'c/three:free']}
+
+
+def test_hetzner_never_splits_model_list(fake_openai, monkeypatch):
+    calls, responses = fake_openai
+    responses.append(_response('ok'))
+    monkeypatch.setattr(chat_tools, 'execute_tool', MagicMock())
+    monkeypatch.setenv('HETZNER_API_KEY', 'test-key')
+
+    chat_tools._run_openai_compatible_loop(
+        'system', [{'role': 'user', 'content': 'hi'}], None, None,
+        provider='hetzner', base_url='https://inference.hetzner.com/api/v1',
+        key_env='HETZNER_API_KEY', model='Qwen3.8-27B',
+        max_tokens=1024, reasoning=False, max_rounds=5,
+    )
+
+    assert calls[0]['model'] == 'Qwen3.8-27B'
+    assert 'extra_body' not in calls[0]
+
+
 def test_hetzner_does_not_send_reasoning(fake_openai, monkeypatch):
     calls, responses = fake_openai
     responses.append(_response('Done'))

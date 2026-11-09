@@ -65,10 +65,10 @@ fun WeatherWidget(weather: WeatherData, modifier: Modifier = Modifier) {
                             Text(DateUtil.displayDate(it), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                         }
                     }
-                    frost.frostFree?.let {
+                    if (frost.frostFree == true) {
                         Column {
-                            Text("Frost-Free Days", style = MaterialTheme.typography.labelSmall)
-                            Text("$it days", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            Text("Frost", style = MaterialTheme.typography.labelSmall)
+                            Text("Frost-free climate", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                         }
                     }
                 }

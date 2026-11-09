@@ -966,6 +966,8 @@ def _run_openai_compatible_loop(
     """
     from openai import OpenAI
 
+    from apps.ml_service.app.llm_provider import split_model_list
+
     key = os.environ.get(key_env, '')
     if not key:
         raise RuntimeError(
@@ -982,7 +984,19 @@ def _run_openai_compatible_loop(
     from openai import APIStatusError
     _RETRY_STATUS_CODES = {429, 502, 503, 504}
 
-    extra_body = {'reasoning': {'enabled': True}} if reasoning else None
+    # OpenRouter only: LLM_MODEL may be a comma-separated list. The first is the
+    # model; the rest go in `models` and are tried when it is rate-limited or
+    # down (common on :free models). Hetzner rejects unknown fields, so never there.
+    fallbacks = []
+    if provider == 'openrouter':
+        model, fallbacks = split_model_list(model)
+
+    extra_body = {}
+    if reasoning:
+        extra_body['reasoning'] = {'enabled': True}
+    if fallbacks:
+        # Whole ordered list, primary included: OpenRouter ignores fallbacks otherwise.
+        extra_body['models'] = [model, *fallbacks]
 
     def _create_round():
         kwargs = dict(

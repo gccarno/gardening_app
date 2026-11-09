@@ -18,6 +18,12 @@ import javax.inject.Inject
 data class GardenDetailUiState(
     val garden: Garden? = null,
     val weather: WeatherData? = null,
+    /** Why weather failed to load, shown on the card instead of a guess. */
+    val weatherError: String? = null,
+    /** Backend said no_location: the garden has no coordinates yet. */
+    val needsLocation: Boolean = false,
+    val isSavingZip: Boolean = false,
+    val zipError: String? = null,
     val isLoading: Boolean = false,
     val isBulkCaring: Boolean = false,
     val error: String? = null,
@@ -50,10 +56,15 @@ class GardenDetailViewModel @Inject constructor(
             val weatherDeferred = async { repository.getWeather(gardenId) }
             val gardenResult = gardenDeferred.await()
             val weatherResult = weatherDeferred.await()
+            val weatherFailure = weatherResult as? NetworkResult.Error
             _uiState.value = _uiState.value.copy(
                 garden = (gardenResult as? NetworkResult.Success)?.data
                     ?: _uiState.value.garden,
                 weather = (weatherResult as? NetworkResult.Success)?.data,
+                weatherError = weatherFailure?.let { f ->
+                    f.code?.let { "HTTP $it: ${f.message}" } ?: f.message
+                },
+                needsLocation = weatherFailure?.message?.contains("no_location") == true,
                 error = (gardenResult as? NetworkResult.Error)?.message,
                 isLoading = false,
             )
@@ -78,6 +89,32 @@ class GardenDetailViewModel @Inject constructor(
                 else -> Unit
             }
             _uiState.value = _uiState.value.copy(isBulkCaring = false)
+        }
+    }
+
+    /** Save a ZIP (the backend geocodes it on save), then reload the weather. */
+    fun saveZip(zip: String) {
+        val gardenId = gardenId ?: return
+        val trimmed = zip.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSavingZip = true, zipError = null)
+            when (val r = repository.updateGarden(gardenId, mapOf("zip_code" to trimmed))) {
+                is NetworkResult.Success ->
+                    if (r.data.latitude == null) {
+                        _uiState.value = _uiState.value.copy(
+                            garden = r.data,
+                            zipError = "Couldn't find a location for ZIP $trimmed",
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(garden = r.data)
+                        load()
+                    }
+                is NetworkResult.Error ->
+                    _uiState.value = _uiState.value.copy(zipError = r.message)
+                else -> Unit
+            }
+            _uiState.value = _uiState.value.copy(isSavingZip = false)
         }
     }
 

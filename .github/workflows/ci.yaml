@@ -18,6 +18,18 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/unit tests/data_tests -q
 
+  rageval:
+    # The RAG eval harness's own tests: offline (toy RAG + fake judge), no keys.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+      - name: Run tests
+        working-directory: packages/rageval
+        run: uv run --with pytest pytest -q
+
   migrations:
     # Guards the failure mode behind the 2026-07-21 outage: a column added to
     # models.py but never to the database. Builds the schema from the Alembic

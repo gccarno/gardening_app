@@ -42,3 +42,25 @@ def test_unknown_provider_raises_value_error(monkeypatch):
     monkeypatch.setattr(llm_provider, 'PROVIDER', 'not-a-real-provider')
     with pytest.raises(ValueError):
         llm_provider.complete('system', 'user')
+
+
+def test_split_model_list():
+    assert llm_provider.split_model_list('a, b ,c') == ('a', ['b', 'c'])
+    assert llm_provider.split_model_list('solo') == ('solo', [])
+
+
+def test_complete_sends_openrouter_fallbacks(monkeypatch):
+    monkeypatch.setattr(llm_provider, 'PROVIDER', 'openrouter')
+    monkeypatch.setattr(llm_provider, '_MODEL', 'a/one:free,b/two:free')
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=MagicMock(content='hello'))
+    ]
+    with patch('openai.OpenAI', return_value=fake_client):
+        llm_provider.complete('system', 'user')
+
+    _, kwargs = fake_client.chat.completions.create.call_args
+    assert kwargs['model'] == 'a/one:free'
+    assert kwargs['extra_body'] == {'models': ['a/one:free', 'b/two:free']}

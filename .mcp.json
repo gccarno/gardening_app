@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "openrouter": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--no-sync",
+        "python",
+        "scripts/mcp_openrouter.py"
+      ],
+      "env": {
+        "OPENROUTER_ALLOWED_MODELS": "poolside/laguna-s-2.1:free,dots-studio/dots-3-note-preview:free,xingchen-agi/xing4.0-29b-a4b:free,google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free"
+      }
+    }
+  }
+}

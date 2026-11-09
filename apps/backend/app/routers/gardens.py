@@ -216,7 +216,8 @@ def api_garden_update(garden_id: int, body: dict,
         f = body.get('first_frost_date')
         garden.first_frost_date = date.fromisoformat(f) if f else None
     zip_code = (body.get('zip_code') or '').strip()
-    if zip_code and zip_code != garden.zip_code:
+    # Re-geocode an unchanged ZIP too when an earlier lookup left no coordinates.
+    if zip_code and (zip_code != garden.zip_code or not garden.latitude):
         _apply_zip(garden, zip_code)
     db.commit()
     return _serialize_garden(garden)

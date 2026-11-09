@@ -40,7 +40,7 @@ export default function GardenDetail() {
     watering_frequency_days: '7', water_source: '', zip_code: '',
   });
   const [weather, setWeather] = useState<{ current: any; daily: any[]; frost: any } | null>(null);
-  const [weatherErr, setWeatherErr] = useState(false);
+  const [weatherErr, setWeatherErr] = useState<string | null>(null);
   const [fetchingWeather, setFetchingWeather] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
   const [bulkMsg, setBulkMsg] = useState('');
@@ -66,9 +66,15 @@ export default function GardenDetail() {
       // A non-ok response still parses as JSON ({detail: ...}), so without
       // this check we'd setWeather(garbage) and crash on weather.current.temp,
       // unmounting the whole page (beds/plants included).
-      .then(r => { if (!r.ok) throw new Error(`weather ${r.status}`); return r.json(); })
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(`HTTP ${r.status}${body.detail ? `: ${body.detail}` : ''}`);
+        }
+        return r.json();
+      })
       .then(d => setWeather(d))
-      .catch(() => setWeatherErr(true));
+      .catch(e => { if (e.name !== 'AbortError') setWeatherErr(e.message); });
     return () => ctrl.abort();
   }, [gardenId, garden?.latitude]);
 
@@ -140,7 +146,7 @@ export default function GardenDetail() {
 
         {garden.latitude && (
           <div id="weather-widget">
-            {weatherErr && <p className="muted">Could not load weather data.</p>}
+            {weatherErr && <p className="muted">Could not load weather data ({weatherErr}).</p>}
             {!weather && !weatherErr && <p className="muted">Loading weather…</p>}
             {weather && (
               <>

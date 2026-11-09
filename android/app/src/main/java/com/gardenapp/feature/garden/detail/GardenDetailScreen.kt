@@ -149,18 +149,15 @@ fun GardenDetailScreen(
                             WeatherWidget(weather = weather)
                         } ?: run {
                             if (!uiState.isLoading) {
-                                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                                    Box(
-                                        modifier = Modifier.fillMaxWidth().padding(24.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            "Weather unavailable — add a ZIP code to enable forecasts",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
+                                WeatherProblemCard(
+                                    needsLocation = uiState.needsLocation,
+                                    error = uiState.weatherError,
+                                    currentZip = uiState.garden?.zipCode,
+                                    isSavingZip = uiState.isSavingZip,
+                                    zipError = uiState.zipError,
+                                    onSaveZip = viewModel::saveZip,
+                                    onRetry = viewModel::load,
+                                )
                             }
                         }
 
