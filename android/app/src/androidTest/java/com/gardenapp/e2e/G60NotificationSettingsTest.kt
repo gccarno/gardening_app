@@ -3,7 +3,6 @@ package com.gardenapp.e2e
 import android.Manifest
 import android.os.Build
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -36,10 +35,8 @@ class G60NotificationSettingsTest : ComposeE2eTest() {
         }
 
     private fun openNotificationSettings() {
-        navTo("Gardens")
-        tap(E2e.runId)
-        rule.onNodeWithContentDescription("Notification Settings").performClick()
-        rule.waitForIdle()
+        openRunGarden()
+        tapDescription("Notification Settings")
         waitForText("Watering reminders")
     }
 

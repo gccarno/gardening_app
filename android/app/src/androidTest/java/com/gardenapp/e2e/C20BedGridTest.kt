@@ -1,5 +1,10 @@
 package com.gardenapp.e2e
 
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasClickAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,8 +29,7 @@ import org.junit.runners.MethodSorters
 class C20BedGridTest : ComposeE2eTest() {
 
     private fun openBedList() {
-        navTo("Gardens")
-        tap(E2e.runId)
+        openRunGarden()
         tap("View Beds")
     }
 
@@ -46,14 +50,14 @@ class C20BedGridTest : ComposeE2eTest() {
         val name = E2e.testName("Android Bed")
         openBedList()
         // Empty state has "Add First Bed"; otherwise a FAB/add affordance.
-        runCatching { tap("Add First Bed") }.onFailure { tap("Add") }
+        runCatching { tap("Add First Bed") }.onFailure { tapDescription("Add bed") }
         waitForText("Bed Name *")
         type("Bed Name *", name)
         type("Soil Notes", "Sandy loam, amended with compost")
         type("pH", "6.5")
         type("Clay", "20")
         type("Compost", "50")
-        type("Sand", "30")
+        type("Sand", "30", substring = false)
         tap("Save", substring = false)
 
         // Saved → bed detail. Resolve id via API.
@@ -80,8 +84,14 @@ class C20BedGridTest : ComposeE2eTest() {
         tapTag("bed-cell-0-0")
         waitForText("Choose a Plant")
         type("Search plants…", "Tomato")
-        waitForText("Tomato")
-        tap("Tomato")
+        // A result row, not the search field that now also contains "Tomato".
+        val tomatoRow = hasText("Tomato", substring = true)
+            .and(hasClickAction()).and(hasSetTextAction().not())
+        rule.waitUntil(timeoutMillis = loadTimeout) {
+            rule.onAllNodes(tomatoRow).fetchSemanticsNodes().isNotEmpty()
+        }
+        rule.onAllNodes(tomatoRow).onFirst().performClick()
+        rule.waitForIdle()
 
         // A crop-rotation conflict is possible on a re-run; accept it and plant anyway.
         runCatching { tap("Plant anyway") }

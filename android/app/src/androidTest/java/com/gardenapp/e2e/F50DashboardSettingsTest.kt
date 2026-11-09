@@ -38,9 +38,8 @@ class F50DashboardSettingsTest : ComposeE2eTest() {
         E2e.logManifest(mapOf("type" to "canvas_plant",
             "id" to cp.optJSONObject("canvas_plant")?.optInt("id")))
 
-        navTo("Gardens")
-        tap(E2e.runId)
-        runCatching { tap("Planner") }.onFailure { tap("Canvas") }
+        openRunGarden()
+        tapDescription("Open Planner")
         rule.waitForIdle()
         // Canvas draws without semantics; not crashing back to detail is the assertion.
         Thread.sleep(3000)

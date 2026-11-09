@@ -18,7 +18,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.lifecycle.lifecycleScope
 import com.gardenapp.core.dataStore
 import com.gardenapp.core.network.AuthConfig
 import com.gardenapp.core.network.ServerConfig
@@ -31,6 +33,8 @@ import com.gardenapp.feature.auth.LoginScreen
 import com.gardenapp.navigation.GardenNavGraph
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 val SERVER_URL_KEY = stringPreferencesKey("server_url")
 
@@ -50,8 +54,20 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    // Keeps the system splash up until DataStore has delivered its first value,
+    // so the user never sees the blank-spinner frame below. Set from a plain
+    // coroutine, not from composition: the splash blocks drawing, and under the
+    // Compose test rule composition only advances once the UI is idle, so a
+    // composition-side flag deadlocked every instrumented test.
+    @Volatile private var prefsLoaded = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen().setKeepOnScreenCondition { !prefsLoaded }
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            dataStore.data.first()
+            prefsLoaded = true
+        }
         enableEdgeToEdge()
         setContent {
             // null = DataStore not loaded yet (brief); drives both the server

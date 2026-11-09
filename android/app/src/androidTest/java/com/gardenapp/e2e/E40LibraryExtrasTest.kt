@@ -1,5 +1,6 @@
 package com.gardenapp.e2e
 
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
@@ -21,8 +22,7 @@ import org.junit.runners.MethodSorters
 class E40LibraryExtrasTest : ComposeE2eTest() {
 
     private fun openGardenSection(section: String) {
-        navTo("Gardens")
-        tap(E2e.runId)
+        openRunGarden()
         tap(section)
     }
 
@@ -36,14 +36,21 @@ class E40LibraryExtrasTest : ComposeE2eTest() {
         }
         rule.onAllNodes(hasText("Tomato", substring = true)).onFirst().performClick()
 
-        // Detail loads; AddToGarden sheet.
-        waitForText("Add", timeout = loadTimeout)
+        // Detail loads; the top-bar "Add to garden" icon opens the sheet.
+        val plantName = E2e.testName("Library Tomato")
         runCatching {
-            tap("Add to Garden")
+            tapDescription("Add to garden")
             waitForText("Plant Name")
-            node("Plant Name").performTextInput(" ${E2e.runId}") // mark the created plant
-            tap(E2e.runId)   // pick the run garden in the dropdown if present
-            tap("Add Plant")
+            node("Plant Name").performTextClearance()
+            node("Plant Name").performTextInput(plantName)
+            tap("Garden", substring = false)
+            tapClickable(E2e.runId)
+            tapClickable("Add Plant", substring = false)
+            waitForTextGone("Plant Name")
+            val plants = E2e.getArray("/api/plants")
+            val id = (0 until plants.length()).map { plants.getJSONObject(it) }
+                .first { it.getString("name") == plantName }.getInt("id")
+            E2e.logManifest(mapOf("type" to "plant", "id" to id))
         }.onFailure {
             // Sheet trigger text varies; the same call the button makes:
             val lib = E2e.getObject("/api/library?q=tomato&per_page=1")
@@ -59,10 +66,10 @@ class E40LibraryExtrasTest : ComposeE2eTest() {
     fun t2_seedRoom_addAndAdvanceThroughStages() {
         openGardenSection("Seed Room")
         // Tap an empty slot to open the add form.
-        rule.onAllNodes(hasText("Add", substring = true)).onFirst().performClick()
+        tapFirst("+ Add")
         waitForText("Plant name *")
         type("Plant name *", E2e.testName("Pepper"))
-        tap("Add", substring = false)
+        tap("Add Seed", substring = false)
         waitForText("Pepper")
 
         val trays = E2e.getArray("/api/gardens/${E2e.gardenId}/seed-room")
@@ -82,11 +89,11 @@ class E40LibraryExtrasTest : ComposeE2eTest() {
     @Test
     fun t3_journal_createEntry() {
         openGardenSection("Garden Journal")
-        rule.onAllNodes(hasText("New Entry", substring = true)).onFirst().performClick()
+        tapDescription("New entry")
         waitForText("Title *")
         type("Title *", E2e.testName("First sprout"))
         type("Tags (comma-separated)", "sprout, e2e")
-        tap("Save", substring = false)
+        tap("Save Entry", substring = false)
         waitForText("First sprout")
 
         val journal = E2e.getObject("/api/gardens/${E2e.gardenId}/journal")
@@ -98,10 +105,10 @@ class E40LibraryExtrasTest : ComposeE2eTest() {
     @Test
     fun t4_compost_binMaterialAndStages() {
         openGardenSection("Compost Helper")
-        rule.onAllNodes(hasText("New Bin", substring = true)).onFirst().performClick()
+        tapDescription("New bin")
         waitForText("Bin name *")
         type("Bin name *", E2e.testName("Pile"))
-        tap("Create", substring = false)
+        tap("Create Bin", substring = false)
         waitForText("Pile")
 
         val bins = E2e.getArray("/api/gardens/${E2e.gardenId}/compost")
@@ -110,9 +117,9 @@ class E40LibraryExtrasTest : ComposeE2eTest() {
         E2e.logManifest(mapOf("type" to "compost_bin", "id" to binId))
 
         runCatching {
-            tap("Add material")
+            tap("+ Add material")
             type("Material (e.g. kitchen scraps, dry leaves)", "dry leaves")
-            tap("Add", substring = false)
+            tap("Add Material", substring = false)
             waitForText("dry leaves")
         }
         // building → active → curing → ready
